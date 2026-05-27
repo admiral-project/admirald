@@ -9,11 +9,15 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"github.com/admiral-project/admiral/admirald/internal/queue"
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
+	"github.com/admiral-project/admiral/admirald/pkg/admiral/tlsconfig"
 )
 
 func main() {
 	// Initialize config
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Fatal: invalid configuration: %v", err)
+	}
 
 	// Initialize logger
 	logger := logging.New("admirald")
@@ -21,7 +25,7 @@ func main() {
 	secretManager := secrets.NewManager(cfg.SecretsKey)
 
 	// Connect to Database
-	logger.Info("Connecting to database...", map[string]interface{}{"url": cfg.DatabaseURL})
+	logger.Info("Connecting to database...", map[string]interface{}{"url": config.RedactURL(cfg.DatabaseURL)})
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("Database connection failed", err, nil)
@@ -38,14 +42,18 @@ func main() {
 	logger.Info("Database migrations completed successfully", nil)
 
 	// Initialize RabbitMQ Task Publisher
-	publisher := queue.NewPublisher(cfg.RabbitMQURL, logger)
+	rabbitMQTLSConfig, err := tlsconfig.NewClientConfig(cfg.RabbitMQCAFile)
+	if err != nil {
+		log.Fatalf("Fatal: invalid RabbitMQ TLS configuration: %v", err)
+	}
+	publisher := queue.NewPublisher(cfg.RabbitMQURL, rabbitMQTLSConfig, logger)
 	defer publisher.Close()
 
 	// Initialize API Server
 	server := api.NewServer(db, logger, publisher, cfg.SharedToken, secretManager)
 
 	// Start server
-	if err := server.Listen(cfg.Port); err != nil {
+	if err := server.Listen(cfg.Port, cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {
 		logger.Error("API Server crashed", err, nil)
 		log.Fatalf("Fatal: server listen failed: %v", err)
 	}

@@ -460,12 +460,16 @@ func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier da
 		return
 	}
 
-	secretValues, err := h.decryptedSecretMap(instID)
-	if err != nil {
-		h.log.Error("Failed to decrypt task secrets", err, map[string]interface{}{"operation_id": opID, "instance_id": instID})
-		_ = h.db.UpdateOperation(opID, "failed", "failed to prepare task secrets")
-		_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
-		return
+	var secretValues map[string]map[string]string
+	if actionRequiresSecrets(action) {
+		allSecretValues, err := h.decryptedSecretMap(instID)
+		if err != nil {
+			h.log.Error("Failed to decrypt task secrets", err, map[string]interface{}{"operation_id": opID, "instance_id": instID})
+			_ = h.db.UpdateOperation(opID, "failed", "failed to prepare task secrets")
+			_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+			return
+		}
+		secretValues = scopeTaskSecrets(action, payload, allSecretValues)
 	}
 
 	var services []admiral.ServiceInfo
@@ -541,6 +545,66 @@ func (h *APIHandlers) decryptedSecretMap(instanceID string) (map[string]map[stri
 		result[row.ServiceName][row.EnvName] = plain
 	}
 	return result, nil
+}
+
+func actionRequiresSecrets(action admiral.TaskAction) bool {
+	switch action {
+	case admiral.ActionProvisionApp, admiral.ActionBackupDatabase:
+		return true
+	default:
+		return false
+	}
+}
+
+func scopeTaskSecrets(action admiral.TaskAction, payload admiral.AppDefinitionPayload, all map[string]map[string]string) map[string]map[string]string {
+	switch action {
+	case admiral.ActionProvisionApp:
+		return cloneSecretMap(all)
+	case admiral.ActionBackupDatabase:
+		return scopeBackupSecrets(payload, all)
+	default:
+		return map[string]map[string]string{}
+	}
+}
+
+func scopeBackupSecrets(payload admiral.AppDefinitionPayload, all map[string]map[string]string) map[string]map[string]string {
+	if payload.Backup == nil {
+		return map[string]map[string]string{}
+	}
+
+	serviceSecrets := all[payload.Backup.Service]
+	if len(serviceSecrets) == 0 {
+		return map[string]map[string]string{}
+	}
+
+	required := map[string]struct{}{
+		payload.Backup.DatabaseEnv: {},
+		payload.Backup.UsernameEnv: {},
+		payload.Backup.PasswordEnv: {},
+	}
+
+	filtered := make(map[string]string)
+	for name, value := range serviceSecrets {
+		if _, ok := required[name]; ok {
+			filtered[name] = value
+		}
+	}
+	if len(filtered) == 0 {
+		return map[string]map[string]string{}
+	}
+	return map[string]map[string]string{payload.Backup.Service: filtered}
+}
+
+func cloneSecretMap(all map[string]map[string]string) map[string]map[string]string {
+	cloned := make(map[string]map[string]string, len(all))
+	for serviceName, serviceSecrets := range all {
+		inner := make(map[string]string, len(serviceSecrets))
+		for envName, value := range serviceSecrets {
+			inner[envName] = value
+		}
+		cloned[serviceName] = inner
+	}
+	return cloned
 }
 
 func (h *APIHandlers) HandleOperations(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
+	"github.com/admiral-project/admiral/admirald/pkg/admiral/tlsconfig"
 )
 
 type Server struct {
@@ -22,7 +23,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, token st
 	}
 }
 
-func (s *Server) Listen(port string) error {
+func (s *Server) Listen(port, certFile, keyFile string) error {
 	mux := http.NewServeMux()
 
 	// Register authenticated endpoints
@@ -41,6 +42,11 @@ func (s *Server) Listen(port string) error {
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
 	})
 
-	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port})
-	return http.ListenAndServe(":"+port, mux)
+	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
+	server := &http.Server{
+		Addr:      ":" + port,
+		Handler:   mux,
+		TLSConfig: tlsconfig.NewServerConfig(),
+	}
+	return server.ListenAndServeTLS(certFile, keyFile)
 }

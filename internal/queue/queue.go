@@ -1,29 +1,33 @@
 package queue
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/admiral-project/admiral/admirald/internal/config"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"github.com/streadway/amqp"
 )
 
 type AMQPPublisher struct {
-	url    string
-	log    *logging.Logger
-	conn   *amqp.Connection
-	ch     *amqp.Channel
-	mu     sync.Mutex
-	closed bool
+	url       string
+	tlsConfig *tls.Config
+	log       *logging.Logger
+	conn      *amqp.Connection
+	ch        *amqp.Channel
+	mu        sync.Mutex
+	closed    bool
 }
 
-func NewPublisher(url string, log *logging.Logger) *AMQPPublisher {
+func NewPublisher(url string, tlsConfig *tls.Config, log *logging.Logger) *AMQPPublisher {
 	p := &AMQPPublisher{
-		url: url,
-		log: log,
+		url:       url,
+		tlsConfig: tlsConfig,
+		log:       log,
 	}
 	go p.connectLoop()
 	return p
@@ -38,8 +42,8 @@ func (p *AMQPPublisher) connectLoop() {
 		}
 		p.mu.Unlock()
 
-		p.log.Info("Connecting to RabbitMQ server...", map[string]interface{}{"url": p.url})
-		conn, err := amqp.Dial(p.url)
+		p.log.Info("Connecting to RabbitMQ server...", map[string]interface{}{"url": config.RedactURL(p.url)})
+		conn, err := amqp.DialTLS(p.url, p.tlsConfig)
 		if err != nil {
 			p.log.Error("RabbitMQ connection failed, retrying in 5 seconds", err, nil)
 			time.Sleep(5 * time.Second)
