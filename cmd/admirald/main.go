@@ -1,0 +1,52 @@
+package main
+
+import (
+	"log"
+
+	"github.com/admiral-project/admiral/admirald/internal/api"
+	"github.com/admiral-project/admiral/admirald/internal/config"
+	"github.com/admiral-project/admiral/admirald/internal/database"
+	"github.com/admiral-project/admiral/admirald/internal/logging"
+	"github.com/admiral-project/admiral/admirald/internal/queue"
+	"github.com/admiral-project/admiral/admirald/internal/secrets"
+)
+
+func main() {
+	// Initialize config
+	cfg := config.Load()
+
+	// Initialize logger
+	logger := logging.New("admirald")
+	logger.Info("Initializing Admiral Control Plane (admirald)", nil)
+	secretManager := secrets.NewManager(cfg.SecretsKey)
+
+	// Connect to Database
+	logger.Info("Connecting to database...", map[string]interface{}{"url": cfg.DatabaseURL})
+	db, err := database.Connect(cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("Database connection failed", err, nil)
+		log.Fatalf("Fatal: database connection failed: %v", err)
+	}
+	defer db.Close()
+
+	// Run Migrations
+	logger.Info("Running database schema migrations...", nil)
+	if err := database.RunMigrations(db.DB); err != nil {
+		logger.Error("Database migrations failed", err, nil)
+		log.Fatalf("Fatal: migrations failed: %v", err)
+	}
+	logger.Info("Database migrations completed successfully", nil)
+
+	// Initialize RabbitMQ Task Publisher
+	publisher := queue.NewPublisher(cfg.RabbitMQURL, logger)
+	defer publisher.Close()
+
+	// Initialize API Server
+	server := api.NewServer(db, logger, publisher, cfg.SharedToken, secretManager)
+
+	// Start server
+	if err := server.Listen(cfg.Port); err != nil {
+		logger.Error("API Server crashed", err, nil)
+		log.Fatalf("Fatal: server listen failed: %v", err)
+	}
+}
