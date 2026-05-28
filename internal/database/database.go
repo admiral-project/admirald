@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -34,12 +35,13 @@ type AppDefinition struct {
 }
 
 type AppTier struct {
-	AppName      string  `json:"app_name"`
-	Name         string  `json:"name"`
-	CPU          int     `json:"cpu"`
-	Memory       string  `json:"memory"`
-	Storage      string  `json:"storage"`
-	PriceMonthly float64 `json:"price_monthly"`
+	AppName          string  `json:"app_name"`
+	Name             string  `json:"name"`
+	CPU              int     `json:"cpu"`
+	Memory           string  `json:"memory"`
+	Storage          string  `json:"storage"`
+	PriceMonthly     float64 `json:"price_monthly"`
+	BackupPolicyJSON string  `json:"backup_policy_json,omitempty"`
 }
 
 type CustomerApp struct {
@@ -50,6 +52,7 @@ type CustomerApp struct {
 	NodeID            *string   `json:"node_id"`
 	CommercialStatus  string    `json:"commercial_status"`
 	TechnicalStatus   string    `json:"technical_status"`
+	TierSnapshotJSON  string    `json:"tier_snapshot_json"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -208,11 +211,11 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 	}
 
 	queryTier := `
-		INSERT INTO app_tiers (app_name, name, cpu, memory, storage, price_monthly)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO app_tiers (app_name, name, cpu, memory, storage, price_monthly, backup_policy_json)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 	for _, tier := range tiers {
-		if _, err := tx.Exec(queryTier, name, tier.Name, tier.CPU, tier.Memory, tier.Storage, tier.PriceMonthly); err != nil {
+		if _, err := tx.Exec(queryTier, name, tier.Name, tier.CPU, tier.Memory, tier.Storage, tier.PriceMonthly, tier.BackupPolicyJSON); err != nil {
 			return fmt.Errorf("insert tier %q: %w", tier.Name, err)
 		}
 	}
@@ -251,7 +254,7 @@ func (d *DB) GetAppDefinition(name string) (*AppDefinition, error) {
 }
 
 func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
-	rows, err := d.Query("SELECT app_name, name, cpu, memory, storage, price_monthly FROM app_tiers WHERE app_name = $1", appName)
+	rows, err := d.Query("SELECT app_name, name, cpu, memory, storage, price_monthly, backup_policy_json FROM app_tiers WHERE app_name = $1", appName)
 	if err != nil {
 		return nil, fmt.Errorf("query app tiers: %w", err)
 	}
@@ -260,7 +263,7 @@ func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
 	var tiers []AppTier
 	for rows.Next() {
 		var t AppTier
-		if err := rows.Scan(&t.AppName, &t.Name, &t.CPU, &t.Memory, &t.Storage, &t.PriceMonthly); err != nil {
+		if err := rows.Scan(&t.AppName, &t.Name, &t.CPU, &t.Memory, &t.Storage, &t.PriceMonthly, &t.BackupPolicyJSON); err != nil {
 			return nil, fmt.Errorf("scan tier row: %w", err)
 		}
 		tiers = append(tiers, t)
@@ -270,10 +273,10 @@ func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
 
 // --- Customer Apps CRUD ---
 
-func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID string) error {
+func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {
 	query := `
-		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status)
-		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision')
+		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json)
+		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6)
 	`
 	var nID interface{}
 	if nodeID != "" {
@@ -281,7 +284,7 @@ func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID string)
 	} else {
 		nID = nil
 	}
-	_, err := d.Exec(query, id, customerID, appName, tierName, nID)
+	_, err := d.Exec(query, id, customerID, appName, tierName, nID, tierSnapshotJSON)
 	if err != nil {
 		return fmt.Errorf("create customer app: %w", err)
 	}
@@ -303,7 +306,7 @@ func (d *DB) UpdateCustomerAppStatus(id, commStatus, techStatus string) error {
 }
 
 func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
-	rows, err := d.Query("SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, created_at FROM customer_apps ORDER BY created_at DESC")
+	rows, err := d.Query("SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, created_at FROM customer_apps ORDER BY created_at DESC")
 	if err != nil {
 		return nil, fmt.Errorf("query customer apps: %w", err)
 	}
@@ -312,7 +315,7 @@ func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
 	var apps []CustomerApp
 	for rows.Next() {
 		var a CustomerApp
-		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan customer app row: %w", err)
 		}
 		apps = append(apps, a)
@@ -322,8 +325,8 @@ func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
 
 func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 	var a CustomerApp
-	query := "SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, created_at FROM customer_apps WHERE id = $1"
-	err := d.QueryRow(query, id).Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.CreatedAt)
+	query := "SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, created_at FROM customer_apps WHERE id = $1"
+	err := d.QueryRow(query, id).Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -485,4 +488,236 @@ func (d *DB) GetExposedInstanceSecrets(instanceID string) ([]InstanceSecret, err
 		secrets = append(secrets, s)
 	}
 	return secrets, nil
+}
+
+// --- Admin Users CRUD ---
+
+func (d *DB) CreateAdminUser(username, passwordHash string) error {
+	query := `
+		INSERT INTO admin_users (username, password_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash
+	`
+	_, err := d.Exec(query, username, passwordHash)
+	if err != nil {
+		return fmt.Errorf("create admin user: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetAdminUser(username string) (string, error) {
+	var passwordHash string
+	query := "SELECT password_hash FROM admin_users WHERE username = $1"
+	err := d.QueryRow(query, username).Scan(&passwordHash)
+	if err == sql.ErrNoRows {
+		return "", nil
+	} else if err != nil {
+		return "", fmt.Errorf("get admin user: %w", err)
+	}
+	return passwordHash, nil
+}
+
+// --- Admin Sessions CRUD ---
+
+func (d *DB) CreateAdminSession(tokenHash, username string, expiresAt, lastActivityAt time.Time) error {
+	query := `
+		INSERT INTO admin_sessions (token_hash, username, expires_at, last_activity_at)
+		VALUES ($1, $2, $3, $4)
+	`
+	_, err := d.Exec(query, tokenHash, username, expiresAt, lastActivityAt)
+	if err != nil {
+		return fmt.Errorf("create admin session: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetAdminSession(tokenHash string) (string, time.Time, time.Time, error) {
+	var username string
+	var expiresAt, lastActivityAt time.Time
+	query := "SELECT username, expires_at, last_activity_at FROM admin_sessions WHERE token_hash = $1"
+	err := d.QueryRow(query, tokenHash).Scan(&username, &expiresAt, &lastActivityAt)
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, time.Time{}, nil
+	} else if err != nil {
+		return "", time.Time{}, time.Time{}, fmt.Errorf("get admin session: %w", err)
+	}
+	return username, expiresAt, lastActivityAt, nil
+}
+
+func (d *DB) UpdateAdminSessionActivity(tokenHash string, lastActivity time.Time) error {
+	_, err := d.Exec("UPDATE admin_sessions SET last_activity_at = $1 WHERE token_hash = $2", lastActivity, tokenHash)
+	if err != nil {
+		return fmt.Errorf("update admin session activity: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) DeleteAdminSession(tokenHash string) error {
+	_, err := d.Exec("DELETE FROM admin_sessions WHERE token_hash = $1", tokenHash)
+	if err != nil {
+		return fmt.Errorf("delete admin session: %w", err)
+	}
+	return nil
+}
+
+// --- Backup Storage Config CRUD ---
+
+func (d *DB) SaveBackupStorageConfig(cfg *admiral.BackupStorageConfig) error {
+	query := `
+		INSERT INTO backup_storage_configs (id, backend, enabled, endpoint, region, bucket, prefix, force_path_style, access_key_env, secret_key_env, session_token_env, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
+		ON CONFLICT (id) DO UPDATE SET
+			backend = EXCLUDED.backend,
+			enabled = EXCLUDED.enabled,
+			endpoint = EXCLUDED.endpoint,
+			region = EXCLUDED.region,
+			bucket = EXCLUDED.bucket,
+			prefix = EXCLUDED.prefix,
+			force_path_style = EXCLUDED.force_path_style,
+			access_key_env = EXCLUDED.access_key_env,
+			secret_key_env = EXCLUDED.secret_key_env,
+			session_token_env = EXCLUDED.session_token_env,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := d.Exec(query, cfg.ID, cfg.Backend, cfg.Enabled, cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.Prefix, cfg.ForcePathStyle, cfg.AccessKeyEnv, cfg.SecretKeyEnv, cfg.SessionTokenEnv)
+	if err != nil {
+		return fmt.Errorf("save backup storage config: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetBackupStorageConfig(id string) (*admiral.BackupStorageConfig, error) {
+	var c admiral.BackupStorageConfig
+	var createdAt, updatedAt time.Time
+	query := "SELECT id, backend, enabled, endpoint, region, bucket, prefix, force_path_style, access_key_env, secret_key_env, session_token_env, created_at, updated_at FROM backup_storage_configs WHERE id = $1"
+	err := d.QueryRow(query, id).Scan(&c.ID, &c.Backend, &c.Enabled, &c.Endpoint, &c.Region, &c.Bucket, &c.Prefix, &c.ForcePathStyle, &c.AccessKeyEnv, &c.SecretKeyEnv, &c.SessionTokenEnv, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("get backup storage config: %w", err)
+	}
+	c.CreatedAt = createdAt.Format(time.RFC3339)
+	c.UpdatedAt = updatedAt.Format(time.RFC3339)
+	return &c, nil
+}
+
+func (d *DB) GetActiveBackupStorageConfig() (*admiral.BackupStorageConfig, error) {
+	var c admiral.BackupStorageConfig
+	var createdAt, updatedAt time.Time
+	query := "SELECT id, backend, enabled, endpoint, region, bucket, prefix, force_path_style, access_key_env, secret_key_env, session_token_env, created_at, updated_at FROM backup_storage_configs WHERE enabled = TRUE LIMIT 1"
+	err := d.QueryRow(query).Scan(&c.ID, &c.Backend, &c.Enabled, &c.Endpoint, &c.Region, &c.Bucket, &c.Prefix, &c.ForcePathStyle, &c.AccessKeyEnv, &c.SecretKeyEnv, &c.SessionTokenEnv, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("get active backup storage config: %w", err)
+	}
+	c.CreatedAt = createdAt.Format(time.RFC3339)
+	c.UpdatedAt = updatedAt.Format(time.RFC3339)
+	return &c, nil
+}
+
+// --- Backup Record CRUD ---
+
+func (d *DB) CreateBackupRecord(rec *admiral.BackupRecord) error {
+	query := `
+		INSERT INTO backup_records (id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+	`
+	_, err := d.Exec(query, rec.ID, rec.InstanceID, rec.AppID, rec.TierID, rec.NodeID, rec.BackupType, rec.DatabaseType, rec.Status, rec.StorageBackend, rec.StorageKey, rec.StorageURIAdmin, rec.SizeBytes, rec.ChecksumSHA256, rec.TriggeredBy, rec.RetentionPolicySnapshotJSON, rec.TierSnapshotJSON, rec.ErrorMessage)
+	if err != nil {
+		return fmt.Errorf("create backup record: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpdateBackupRecord(rec *admiral.BackupRecord) error {
+	query := `
+		UPDATE backup_records
+		SET status = $1, storage_backend = $2, storage_key = $3, storage_uri_admin = $4, size_bytes = $5, checksum_sha256 = $6, completed_at = CURRENT_TIMESTAMP, expires_at = $7, error_message = $8
+		WHERE id = $9
+	`
+	var expiresVal interface{}
+	if rec.ExpiresAt != "" {
+		parsed, err := time.Parse(time.RFC3339, rec.ExpiresAt)
+		if err == nil {
+			expiresVal = parsed
+		} else {
+			expiresVal = nil
+		}
+	} else {
+		expiresVal = nil
+	}
+
+	_, err := d.Exec(query, rec.Status, rec.StorageBackend, rec.StorageKey, rec.StorageURIAdmin, rec.SizeBytes, rec.ChecksumSHA256, expiresVal, rec.ErrorMessage, rec.ID)
+	if err != nil {
+		return fmt.Errorf("update backup record: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetBackupRecords(instanceID string) ([]admiral.BackupRecord, error) {
+	var rows *sql.Rows
+	var err error
+	if instanceID != "" {
+		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message FROM backup_records WHERE instance_id = $1 ORDER BY created_at DESC", instanceID)
+	} else {
+		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message FROM backup_records ORDER BY created_at DESC")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query backup records: %w", err)
+	}
+	defer rows.Close()
+
+	var records []admiral.BackupRecord
+	for rows.Next() {
+		var r admiral.BackupRecord
+		var createdAt time.Time
+		var completedAt, expiresAt sql.NullTime
+		err := rows.Scan(
+			&r.ID, &r.InstanceID, &r.AppID, &r.TierID, &r.NodeID,
+			&r.BackupType, &r.DatabaseType, &r.Status, &r.StorageBackend,
+			&r.StorageKey, &r.StorageURIAdmin, &r.SizeBytes, &r.ChecksumSHA256,
+			&createdAt, &completedAt, &expiresAt, &r.TriggeredBy,
+			&r.RetentionPolicySnapshotJSON, &r.TierSnapshotJSON, &r.ErrorMessage,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan backup record row: %w", err)
+		}
+		r.CreatedAt = createdAt.Format(time.RFC3339)
+		if completedAt.Valid {
+			r.CompletedAt = completedAt.Time.Format(time.RFC3339)
+		}
+		if expiresAt.Valid {
+			r.ExpiresAt = expiresAt.Time.Format(time.RFC3339)
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+func (d *DB) GetBackupRecord(id string) (*admiral.BackupRecord, error) {
+	var r admiral.BackupRecord
+	var createdAt time.Time
+	var completedAt, expiresAt sql.NullTime
+	query := "SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message FROM backup_records WHERE id = $1"
+	err := d.QueryRow(query, id).Scan(
+		&r.ID, &r.InstanceID, &r.AppID, &r.TierID, &r.NodeID,
+		&r.BackupType, &r.DatabaseType, &r.Status, &r.StorageBackend,
+		&r.StorageKey, &r.StorageURIAdmin, &r.SizeBytes, &r.ChecksumSHA256,
+		&createdAt, &completedAt, &expiresAt, &r.TriggeredBy,
+		&r.RetentionPolicySnapshotJSON, &r.TierSnapshotJSON, &r.ErrorMessage,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("get backup record: %w", err)
+	}
+	r.CreatedAt = createdAt.Format(time.RFC3339)
+	if completedAt.Valid {
+		r.CompletedAt = completedAt.Time.Format(time.RFC3339)
+	}
+	if expiresAt.Valid {
+		r.ExpiresAt = expiresAt.Time.Format(time.RFC3339)
+	}
+	return &r, nil
 }

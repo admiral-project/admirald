@@ -48,7 +48,7 @@ func TestSQLiteMigrationsAndCRUD(t *testing.T) {
 	if err := db.SaveAppDefinition("whoami", "Whoami", "demo app", "name: whoami", tiers); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
-	if err := db.CreateCustomerApp("inst_1", "cust_1", "whoami", "small", "node_1"); err != nil {
+	if err := db.CreateCustomerApp("inst_1", "cust_1", "whoami", "small", "node_1", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 	if err := db.CreateOperation("op_1", "inst_1", "provision_app", "queued"); err != nil {

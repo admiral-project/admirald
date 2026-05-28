@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -35,6 +36,24 @@ func (s *Server) Listen(port, certFile, keyFile string) error {
 	mux.HandleFunc("/api/v1/operations", AuthMiddleware(s.token, s.handlers.HandleOperations))
 	mux.HandleFunc("/api/v1/fleet/callback", AuthMiddleware(s.token, s.handlers.HandleFleetCallback))
 
+	// Administrative endpoints
+	mux.HandleFunc("/api/admin/auth/login", s.handlers.HandleAdminLogin)
+	mux.HandleFunc("/api/admin/auth/logout", s.handlers.HandleAdminLogout)
+	mux.HandleFunc("/api/admin/auth/me", s.AdminAuthMiddleware(s.handlers.HandleAdminMe))
+	mux.HandleFunc("/api/admin/apps", s.AdminAuthMiddleware(s.handlers.HandleAdminApps))
+	mux.HandleFunc("/api/admin/apps/", s.AdminAuthMiddleware(s.handlers.HandleAdminApps))
+	mux.HandleFunc("/api/admin/instances", s.AdminAuthMiddleware(s.handlers.HandleAdminInstances))
+	mux.HandleFunc("/api/admin/instances/", s.AdminAuthMiddleware(s.handlers.HandleAdminInstances))
+	mux.HandleFunc("/api/admin/backups", s.AdminAuthMiddleware(s.handlers.HandleAdminBackups))
+	mux.HandleFunc("/api/admin/backups/", s.AdminAuthMiddleware(s.handlers.HandleAdminBackups))
+	mux.HandleFunc("/api/admin/backups/restore", s.AdminAuthMiddleware(s.handlers.HandleAdminRestoreBackup))
+	mux.HandleFunc("/api/admin/settings/backup-storage", s.AdminAuthMiddleware(s.handlers.HandleAdminSettingsStorage))
+	mux.HandleFunc("/api/admin/settings/backup-storage/", s.AdminAuthMiddleware(s.handlers.HandleAdminSettingsStorage))
+	mux.HandleFunc("/api/admin/nodes", s.AdminAuthMiddleware(s.handlers.HandleAdminNodes))
+	mux.HandleFunc("/api/admin/nodes/", s.AdminAuthMiddleware(s.handlers.HandleAdminNodes))
+	mux.HandleFunc("/api/admin/tasks", s.AdminAuthMiddleware(s.handlers.HandleAdminTasks))
+	mux.HandleFunc("/api/admin/tasks/", s.AdminAuthMiddleware(s.handlers.HandleAdminTasks))
+
 	// Public health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -48,5 +67,9 @@ func (s *Server) Listen(port, certFile, keyFile string) error {
 		Handler:   mux,
 		TLSConfig: tlsconfig.NewServerConfig(),
 	}
+
+	// Start backup scheduler in background
+	go s.StartBackupScheduler(context.Background())
+
 	return server.ListenAndServeTLS(certFile, keyFile)
 }

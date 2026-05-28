@@ -41,6 +41,11 @@ func main() {
 	}
 	logger.Info("Database migrations completed successfully", nil)
 
+	// Ensure default admin user is present
+	if err := api.EnsureDefaultAdmin(db); err != nil {
+		logger.Error("Failed to initialize default admin user", err, nil)
+	}
+
 	// Initialize RabbitMQ Task Publisher
 	rabbitMQTLSConfig, err := tlsconfig.NewClientConfig(cfg.RabbitMQCAFile)
 	if err != nil {

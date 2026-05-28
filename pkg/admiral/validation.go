@@ -55,15 +55,39 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if tier.PriceMonthly < 0 {
 			return fmt.Errorf("tier %q price_monthly must not be negative", name)
 		}
+		if tier.Backups != nil && tier.Backups.Enabled {
+			s := tier.Backups.Schedule
+			if s != "disabled" && s != "daily" && s != "weekly" {
+				return fmt.Errorf("tier %q backups schedule %q is unsupported, must be 'disabled', 'daily', or 'weekly'", name, s)
+			}
+			if tier.Backups.Retention.Count < 1 {
+				return fmt.Errorf("tier %q backups retention count must be at least 1", name)
+			}
+			if tier.Backups.Retention.Days < 1 {
+				return fmt.Errorf("tier %q backups retention days must be at least 1", name)
+			}
+		}
 	}
 
 	if payload.Backup != nil {
 		if payload.Backup.Type == "" {
 			return fmt.Errorf("backup type is required")
 		}
+		if payload.Backup.Type != "database" && payload.Backup.Type != "volume" {
+			return fmt.Errorf("backup type must be database or volume")
+		}
+		if payload.Backup.Type == "database" {
+			if payload.Backup.Engine == "" {
+				return fmt.Errorf("backup engine is required for database backups")
+			}
+			if payload.Backup.Engine != "postgresql" && payload.Backup.Engine != "mysql" && payload.Backup.Engine != "mariadb" {
+				return fmt.Errorf("backup engine %q is unsupported", payload.Backup.Engine)
+			}
+		}
 		if payload.Backup.Service == "" {
 			return fmt.Errorf("backup service is required")
 		}
+
 		svc, ok := payload.Services[payload.Backup.Service]
 		if !ok {
 			return fmt.Errorf("backup service %q is not defined", payload.Backup.Service)

@@ -11,6 +11,11 @@ const (
 	ActionResizeApp      TaskAction = "resize_app"
 	ActionDeprovisionApp TaskAction = "deprovision_app"
 	ActionBackupDatabase TaskAction = "backup_database"
+	ActionBackupVolumes  TaskAction = "backup_volumes"
+	ActionInspectApp     TaskAction = "inspect_app"
+	ActionDeleteBackup   TaskAction = "delete_backup"
+	ActionTestStorage    TaskAction = "test_backup_storage"
+	ActionRestoreBackup  TaskAction = "restore_backup"
 )
 
 type FleetTask struct {
@@ -23,6 +28,7 @@ type FleetTask struct {
 	Tier        TierInfo      `json:"tier"`
 	Services    []ServiceInfo `json:"services"`
 	Backup      *BackupInfo   `json:"backup,omitempty"`
+	Restore     *RestoreInfo  `json:"restore,omitempty"`
 }
 
 type AppInfo struct {
@@ -47,11 +53,24 @@ type ServiceInfo struct {
 }
 
 type BackupInfo struct {
-	Type        string `json:"type"`
-	Service     string `json:"service"`
-	DatabaseEnv string `json:"database_env"`
-	UsernameEnv string `json:"username_env"`
-	PasswordEnv string `json:"password_env"`
+	Type         string `json:"type"`
+	Engine       string `json:"engine,omitempty"`
+	Service      string `json:"service"`
+	DatabaseType string `json:"database_type,omitempty"`
+	DatabaseEnv  string `json:"database_env"`
+	UsernameEnv  string `json:"username_env"`
+	PasswordEnv  string `json:"password_env"`
+}
+
+type RestoreInfo struct {
+	BackupID       string `json:"backup_id"`
+	StorageBackend string `json:"storage_backend"`
+	StorageKey     string `json:"storage_key"`
+	BackupType     string `json:"backup_type"`
+	DatabaseType   string `json:"database_type"`
+	Service        string `json:"service"`
+	ChecksumSHA256 string `json:"checksum_sha256,omitempty"`
+	VerifyChecksum bool   `json:"verify_checksum,omitempty"`
 }
 
 type TaskResult struct {

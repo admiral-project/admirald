@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS app_tiers (
     memory TEXT NOT NULL,
     storage TEXT NOT NULL,
     price_monthly NUMERIC(10, 2) NOT NULL,
+    backup_policy_json TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (app_name, name)
 );
 
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS customer_apps (
     node_id TEXT REFERENCES nodes(id),
     commercial_status TEXT NOT NULL,
     technical_status TEXT NOT NULL,
+    tier_snapshot_json TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -76,6 +78,59 @@ CREATE TABLE IF NOT EXISTS backups (
     size_bytes BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    username TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    token_hash TEXT PRIMARY KEY,
+    username TEXT NOT NULL REFERENCES admin_users(username) ON DELETE CASCADE,
+    expires_at TIMESTAMP NOT NULL,
+    last_activity_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS backup_storage_configs (
+    id TEXT PRIMARY KEY,
+    backend TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    endpoint TEXT NOT NULL DEFAULT '',
+    region TEXT NOT NULL DEFAULT '',
+    bucket TEXT NOT NULL DEFAULT '',
+    prefix TEXT NOT NULL DEFAULT '',
+    force_path_style BOOLEAN NOT NULL DEFAULT FALSE,
+    access_key_env TEXT NOT NULL DEFAULT '',
+    secret_key_env TEXT NOT NULL DEFAULT '',
+    session_token_env TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS backup_records (
+    id TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL REFERENCES customer_apps(id) ON DELETE CASCADE,
+    app_id TEXT NOT NULL,
+    tier_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    backup_type TEXT NOT NULL,
+    database_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    storage_backend TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    storage_uri_admin TEXT NOT NULL DEFAULT '',
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    checksum_sha256 TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    triggered_by TEXT NOT NULL,
+    retention_policy_snapshot_json TEXT NOT NULL DEFAULT '',
+    tier_snapshot_json TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT ''
+);
 `
 
 func RunMigrations(db *sql.DB) error {
@@ -83,5 +138,10 @@ func RunMigrations(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("run schema migrations: %w", err)
 	}
+
+	// Exec optional alters to be backwards compatible if tables already exist
+	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN backup_policy_json TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN tier_snapshot_json TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }

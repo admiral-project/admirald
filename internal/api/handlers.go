@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
@@ -167,13 +168,19 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 
 		var dbTiers []database.AppTier
 		for name, t := range payload.Tiers {
+			var backupPolicyJSON string
+			if t.Backups != nil {
+				bBytes, _ := json.Marshal(t.Backups)
+				backupPolicyJSON = string(bBytes)
+			}
 			dbTiers = append(dbTiers, database.AppTier{
-				AppName:      payload.Name,
-				Name:         name,
-				CPU:          t.CPU,
-				Memory:       t.Memory,
-				Storage:      t.Storage,
-				PriceMonthly: t.PriceMonthly,
+				AppName:          payload.Name,
+				Name:             name,
+				CPU:              t.CPU,
+				Memory:           t.Memory,
+				Storage:          t.Storage,
+				PriceMonthly:     t.PriceMonthly,
+				BackupPolicyJSON: backupPolicyJSON,
 			})
 		}
 
@@ -287,7 +294,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		instanceID := generateID("inst")
 		operationID := generateID("op")
 
-		if err := h.db.CreateCustomerApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID); err != nil {
+		tierBytes, _ := json.Marshal(matchedTier)
+		tierSnapshotJSON := string(tierBytes)
+		if err := h.db.CreateCustomerApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON); err != nil {
 			h.log.Error("Create customer app record failed", err, nil)
 			writeError(w, http.StatusInternalServerError, "Failed to create app record")
 			return
@@ -505,11 +514,13 @@ func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier da
 
 	if payload.Backup != nil {
 		task.Backup = &admiral.BackupInfo{
-			Type:        payload.Backup.Type,
-			Service:     payload.Backup.Service,
-			DatabaseEnv: payload.Backup.DatabaseEnv,
-			UsernameEnv: payload.Backup.UsernameEnv,
-			PasswordEnv: payload.Backup.PasswordEnv,
+			Type:         payload.Backup.Type,
+			Engine:       payload.Backup.Engine,
+			Service:      payload.Backup.Service,
+			DatabaseType: payload.Backup.Engine,
+			DatabaseEnv:  payload.Backup.DatabaseEnv,
+			UsernameEnv:  payload.Backup.UsernameEnv,
+			PasswordEnv:  payload.Backup.PasswordEnv,
 		}
 	}
 
@@ -549,7 +560,7 @@ func (h *APIHandlers) decryptedSecretMap(instanceID string) (map[string]map[stri
 
 func actionRequiresSecrets(action admiral.TaskAction) bool {
 	switch action {
-	case admiral.ActionProvisionApp, admiral.ActionBackupDatabase:
+	case admiral.ActionProvisionApp, admiral.ActionBackupDatabase, admiral.ActionRestoreBackup:
 		return true
 	default:
 		return false
@@ -558,7 +569,7 @@ func actionRequiresSecrets(action admiral.TaskAction) bool {
 
 func scopeTaskSecrets(action admiral.TaskAction, payload admiral.AppDefinitionPayload, all map[string]map[string]string) map[string]map[string]string {
 	switch action {
-	case admiral.ActionProvisionApp:
+	case admiral.ActionProvisionApp, admiral.ActionRestoreBackup:
 		return cloneSecretMap(all)
 	case admiral.ActionBackupDatabase:
 		return scopeBackupSecrets(payload, all)
@@ -672,8 +683,53 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		case string(admiral.ActionDeprovisionApp):
 			nextTechStatus = "deprovisioned"
 			_ = h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned")
-		case string(admiral.ActionBackupDatabase):
+		case string(admiral.ActionBackupDatabase), "backup_volumes":
 			nextTechStatus = "running"
+
+			// Parse metadata from fleet task result
+			var cbData struct {
+				Backup struct {
+					BackupID       string `json:"backup_id"`
+					StorageBackend string `json:"storage_backend"`
+					StorageKey     string `json:"storage_key"`
+					SizeBytes      int64  `json:"size_bytes"`
+					ChecksumSHA256 string `json:"checksum_sha256"`
+					CompletedAt    string `json:"completed_at"`
+				} `json:"backup"`
+			}
+			_ = json.Unmarshal([]byte(res.Metadata), &cbData)
+
+			bkID := cbData.Backup.BackupID
+			if bkID == "" {
+				// Fallback search in backup records by instance
+				recs, _ := h.db.GetBackupRecords(op.InstanceID)
+				for _, r := range recs {
+					if r.Status == "pending" {
+						bkID = r.ID
+						break
+					}
+				}
+			}
+
+			if bkID != "" {
+				rec, _ := h.db.GetBackupRecord(bkID)
+				if rec != nil {
+					rec.Status = "succeeded"
+					rec.SizeBytes = cbData.Backup.SizeBytes
+					rec.ChecksumSHA256 = cbData.Backup.ChecksumSHA256
+					if cbData.Backup.StorageBackend != "" {
+						rec.StorageBackend = cbData.Backup.StorageBackend
+					}
+					if cbData.Backup.StorageKey != "" {
+						rec.StorageKey = cbData.Backup.StorageKey
+					}
+					rec.CompletedAt = time.Now().Format(time.RFC3339)
+					rec.ExpiresAt = time.Now().Add(30 * 24 * time.Hour).Format(time.RFC3339) // default 30 days
+					_ = h.db.UpdateBackupRecord(rec)
+				}
+			}
+
+			// Keep existing backups legacy creation for compatibility
 			backupID := generateID("bk")
 			_ = h.db.CreateBackup(backupID, op.InstanceID, res.NodeID, "succeeded")
 			_ = h.db.UpdateBackup(backupID, "succeeded", res.Metadata, 1024*1024)

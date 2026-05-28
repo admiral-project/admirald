@@ -22,7 +22,8 @@ func TestValidateAppDefinitionWithSecretsAndBackup(t *testing.T) {
 			"starter": {CPU: 1, Memory: "1G", Storage: "10G", PriceMonthly: 10},
 		},
 		Backup: &YAMLBackup{
-			Type:        "postgres",
+			Type:        "database",
+			Engine:      "postgresql",
 			Service:     "db",
 			DatabaseEnv: "POSTGRES_DB",
 			UsernameEnv: "POSTGRES_USER",
