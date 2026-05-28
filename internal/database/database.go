@@ -3,9 +3,11 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type DB struct {
@@ -81,20 +83,36 @@ type InstanceSecret struct {
 }
 
 func Connect(dbURL string) (*DB, error) {
-	db, err := sql.Open("postgres", dbURL)
+	driver, dsn := driverAndDSN(dbURL)
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres db: %w", err)
+		return nil, fmt.Errorf("open %s db: %w", driver, err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	if driver == "sqlite3" {
+		db.SetMaxOpenConns(1)
+	} else {
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
+	}
 
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping postgres db: %w", err)
+		return nil, fmt.Errorf("ping %s db: %w", driver, err)
 	}
 
 	return &DB{db}, nil
+}
+
+func driverAndDSN(dbURL string) (string, string) {
+	switch {
+	case strings.HasPrefix(dbURL, "sqlite://"):
+		return "sqlite3", strings.TrimPrefix(dbURL, "sqlite://")
+	case strings.HasPrefix(dbURL, "file:"):
+		return "sqlite3", dbURL
+	default:
+		return "postgres", dbURL
+	}
 }
 
 // --- Nodes CRUD ---

@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     os TEXT NOT NULL,
     podman_version TEXT NOT NULL,
     status TEXT NOT NULL,
-    last_heartbeat TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    last_heartbeat TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS app_definitions (
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS app_definitions (
     description TEXT NOT NULL,
     raw_yaml TEXT NOT NULL,
     status TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS app_tiers (
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS customer_apps (
     node_id TEXT REFERENCES nodes(id),
     commercial_status TEXT NOT NULL,
     technical_status TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS operations (
@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS operations (
     action TEXT NOT NULL,
     status TEXT NOT NULL,
     error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS instance_secrets (
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS instance_secrets (
     env_name TEXT NOT NULL,
     encrypted_value TEXT NOT NULL,
     expose_to_customer BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (instance_id, service_name, env_name)
 );
 
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS backups (
     status TEXT NOT NULL,
     filepath TEXT,
     size_bytes BIGINT NOT NULL DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `
 
