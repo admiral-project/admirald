@@ -13,14 +13,22 @@ import (
 const defaultConfigPath = "/etc/admirald.ini"
 
 type Config struct {
-	Port           string
-	DatabaseURL    string
-	RabbitMQURL    string
-	RabbitMQCAFile string
-	SharedToken    string
-	SecretsKey     string
-	TLSCertFile    string
-	TLSKeyFile     string
+	Port                   string
+	DatabaseURL            string
+	RabbitMQURL            string
+	RabbitMQCAFile         string
+	SharedToken            string
+	SecretsKey             string
+	TLSCertFile            string
+	TLSKeyFile             string
+	NetworkingBaseDomain   string
+	NetworkingAdminHost    string
+	NetworkingPortalHost   string
+	NetworkingAppsDomain   string
+	NetworkingAppsRedirect string
+	NetworkingTLSProvider  string
+	NetworkingTLSEmail     string
+	CaddyAdminURL          string
 }
 
 func Load() (*Config, error) {
@@ -29,14 +37,22 @@ func Load() (*Config, error) {
 
 func load(path string) (*Config, error) {
 	values := map[string]string{
-		"port":             "8080",
-		"database_url":     "postgres://postgres:postgres@localhost:5432/admiral?sslmode=disable",
-		"rabbitmq_url":     "amqps://guest:guest@localhost:5671/",
-		"rabbitmq_ca_file": "",
-		"shared_token":     "",
-		"secrets_key":      "",
-		"tls_cert_file":    "",
-		"tls_key_file":     "",
+		"port":                     "8080",
+		"database_url":             "postgres://postgres:postgres@localhost:5432/admiral?sslmode=disable",
+		"rabbitmq_url":             "amqps://guest:guest@localhost:5671/",
+		"rabbitmq_ca_file":         "",
+		"shared_token":             "",
+		"secrets_key":              "",
+		"tls_cert_file":            "",
+		"tls_key_file":             "",
+		"networking_base_domain":   "",
+		"networking_admin_host":    "",
+		"networking_portal_host":   "",
+		"networking_apps_domain":   "",
+		"networking_apps_redirect": "",
+		"networking_tls_provider":  "letsencrypt",
+		"networking_tls_email":     "",
+		"caddy_admin_url":          "http://127.0.0.1:2019",
 	}
 
 	loadINI(path, values)
@@ -49,6 +65,14 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "tls_cert_file", "ADMIRAL_TLS_CERT_FILE")
 	applyEnv(values, "tls_key_file", "ADMIRAL_TLS_KEY_FILE")
 	applyEnv(values, "rabbitmq_ca_file", "ADMIRAL_RABBITMQ_CA_FILE")
+	applyEnv(values, "networking_base_domain", "ADMIRAL_NETWORKING_BASE_DOMAIN")
+	applyEnv(values, "networking_admin_host", "ADMIRAL_NETWORKING_ADMIN_HOSTNAME")
+	applyEnv(values, "networking_portal_host", "ADMIRAL_NETWORKING_PORTAL_HOSTNAME")
+	applyEnv(values, "networking_apps_domain", "ADMIRAL_NETWORKING_APPS_DOMAIN")
+	applyEnv(values, "networking_apps_redirect", "ADMIRAL_NETWORKING_APPS_REDIRECT_TO")
+	applyEnv(values, "networking_tls_provider", "ADMIRAL_NETWORKING_TLS_PROVIDER")
+	applyEnv(values, "networking_tls_email", "ADMIRAL_NETWORKING_TLS_EMAIL")
+	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 
 	if values["shared_token"] == "" {
 		return nil, fmt.Errorf("shared_token is required via %s or ADMIRAL_SHARED_TOKEN", path)
@@ -72,20 +96,49 @@ func load(path string) (*Config, error) {
 			return nil, err
 		}
 	}
+	if values["networking_admin_host"] == "" && values["networking_base_domain"] != "" {
+		values["networking_admin_host"] = "admin." + values["networking_base_domain"]
+	}
+	if values["networking_portal_host"] == "" && values["networking_base_domain"] != "" {
+		values["networking_portal_host"] = "portal." + values["networking_base_domain"]
+	}
+	if values["networking_apps_domain"] == "" && values["networking_base_domain"] != "" {
+		values["networking_apps_domain"] = "apps." + values["networking_base_domain"]
+	}
+	if values["networking_apps_redirect"] == "" && values["networking_portal_host"] != "" {
+		values["networking_apps_redirect"] = values["networking_portal_host"]
+	}
+	if values["networking_apps_redirect"] == "" && values["networking_base_domain"] != "" {
+		values["networking_apps_redirect"] = "portal." + values["networking_base_domain"]
+	}
+	if values["networking_tls_provider"] == "" {
+		values["networking_tls_provider"] = "letsencrypt"
+	}
+	if values["caddy_admin_url"] == "" {
+		values["caddy_admin_url"] = "http://127.0.0.1:2019"
+	}
 
 	if values["secrets_key"] == "" {
 		values["secrets_key"] = values["shared_token"]
 	}
 
 	return &Config{
-		Port:           values["port"],
-		DatabaseURL:    values["database_url"],
-		RabbitMQURL:    values["rabbitmq_url"],
-		RabbitMQCAFile: values["rabbitmq_ca_file"],
-		SharedToken:    values["shared_token"],
-		SecretsKey:     values["secrets_key"],
-		TLSCertFile:    values["tls_cert_file"],
-		TLSKeyFile:     values["tls_key_file"],
+		Port:                   values["port"],
+		DatabaseURL:            values["database_url"],
+		RabbitMQURL:            values["rabbitmq_url"],
+		RabbitMQCAFile:         values["rabbitmq_ca_file"],
+		SharedToken:            values["shared_token"],
+		SecretsKey:             values["secrets_key"],
+		TLSCertFile:            values["tls_cert_file"],
+		TLSKeyFile:             values["tls_key_file"],
+		NetworkingBaseDomain:   values["networking_base_domain"],
+		NetworkingAdminHost:    values["networking_admin_host"],
+		NetworkingPortalHost:   values["networking_portal_host"],
+		NetworkingAppsDomain:   values["networking_apps_domain"],
+		NetworkingAppsRedirect: values["networking_apps_redirect"],
+		NetworkingTLSProvider:  values["networking_tls_provider"],
+		NetworkingTLSEmail:     values["networking_tls_email"],
+		CaddyAdminURL:          values["caddy_admin_url"],
 	}, nil
 }
 

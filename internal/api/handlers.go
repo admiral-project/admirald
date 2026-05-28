@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
+	"github.com/admiral-project/admiral/admirald/internal/networking"
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"gopkg.in/yaml.v2"
@@ -22,18 +24,20 @@ type TaskPublisher interface {
 }
 
 type APIHandlers struct {
-	db        *database.DB
-	log       *logging.Logger
-	publisher TaskPublisher
-	secrets   *secrets.Manager
+	db         *database.DB
+	log        *logging.Logger
+	publisher  TaskPublisher
+	secrets    *secrets.Manager
+	networking *networking.Manager
 }
 
-func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager) *APIHandlers {
+func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager) *APIHandlers {
 	return &APIHandlers{
-		db:        db,
-		log:       log,
-		publisher: pub,
-		secrets:   secretManager,
+		db:         db,
+		log:        log,
+		publisher:  pub,
+		secrets:    secretManager,
+		networking: networkingManager,
 	}
 }
 
@@ -314,6 +318,16 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			h.log.Error("Create operation record failed", err, nil)
 			writeError(w, http.StatusInternalServerError, "Failed to create operation record")
 			return
+		}
+
+		if h.networking != nil {
+			if _, err := h.networking.CreateInstanceRoutes(instanceID, payload, nodeID); err != nil {
+				h.log.Error("Create public routes failed", err, map[string]interface{}{"instance_id": instanceID})
+				_ = h.db.UpdateCustomerAppStatus(instanceID, "", "failed")
+				_ = h.db.UpdateOperation(operationID, "failed", err.Error())
+				writeError(w, http.StatusInternalServerError, "Failed to create public routes")
+				return
+			}
 		}
 
 		go h.dispatchTask(operationID, instanceID, nodeID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp)
@@ -678,11 +692,21 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		switch op.Action {
 		case string(admiral.ActionProvisionApp), string(admiral.ActionStartApp), string(admiral.ActionResumeApp):
 			nextTechStatus = "running"
+			if op.Action == string(admiral.ActionProvisionApp) && h.networking != nil {
+				if err := h.networking.ActivateInstanceRoutes(context.Background(), op.InstanceID); err != nil {
+					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			}
 		case string(admiral.ActionStopApp), string(admiral.ActionPauseApp):
 			nextTechStatus = "stopped"
 		case string(admiral.ActionDeprovisionApp):
 			nextTechStatus = "deprovisioned"
 			_ = h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned")
+			if h.networking != nil {
+				if err := h.networking.DeleteInstanceRoutes(context.Background(), op.InstanceID); err != nil {
+					h.log.Error("Delete public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			}
 		case string(admiral.ActionBackupDatabase), "backup_volumes":
 			nextTechStatus = "running"
 
@@ -736,6 +760,23 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		nextTechStatus = "failed"
+		if h.networking != nil && op.Action == string(admiral.ActionProvisionApp) {
+			routes, err := h.db.GetPublicRoutes()
+			if err == nil {
+				for _, route := range routes {
+					if route.AppInstanceID != op.InstanceID {
+						continue
+					}
+					route.Status = string(admiral.RouteStatusFailed)
+					route.LastError = res.Error
+					now := time.Now().UTC()
+					route.LastHealthCheckedAt = &now
+					route.LastHealthStatus = "unhealthy"
+					_ = h.db.UpdatePublicRoute(&route)
+				}
+				_ = h.networking.Sync(context.Background())
+			}
+		}
 	}
 
 	if nextTechStatus != "" && op.Action != string(admiral.ActionDeprovisionApp) {
@@ -743,4 +784,109 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
+	if h.networking == nil {
+		writeError(w, http.StatusServiceUnavailable, "networking manager unavailable")
+		return
+	}
+
+	trimmed := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(trimmed, "/")
+
+	if len(parts) == 3 {
+		switch r.Method {
+		case http.MethodGet:
+			routes, err := h.db.GetPublicRoutes()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to fetch routes")
+				return
+			}
+			writeJSON(w, http.StatusOK, routes)
+		case http.MethodPost:
+			if err := h.networking.Sync(context.Background()); err != nil {
+				writeError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	hostname := parts[3]
+	if hostname == "" {
+		writeError(w, http.StatusBadRequest, "hostname is required")
+		return
+	}
+
+	if len(parts) == 4 {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		route, err := h.db.GetPublicRoute(hostname)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch route")
+			return
+		}
+		if route == nil {
+			writeError(w, http.StatusNotFound, "Route not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, route)
+		return
+	}
+
+	switch parts[4] {
+	case "enable":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.networking.EnableRoute(context.Background(), hostname); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	case "disable":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.networking.DisableRoute(context.Background(), hostname); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	case "sync":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.networking.Sync(context.Background()); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	case "delete":
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := h.networking.DeleteRoute(context.Background(), hostname); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
 }

@@ -1,10 +1,18 @@
 package admiral
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
+
+var appNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	if payload.Name == "" {
 		return fmt.Errorf("name is required")
+	}
+	if !appNamePattern.MatchString(payload.Name) {
+		return fmt.Errorf("name %q must match %s", payload.Name, appNamePattern.String())
 	}
 	if payload.DisplayName == "" {
 		return fmt.Errorf("display_name is required")
@@ -23,6 +31,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if svc.Image == "" {
 			return fmt.Errorf("service %q image is required", name)
 		}
+		if svc.Public && svc.Port <= 0 {
+			return fmt.Errorf("service %q marked public requires a port greater than zero", name)
+		}
 		for envName, secret := range svc.Secrets {
 			if envName == "" {
 				return fmt.Errorf("service %q secret name is required", name)
@@ -35,6 +46,19 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 			}
 			if secret.Generate != "" && secret.Generate != "username" && secret.Generate != "password" {
 				return fmt.Errorf("service %q secret %q has unsupported generator %q", name, envName, secret.Generate)
+			}
+		}
+	}
+
+	publicCount := 0
+	for name, svc := range payload.Services {
+		if svc.Public {
+			publicCount++
+			if publicCount > 1 {
+				return fmt.Errorf("only one public service is supported per app definition for now")
+			}
+			if name == "" {
+				return fmt.Errorf("public service name is required")
 			}
 		}
 	}

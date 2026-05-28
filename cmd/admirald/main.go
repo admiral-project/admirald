@@ -7,6 +7,7 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/config"
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
+	"github.com/admiral-project/admiral/admirald/internal/networking"
 	"github.com/admiral-project/admiral/admirald/internal/queue"
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral/tlsconfig"
@@ -33,6 +34,12 @@ func main() {
 	}
 	defer db.Close()
 
+	networkingManager, err := networking.NewManager(db, cfg, logger, secretManager)
+	if err != nil {
+		logger.Error("Networking manager initialization failed", err, nil)
+		log.Fatalf("Fatal: networking manager initialization failed: %v", err)
+	}
+
 	// Run Migrations
 	logger.Info("Running database schema migrations...", nil)
 	if err := database.RunMigrations(db.DB); err != nil {
@@ -55,7 +62,7 @@ func main() {
 	defer publisher.Close()
 
 	// Initialize API Server
-	server := api.NewServer(db, logger, publisher, cfg.SharedToken, secretManager)
+	server := api.NewServer(db, logger, publisher, cfg.SharedToken, secretManager, networkingManager)
 
 	// Start server
 	if err := server.Listen(cfg.Port, cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {

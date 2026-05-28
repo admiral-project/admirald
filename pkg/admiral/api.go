@@ -34,6 +34,7 @@ type AppDefinitionPayload struct {
 type YAMLService struct {
 	Image   string                `yaml:"image" json:"image"`
 	Port    int                   `yaml:"port,omitempty" json:"port,omitempty"`
+	Public  bool                  `yaml:"public,omitempty" json:"public,omitempty"`
 	Volume  string                `yaml:"volume,omitempty" json:"volume,omitempty"`
 	Env     map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
 	Secrets map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
@@ -163,6 +164,52 @@ type BackupRestoreSource struct {
 	CredentialsRef string `json:"credentials_ref,omitempty"`
 	Checksum       string `json:"checksum,omitempty"`
 	SizeBytes      int64  `json:"size_bytes,omitempty"`
+}
+
+type RouteKind string
+
+const (
+	RouteKindAdmin    RouteKind = "admin"
+	RouteKindPortal   RouteKind = "portal"
+	RouteKindAppsRoot RouteKind = "apps_root"
+	RouteKindInstance RouteKind = "app_instance"
+)
+
+type RouteStatus string
+
+const (
+	RouteStatusPending  RouteStatus = "pending"
+	RouteStatusActive   RouteStatus = "active"
+	RouteStatusFailed   RouteStatus = "failed"
+	RouteStatusDisabled RouteStatus = "disabled"
+	RouteStatusDeleting RouteStatus = "deleting"
+	RouteStatusDeleted  RouteStatus = "deleted"
+)
+
+type PublicRoute struct {
+	ID                  string      `json:"id"`
+	Hostname            string      `json:"hostname"`
+	PublicID            string      `json:"public_id"`
+	AppInstanceID       string      `json:"app_instance_id,omitempty"`
+	AppTemplateCode     string      `json:"app_template_code,omitempty"`
+	NodeID              string      `json:"node_id,omitempty"`
+	ServiceName         string      `json:"service_name,omitempty"`
+	TargetScheme        string      `json:"target_scheme,omitempty"`
+	TargetHost          string      `json:"target_host,omitempty"`
+	TargetPort          int         `json:"target_port,omitempty"`
+	TargetURL           string      `json:"target_url,omitempty"`
+	RouteKind           RouteKind   `json:"route_kind"`
+	TLSMode             string      `json:"tls_mode,omitempty"`
+	Status              RouteStatus `json:"status"`
+	LastError           string      `json:"last_error,omitempty"`
+	LastHealthStatus    string      `json:"last_health_status,omitempty"`
+	LastHealthCheckedAt string      `json:"last_health_checked_at,omitempty"`
+	CreatedAt           string      `json:"created_at,omitempty"`
+	UpdatedAt           string      `json:"updated_at,omitempty"`
+}
+
+type PublicRouteRequest struct {
+	Hostname string `json:"hostname"`
 }
 
 type RestoreBackupRequest struct {

@@ -131,6 +131,28 @@ CREATE TABLE IF NOT EXISTS backup_records (
     tier_snapshot_json TEXT NOT NULL DEFAULT '',
     error_message TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS public_routes (
+    id TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL UNIQUE,
+    public_id TEXT NOT NULL,
+    app_instance_id TEXT REFERENCES customer_apps(id) ON DELETE CASCADE,
+    app_template_code TEXT NOT NULL,
+    node_id TEXT REFERENCES nodes(id),
+    service_name TEXT NOT NULL,
+    target_scheme TEXT NOT NULL,
+    target_host TEXT NOT NULL,
+    target_port INTEGER NOT NULL DEFAULT 0,
+    target_url TEXT NOT NULL DEFAULT '',
+    route_kind TEXT NOT NULL,
+    tls_mode TEXT NOT NULL DEFAULT 'auto',
+    status TEXT NOT NULL,
+    last_error TEXT NOT NULL DEFAULT '',
+    last_health_status TEXT NOT NULL DEFAULT '',
+    last_health_checked_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 func RunMigrations(db *sql.DB) error {
@@ -142,6 +164,8 @@ func RunMigrations(db *sql.DB) error {
 	// Exec optional alters to be backwards compatible if tables already exist
 	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN backup_policy_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN tier_snapshot_json TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN target_url TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN last_health_checked_at TIMESTAMP")
 
 	return nil
 }

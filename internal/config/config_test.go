@@ -61,6 +61,35 @@ func TestLoadRejectsPlainAMQP(t *testing.T) {
 	}
 }
 
+func TestLoadDerivesNetworkingHostsFromBaseDomain(t *testing.T) {
+	tempDir := t.TempDir()
+	certFile := writeTempFile(t, tempDir, "server.crt")
+	keyFile := writeTempFile(t, tempDir, "server.key")
+
+	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
+	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
+	setEnv(t, "ADMIRAL_RABBITMQ_URL", "amqps://guest:guest@localhost:5671/")
+	setEnv(t, "ADMIRAL_NETWORKING_BASE_DOMAIN", "cloud.example.com")
+
+	cfg, err := load("/tmp/does-not-exist.ini")
+	if err != nil {
+		t.Fatalf("load returned error: %v", err)
+	}
+	if cfg.NetworkingAdminHost != "admin.cloud.example.com" {
+		t.Fatalf("unexpected admin host %q", cfg.NetworkingAdminHost)
+	}
+	if cfg.NetworkingPortalHost != "portal.cloud.example.com" {
+		t.Fatalf("unexpected portal host %q", cfg.NetworkingPortalHost)
+	}
+	if cfg.NetworkingAppsDomain != "apps.cloud.example.com" {
+		t.Fatalf("unexpected apps domain %q", cfg.NetworkingAppsDomain)
+	}
+	if cfg.NetworkingAppsRedirect != "portal.cloud.example.com" {
+		t.Fatalf("unexpected redirect target %q", cfg.NetworkingAppsRedirect)
+	}
+}
+
 func TestRedactURL(t *testing.T) {
 	got := RedactURL("postgres://user:pass@db.example.com:5432/admiral?sslmode=disable")
 	want := "postgres://REDACTED:REDACTED@db.example.com:5432/admiral?sslmode=disable"
