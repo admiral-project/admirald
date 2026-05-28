@@ -132,6 +132,21 @@ CREATE TABLE IF NOT EXISTS backup_records (
     error_message TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS task_outbox (
+    id TEXT PRIMARY KEY,
+    task_json TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 10,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS public_routes (
     id TEXT PRIMARY KEY,
     hostname TEXT NOT NULL UNIQUE,

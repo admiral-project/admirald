@@ -372,7 +372,7 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 						break
 					}
 				}
-				go h.dispatchTask(opID, instanceID, *inst.NodeID, appDef.RawYAML, matchedTier, admiral.TaskAction("inspect_app"))
+				h.dispatchTask(opID, instanceID, *inst.NodeID, appDef.RawYAML, matchedTier, admiral.TaskAction("inspect_app"))
 
 				writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 					OperationID: opID,
@@ -450,23 +450,30 @@ func (h *APIHandlers) HandleAdminBackups(w http.ResponseWriter, r *http.Request)
 			rec.Status = "deleted"
 			_ = h.db.UpdateBackupRecord(rec)
 
-			// Simple mock dispatcher
 			task := &admiral.FleetTask{
 				TaskID:      generateID("task"),
 				OperationID: opID,
 				NodeID:      rec.NodeID,
 				Action:      admiral.TaskAction("delete_backup"),
 				InstanceID:  rec.InstanceID,
-			}
-			task.Services = []admiral.ServiceInfo{{
-				Name: "backup",
-				Env: map[string]string{
-					"BACKUP_ID":       rec.ID,
-					"STORAGE_BACKEND": rec.StorageBackend,
-					"STORAGE_KEY":     rec.StorageKey,
+				Storage: &admiral.StorageConfig{
+					Backend:  rec.StorageBackend,
+					Key:      rec.StorageKey,
+					BackupID: rec.ID,
 				},
-			}}
-			_ = h.publisher.PublishTask(task)
+			}
+			storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+			if storageCfg != nil {
+				task.Storage.Endpoint = storageCfg.Endpoint
+				task.Storage.Region = storageCfg.Region
+				task.Storage.Bucket = storageCfg.Bucket
+				task.Storage.Prefix = storageCfg.Prefix
+				task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+				task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+				task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+				task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+			}
+			h.enqueueRawTask(task)
 
 			writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 				OperationID: opID,
@@ -556,74 +563,68 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Simple trigger dispatcher which includes storage info
-	go func() {
-		allSecretValues, _ := h.decryptedSecretMap(instanceID)
-		secretValues := scopeTaskSecrets(action, payload, allSecretValues)
+	// Build and enqueue task synchronously so it's persisted before response
+	allSecretValues, _ := h.decryptedSecretMap(instanceID)
+	secretValues := scopeTaskSecrets(action, payload, allSecretValues)
 
-		var services []admiral.ServiceInfo
-		for name, s := range payload.Services {
-			services = append(services, admiral.ServiceInfo{
-				Name:    name,
-				Image:   s.Image,
-				Port:    s.Port,
-				Volume:  s.Volume,
-				Env:     s.Env,
-				Secrets: secretValues[name],
-			})
-		}
+	var services []admiral.ServiceInfo
+	for name, s := range payload.Services {
+		services = append(services, admiral.ServiceInfo{
+			Name:    name,
+			Image:   s.Image,
+			Port:    s.Port,
+			Volume:  s.Volume,
+			Env:     s.Env,
+			Secrets: secretValues[name],
+		})
+	}
 
-		task := &admiral.FleetTask{
-			TaskID:      generateID("task"),
-			OperationID: opID,
-			NodeID:      *inst.NodeID,
-			Action:      action,
-			InstanceID:  instanceID,
-			App: admiral.AppInfo{
-				Name:    payload.Name,
-				Version: "latest",
-			},
-			Tier: admiral.TierInfo{
-				Name:    matchedTier.Name,
-				CPU:     matchedTier.CPU,
-				Memory:  matchedTier.Memory,
-				Storage: matchedTier.Storage,
-			},
-			Services: services,
+	task := &admiral.FleetTask{
+		TaskID:      generateID("task"),
+		OperationID: opID,
+		NodeID:      *inst.NodeID,
+		Action:      action,
+		InstanceID:  instanceID,
+		App: admiral.AppInfo{
+			Name:    payload.Name,
+			Version: "latest",
+		},
+		Tier: admiral.TierInfo{
+			Name:    matchedTier.Name,
+			CPU:     matchedTier.CPU,
+			Memory:  matchedTier.Memory,
+			Storage: matchedTier.Storage,
+		},
+		Services: services,
+	}
+	if payload.Backup != nil {
+		task.Backup = &admiral.BackupInfo{
+			Type:         payload.Backup.Type,
+			Service:      payload.Backup.Service,
+			DatabaseType: payload.Backup.Type,
+			DatabaseEnv:  payload.Backup.DatabaseEnv,
+			UsernameEnv:  payload.Backup.UsernameEnv,
+			PasswordEnv:  payload.Backup.PasswordEnv,
 		}
-		if payload.Backup != nil {
-			task.Backup = &admiral.BackupInfo{
-				Type:         payload.Backup.Type,
-				Service:      payload.Backup.Service,
-				DatabaseType: payload.Backup.Type,
-				DatabaseEnv:  payload.Backup.DatabaseEnv,
-				UsernameEnv:  payload.Backup.UsernameEnv,
-				PasswordEnv:  payload.Backup.PasswordEnv,
-			}
-		}
+	}
 
-		// Inject custom payload envelope with storage settings
-		storageSettings := map[string]interface{}{
-			"backend": backend,
-			"key":     key,
-		}
-		if storageCfg != nil {
-			storageSettings["endpoint"] = storageCfg.Endpoint
-			storageSettings["region"] = storageCfg.Region
-			storageSettings["bucket"] = storageCfg.Bucket
-			storageSettings["access_key_env"] = storageCfg.AccessKeyEnv
-			storageSettings["secret_key_env"] = storageCfg.SecretKeyEnv
-		}
-		taskBytes, _ := json.Marshal(task)
-		var mapTask map[string]interface{}
-		_ = json.Unmarshal(taskBytes, &mapTask)
-		mapTask["storage"] = storageSettings
-		mapTask["backup_id"] = bkRec.ID // inject backup id into task context
+	task.Storage = &admiral.StorageConfig{
+		Backend: backend,
+		Key:     key,
+	}
+	if storageCfg != nil {
+		task.Storage.Endpoint = storageCfg.Endpoint
+		task.Storage.Region = storageCfg.Region
+		task.Storage.Bucket = storageCfg.Bucket
+		task.Storage.Prefix = storageCfg.Prefix
+		task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+		task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+		task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+		task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+	}
+	task.Storage.BackupID = bkRec.ID
 
-		// Publish custom serialized task via publisher
-		_ = h.db.UpdateOperation(opID, "running", "")
-		_ = h.publisher.PublishTask(task)
-	}()
+	h.enqueueRawTask(task)
 
 	writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 		OperationID: opID,
@@ -666,16 +667,13 @@ func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {
 					NodeID:      rec.NodeID,
 					Action:      admiral.TaskAction("delete_backup"),
 					InstanceID:  rec.InstanceID,
-				}
-				task.Services = []admiral.ServiceInfo{{
-					Name: "backup",
-					Env: map[string]string{
-						"BACKUP_ID":       rec.ID,
-						"STORAGE_BACKEND": rec.StorageBackend,
-						"STORAGE_KEY":     rec.StorageKey,
+					Storage: &admiral.StorageConfig{
+						Backend:  rec.StorageBackend,
+						Key:      rec.StorageKey,
+						BackupID: rec.ID,
 					},
-				}}
-				_ = h.publisher.PublishTask(task)
+				}
+				h.enqueueRawTask(task)
 				prunedCount++
 			}
 		}
@@ -756,19 +754,18 @@ func (h *APIHandlers) HandleAdminSettingsStorage(w http.ResponseWriter, r *http.
 					NodeID:      activeNode,
 					Action:      admiral.TaskAction("test_backup_storage"),
 					InstanceID:  "system",
-				}
-				task.Services = []admiral.ServiceInfo{{
-					Name: "backup",
-					Env: map[string]string{
-						"BACKEND":          cfg.Backend,
-						"ENDPOINT":         cfg.Endpoint,
-						"REGION":           cfg.Region,
-						"BUCKET":           cfg.Bucket,
-						"PREFIX":           cfg.Prefix,
-						"FORCE_PATH_STYLE": fmt.Sprintf("%v", cfg.ForcePathStyle),
+					Storage: &admiral.StorageConfig{
+						Backend:        cfg.Backend,
+						Endpoint:       cfg.Endpoint,
+						Region:         cfg.Region,
+						Bucket:         cfg.Bucket,
+						Prefix:         cfg.Prefix,
+						ForcePathStyle: cfg.ForcePathStyle,
+						AccessKeyEnv:   cfg.AccessKeyEnv,
+						SecretKeyEnv:   cfg.SecretKeyEnv,
 					},
-				}}
-				_ = h.publisher.PublishTask(task)
+				}
+				h.enqueueRawTask(task)
 			}
 
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "operation_id": opID})
@@ -987,13 +984,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		task.NodeID = *inst.NodeID
 	}
 
-	go func() {
-		_ = h.db.UpdateOperation(opID, "running", "")
-		if err := h.publisher.PublishTask(task); err != nil {
-			_ = h.db.UpdateOperation(opID, "failed", err.Error())
-			_ = h.db.UpdateCustomerAppStatus(inst.ID, "", "paused")
-		}
-	}()
+	h.enqueueRawTask(task)
 
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
 }

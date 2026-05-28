@@ -19,16 +19,31 @@ const (
 )
 
 type FleetTask struct {
-	TaskID      string        `json:"task_id"`
-	OperationID string        `json:"operation_id"`
-	NodeID      string        `json:"node_id"`
-	Action      TaskAction    `json:"action"`
-	InstanceID  string        `json:"instance_id"`
-	App         AppInfo       `json:"app"`
-	Tier        TierInfo      `json:"tier"`
-	Services    []ServiceInfo `json:"services"`
-	Backup      *BackupInfo   `json:"backup,omitempty"`
-	Restore     *RestoreInfo  `json:"restore,omitempty"`
+	TaskID      string         `json:"task_id"`
+	OperationID string         `json:"operation_id"`
+	NodeID      string         `json:"node_id"`
+	Action      TaskAction     `json:"action"`
+	InstanceID  string         `json:"instance_id"`
+	App         AppInfo        `json:"app"`
+	Tier        TierInfo       `json:"tier"`
+	Services    []ServiceInfo  `json:"services"`
+	Backup      *BackupInfo    `json:"backup,omitempty"`
+	Restore     *RestoreInfo   `json:"restore,omitempty"`
+	Storage     *StorageConfig `json:"storage,omitempty"`
+}
+
+type StorageConfig struct {
+	Backend         string `json:"backend"`
+	Key             string `json:"key"`
+	BackupID        string `json:"backup_id,omitempty"`
+	Endpoint        string `json:"endpoint,omitempty"`
+	Region          string `json:"region,omitempty"`
+	Bucket          string `json:"bucket,omitempty"`
+	Prefix          string `json:"prefix,omitempty"`
+	ForcePathStyle  bool   `json:"force_path_style,omitempty"`
+	AccessKeyEnv    string `json:"access_key_env,omitempty"`
+	SecretKeyEnv    string `json:"secret_key_env,omitempty"`
+	SessionTokenEnv string `json:"session_token_env,omitempty"`
 }
 
 type AppInfo struct {

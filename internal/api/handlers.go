@@ -60,7 +60,9 @@ func generateSecretValue(kind string) string {
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// writeJSON encoding error
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -174,7 +176,10 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 		for name, t := range payload.Tiers {
 			var backupPolicyJSON string
 			if t.Backups != nil {
-				bBytes, _ := json.Marshal(t.Backups)
+				bBytes, err := json.Marshal(t.Backups)
+				if err != nil {
+					h.log.Error("Failed to marshal backup policy", err, map[string]interface{}{"tier": name})
+				}
 				backupPolicyJSON = string(bBytes)
 			}
 			dbTiers = append(dbTiers, database.AppTier{
@@ -205,7 +210,9 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 func readAppDefinitionBody(r *http.Request) (string, error) {
 	if strings.Contains(r.Header.Get("Content-Type"), "yaml") || strings.Contains(r.Header.Get("Content-Type"), "text") {
 		bodyBytes, err := io.ReadAll(r.Body)
-		_ = r.Body.Close()
+		if cerr := r.Body.Close(); cerr != nil {
+			return "", fmt.Errorf("failed to close request body")
+		}
 		if err != nil {
 			return "", fmt.Errorf("failed to read body")
 		}
@@ -298,7 +305,10 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		instanceID := generateID("inst")
 		operationID := generateID("op")
 
-		tierBytes, _ := json.Marshal(matchedTier)
+		tierBytes, err := json.Marshal(matchedTier)
+		if err != nil {
+			h.log.Error("Failed to marshal tier snapshot", err, map[string]interface{}{"tier": req.TierName})
+		}
 		tierSnapshotJSON := string(tierBytes)
 		if err := h.db.CreateCustomerApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON); err != nil {
 			h.log.Error("Create customer app record failed", err, nil)
@@ -309,7 +319,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		credentials, err := h.createInstanceSecrets(instanceID, payload)
 		if err != nil {
 			h.log.Error("Create instance secrets failed", err, map[string]interface{}{"instance_id": instanceID})
-			_ = h.db.UpdateCustomerAppStatus(instanceID, "", "failed")
+			if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
+				h.log.Error("Failed to mark instance as failed after secrets error", uerr, map[string]interface{}{"instance_id": instanceID})
+			}
 			writeError(w, http.StatusInternalServerError, "Failed to create instance secrets")
 			return
 		}
@@ -323,14 +335,18 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		if h.networking != nil {
 			if _, err := h.networking.CreateInstanceRoutes(instanceID, payload, nodeID); err != nil {
 				h.log.Error("Create public routes failed", err, map[string]interface{}{"instance_id": instanceID})
-				_ = h.db.UpdateCustomerAppStatus(instanceID, "", "failed")
-				_ = h.db.UpdateOperation(operationID, "failed", err.Error())
+				if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
+					h.log.Error("Failed to mark instance as failed after routes error", uerr, map[string]interface{}{"instance_id": instanceID})
+				}
+				if uerr := h.db.UpdateOperation(operationID, "failed", err.Error()); uerr != nil {
+					h.log.Error("Failed to mark operation as failed after routes error", uerr, map[string]interface{}{"operation_id": operationID})
+				}
 				writeError(w, http.StatusInternalServerError, "Failed to create public routes")
 				return
 			}
 		}
 
-		go h.dispatchTask(operationID, instanceID, nodeID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp)
+		h.enqueueTask(operationID, instanceID, nodeID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp)
 
 		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
 			OperationID: operationID,
@@ -421,7 +437,10 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tiers, _ := h.db.GetAppTiers(inst.AppDefinitionName)
+	tiers, err := h.db.GetAppTiers(inst.AppDefinitionName)
+	if err != nil {
+		h.log.Error("Failed to get app tiers", err, map[string]interface{}{"app_name": inst.AppDefinitionName})
+	}
 	var matchedTier database.AppTier
 	for _, t := range tiers {
 		if t.Name == inst.TierName {
@@ -458,7 +477,9 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 	}
 
 	operationID := generateID("op")
-	_ = h.db.UpdateCustomerAppStatus(req.InstanceID, "", nextTechStatus)
+	if uerr := h.db.UpdateCustomerAppStatus(req.InstanceID, "", nextTechStatus); uerr != nil {
+		h.log.Error("Failed to update instance status before action", uerr, map[string]interface{}{"instance_id": req.InstanceID})
+	}
 
 	if err := h.db.CreateOperation(operationID, req.InstanceID, string(action), "queued"); err != nil {
 		h.log.Error("Create action operation failed", err, nil)
@@ -466,7 +487,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	go h.dispatchTask(operationID, req.InstanceID, *inst.NodeID, appDef.RawYAML, matchedTier, action)
+	h.enqueueTask(operationID, req.InstanceID, *inst.NodeID, appDef.RawYAML, matchedTier, action)
 
 	writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 		OperationID: operationID,
@@ -474,12 +495,16 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
+func (h *APIHandlers) enqueueTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
 		h.log.Error("Failed to parse app definition for task dispatch", err, map[string]interface{}{"operation_id": opID})
-		_ = h.db.UpdateOperation(opID, "failed", "invalid stored app definition")
-		_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+		if uerr := h.db.UpdateOperation(opID, "failed", "invalid stored app definition"); uerr != nil {
+			h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
+		}
+		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
+		}
 		return
 	}
 
@@ -488,8 +513,12 @@ func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier da
 		allSecretValues, err := h.decryptedSecretMap(instID)
 		if err != nil {
 			h.log.Error("Failed to decrypt task secrets", err, map[string]interface{}{"operation_id": opID, "instance_id": instID})
-			_ = h.db.UpdateOperation(opID, "failed", "failed to prepare task secrets")
-			_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+			if uerr := h.db.UpdateOperation(opID, "failed", "failed to prepare task secrets"); uerr != nil {
+				h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
+			}
+			if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+				h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
+			}
 			return
 		}
 		secretValues = scopeTaskSecrets(action, payload, allSecretValues)
@@ -538,18 +567,44 @@ func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier da
 		}
 	}
 
-	h.log.Info("Dispatching fleet task", map[string]interface{}{
+	h.log.Info("Enqueuing fleet task to outbox", map[string]interface{}{
 		"task_id":      task.TaskID,
 		"operation_id": opID,
 		"node_id":      nodeID,
 		"action":       action,
 	})
 
-	_ = h.db.UpdateOperation(opID, "running", "")
-	if err := h.publisher.PublishTask(task); err != nil {
-		h.log.Error("Failed to publish task to worker", err, map[string]interface{}{"task_id": task.TaskID})
-		_ = h.db.UpdateOperation(opID, "failed", err.Error())
-		_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		h.log.Error("Failed to serialize task", err, map[string]interface{}{"task_id": task.TaskID, "operation_id": opID})
+		if uerr := h.db.UpdateOperation(opID, "failed", "serialize error"); uerr != nil {
+			h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
+		}
+		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
+		}
+		return
+	}
+
+	outboxID := generateID("out")
+	if uerr := h.db.CreateOutboxEntry(outboxID, string(taskJSON), opID, instID, nodeID, string(action)); uerr != nil {
+		h.log.Error("Failed to persist task to outbox", uerr, map[string]interface{}{"task_id": task.TaskID, "operation_id": opID})
+	}
+}
+
+func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
+	h.enqueueTask(opID, instID, nodeID, rawYAML, tier, action)
+}
+
+func (h *APIHandlers) enqueueRawTask(task *admiral.FleetTask) {
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		h.log.Error("Failed to serialize task for outbox", err, map[string]interface{}{"task_id": task.TaskID, "operation_id": task.OperationID})
+		return
+	}
+	outboxID := generateID("out")
+	if uerr := h.db.CreateOutboxEntry(outboxID, string(taskJSON), task.OperationID, task.InstanceID, task.NodeID, string(task.Action)); uerr != nil {
+		h.log.Error("Failed to persist task to outbox", uerr, map[string]interface{}{"task_id": task.TaskID, "operation_id": task.OperationID})
 	}
 }
 
@@ -674,7 +729,10 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		"success":      res.Success,
 	})
 
-	op, _ := h.db.GetOperation(res.OperationID)
+	op, err := h.db.GetOperation(res.OperationID)
+	if err != nil {
+		h.log.Error("Failed to get operation from callback", err, map[string]interface{}{"operation_id": res.OperationID})
+	}
 	if op == nil {
 		writeError(w, http.StatusNotFound, "Operation not found for callback")
 		return
@@ -685,7 +743,9 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		status = "failed"
 	}
 
-	_ = h.db.UpdateOperation(res.OperationID, status, res.Error)
+	if uerr := h.db.UpdateOperation(res.OperationID, status, res.Error); uerr != nil {
+		h.log.Error("Failed to update operation from callback", uerr, map[string]interface{}{"operation_id": res.OperationID})
+	}
 
 	var nextTechStatus string
 	if res.Success {
@@ -701,7 +761,9 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			nextTechStatus = "stopped"
 		case string(admiral.ActionDeprovisionApp):
 			nextTechStatus = "deprovisioned"
-			_ = h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned")
+			if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned"); uerr != nil {
+				h.log.Error("Failed to update instance as deprovisioned", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+			}
 			if h.networking != nil {
 				if err := h.networking.DeleteInstanceRoutes(context.Background(), op.InstanceID); err != nil {
 					h.log.Error("Delete public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
@@ -721,12 +783,17 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 					CompletedAt    string `json:"completed_at"`
 				} `json:"backup"`
 			}
-			_ = json.Unmarshal([]byte(res.Metadata), &cbData)
+			if uerr := json.Unmarshal([]byte(res.Metadata), &cbData); uerr != nil {
+				h.log.Error("Failed to parse backup metadata from callback", uerr, map[string]interface{}{"operation_id": res.OperationID})
+			}
 
 			bkID := cbData.Backup.BackupID
 			if bkID == "" {
 				// Fallback search in backup records by instance
-				recs, _ := h.db.GetBackupRecords(op.InstanceID)
+				recs, err := h.db.GetBackupRecords(op.InstanceID)
+				if err != nil {
+					h.log.Error("Failed to get backup records for fallback", err, map[string]interface{}{"instance_id": op.InstanceID})
+				}
 				for _, r := range recs {
 					if r.Status == "pending" {
 						bkID = r.ID
@@ -736,7 +803,10 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			}
 
 			if bkID != "" {
-				rec, _ := h.db.GetBackupRecord(bkID)
+				rec, err := h.db.GetBackupRecord(bkID)
+				if err != nil {
+					h.log.Error("Failed to get backup record", err, map[string]interface{}{"backup_id": bkID})
+				}
 				if rec != nil {
 					rec.Status = "succeeded"
 					rec.SizeBytes = cbData.Backup.SizeBytes
@@ -748,15 +818,21 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 						rec.StorageKey = cbData.Backup.StorageKey
 					}
 					rec.CompletedAt = time.Now().Format(time.RFC3339)
-					rec.ExpiresAt = time.Now().Add(30 * 24 * time.Hour).Format(time.RFC3339) // default 30 days
-					_ = h.db.UpdateBackupRecord(rec)
+					rec.ExpiresAt = time.Now().Add(30 * 24 * time.Hour).Format(time.RFC3339)
+					if uerr := h.db.UpdateBackupRecord(rec); uerr != nil {
+						h.log.Error("Failed to update backup record", uerr, map[string]interface{}{"backup_id": bkID})
+					}
 				}
 			}
 
 			// Keep existing backups legacy creation for compatibility
 			backupID := generateID("bk")
-			_ = h.db.CreateBackup(backupID, op.InstanceID, res.NodeID, "succeeded")
-			_ = h.db.UpdateBackup(backupID, "succeeded", res.Metadata, 1024*1024)
+			if uerr := h.db.CreateBackup(backupID, op.InstanceID, res.NodeID, "succeeded"); uerr != nil {
+				h.log.Error("Failed to create backup record", uerr, map[string]interface{}{"backup_id": backupID})
+			}
+			if uerr := h.db.UpdateBackup(backupID, "succeeded", res.Metadata, 1024*1024); uerr != nil {
+				h.log.Error("Failed to update backup metadata", uerr, map[string]interface{}{"backup_id": backupID})
+			}
 		}
 	} else {
 		nextTechStatus = "failed"
@@ -772,15 +848,21 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 					now := time.Now().UTC()
 					route.LastHealthCheckedAt = &now
 					route.LastHealthStatus = "unhealthy"
-					_ = h.db.UpdatePublicRoute(&route)
+					if uerr := h.db.UpdatePublicRoute(&route); uerr != nil {
+						h.log.Error("Failed to update route status", uerr, map[string]interface{}{"hostname": route.Hostname})
+					}
 				}
-				_ = h.networking.Sync(context.Background())
+				if uerr := h.networking.Sync(context.Background()); uerr != nil {
+					h.log.Error("Failed to sync routes after failure", uerr, nil)
+				}
 			}
 		}
 	}
 
 	if nextTechStatus != "" && op.Action != string(admiral.ActionDeprovisionApp) {
-		_ = h.db.UpdateCustomerAppStatus(op.InstanceID, "", nextTechStatus)
+		if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "", nextTechStatus); uerr != nil {
+			h.log.Error("Failed to update instance status after callback", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})

@@ -223,68 +223,63 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 		}
 		_ = h.db.CreateBackupRecord(bkRec)
 
-		go func() {
-			allSecretValues, _ := h.decryptedSecretMap(instanceID)
-			secretValues := scopeTaskSecrets(admiral.ActionBackupDatabase, payload, allSecretValues)
+		allSecretValues, _ := h.decryptedSecretMap(instanceID)
+		secretValues := scopeTaskSecrets(admiral.ActionBackupDatabase, payload, allSecretValues)
 
-			var services []admiral.ServiceInfo
-			for name, s := range payload.Services {
-				services = append(services, admiral.ServiceInfo{
-					Name:    name,
-					Image:   s.Image,
-					Port:    s.Port,
-					Volume:  s.Volume,
-					Env:     s.Env,
-					Secrets: secretValues[name],
-				})
-			}
+		var services []admiral.ServiceInfo
+		for name, s := range payload.Services {
+			services = append(services, admiral.ServiceInfo{
+				Name:    name,
+				Image:   s.Image,
+				Port:    s.Port,
+				Volume:  s.Volume,
+				Env:     s.Env,
+				Secrets: secretValues[name],
+			})
+		}
 
-			task := &admiral.FleetTask{
-				TaskID:      generateID("task"),
-				OperationID: opID,
-				NodeID:      *inst.NodeID,
-				Action:      admiral.ActionBackupDatabase,
-				InstanceID:  instanceID,
-				App: admiral.AppInfo{
-					Name:    payload.Name,
-					Version: "latest",
-				},
-				Tier: admiral.TierInfo{
-					Name:    matchedTier.Name,
-					CPU:     matchedTier.CPU,
-					Memory:  matchedTier.Memory,
-					Storage: matchedTier.Storage,
-				},
-				Services: services,
-				Backup: &admiral.BackupInfo{
-					Type:        payload.Backup.Type,
-					Service:     payload.Backup.Service,
-					DatabaseEnv: payload.Backup.DatabaseEnv,
-					UsernameEnv: payload.Backup.UsernameEnv,
-					PasswordEnv: payload.Backup.PasswordEnv,
-				},
-			}
+		task := &admiral.FleetTask{
+			TaskID:      generateID("task"),
+			OperationID: opID,
+			NodeID:      *inst.NodeID,
+			Action:      admiral.ActionBackupDatabase,
+			InstanceID:  instanceID,
+			App: admiral.AppInfo{
+				Name:    payload.Name,
+				Version: "latest",
+			},
+			Tier: admiral.TierInfo{
+				Name:    matchedTier.Name,
+				CPU:     matchedTier.CPU,
+				Memory:  matchedTier.Memory,
+				Storage: matchedTier.Storage,
+			},
+			Services: services,
+			Backup: &admiral.BackupInfo{
+				Type:        payload.Backup.Type,
+				Service:     payload.Backup.Service,
+				DatabaseEnv: payload.Backup.DatabaseEnv,
+				UsernameEnv: payload.Backup.UsernameEnv,
+				PasswordEnv: payload.Backup.PasswordEnv,
+			},
+		}
+		task.Storage = &admiral.StorageConfig{
+			Backend: backend,
+			Key:     key,
+		}
+		if storageCfg != nil {
+			task.Storage.Endpoint = storageCfg.Endpoint
+			task.Storage.Region = storageCfg.Region
+			task.Storage.Bucket = storageCfg.Bucket
+			task.Storage.Prefix = storageCfg.Prefix
+			task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+			task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+			task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+			task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+		}
+		task.Storage.BackupID = bkRec.ID
 
-			storageSettings := map[string]interface{}{
-				"backend": backend,
-				"key":     key,
-			}
-			if storageCfg != nil {
-				storageSettings["endpoint"] = storageCfg.Endpoint
-				storageSettings["region"] = storageCfg.Region
-				storageSettings["bucket"] = storageCfg.Bucket
-				storageSettings["access_key_env"] = storageCfg.AccessKeyEnv
-				storageSettings["secret_key_env"] = storageCfg.SecretKeyEnv
-			}
-			taskBytes, _ := json.Marshal(task)
-			var mapTask map[string]interface{}
-			_ = json.Unmarshal(taskBytes, &mapTask)
-			mapTask["storage"] = storageSettings
-			mapTask["backup_id"] = bkRec.ID
-
-			_ = h.db.UpdateOperation(opID, "running", "")
-			_ = h.publisher.PublishTask(task)
-		}()
+		h.enqueueRawTask(task)
 	}
 	// Trigger Volumes backup if configured
 	if policy.BackupVolumes {
@@ -319,41 +314,36 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 		}
 		_ = h.db.CreateBackupRecord(bkRec)
 
-		go func() {
-			task := &admiral.FleetTask{
-				TaskID:      generateID("task"),
-				OperationID: opID,
-				NodeID:      *inst.NodeID,
-				Action:      admiral.TaskAction("backup_volumes"),
-				InstanceID:  instanceID,
-				App: admiral.AppInfo{
-					Name:    payload.Name,
-					Version: "latest",
-				},
-				Tier: admiral.TierInfo{
-					Name: inst.TierName,
-				},
-			}
+		task := &admiral.FleetTask{
+			TaskID:      generateID("task"),
+			OperationID: opID,
+			NodeID:      *inst.NodeID,
+			Action:      admiral.TaskAction("backup_volumes"),
+			InstanceID:  instanceID,
+			App: admiral.AppInfo{
+				Name:    payload.Name,
+				Version: "latest",
+			},
+			Tier: admiral.TierInfo{
+				Name: inst.TierName,
+			},
+		}
+		task.Storage = &admiral.StorageConfig{
+			Backend: backend,
+			Key:     key,
+		}
+		if storageCfg != nil {
+			task.Storage.Endpoint = storageCfg.Endpoint
+			task.Storage.Region = storageCfg.Region
+			task.Storage.Bucket = storageCfg.Bucket
+			task.Storage.Prefix = storageCfg.Prefix
+			task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+			task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+			task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+			task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+		}
+		task.Storage.BackupID = bkRec.ID
 
-			storageSettings := map[string]interface{}{
-				"backend": backend,
-				"key":     key,
-			}
-			if storageCfg != nil {
-				storageSettings["endpoint"] = storageCfg.Endpoint
-				storageSettings["region"] = storageCfg.Region
-				storageSettings["bucket"] = storageCfg.Bucket
-				storageSettings["access_key_env"] = storageCfg.AccessKeyEnv
-				storageSettings["secret_key_env"] = storageCfg.SecretKeyEnv
-			}
-			taskBytes, _ := json.Marshal(task)
-			var mapTask map[string]interface{}
-			_ = json.Unmarshal(taskBytes, &mapTask)
-			mapTask["storage"] = storageSettings
-			mapTask["backup_id"] = bkRec.ID
-
-			_ = h.db.UpdateOperation(opID, "running", "")
-			_ = h.publisher.PublishTask(task)
-		}()
+		h.enqueueRawTask(task)
 	}
 }
