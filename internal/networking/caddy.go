@@ -86,7 +86,26 @@ func (c *CaddyAdminClient) SyncRoutes(ctx context.Context, routes []database.Pub
 	merged := ensureBootstrapConfig(current, cfg)
 	servers := merged["apps"].(map[string]interface{})["http"].(map[string]interface{})["servers"].(map[string]interface{})
 	servers[cfg.ServerName] = buildServerConfig(routes, cfg)
+	servers["admiral-http-redirect"] = httpRedirectServer()
 	return c.load(ctx, merged)
+}
+
+func httpRedirectServer() map[string]interface{} {
+	return map[string]interface{}{
+		"listen": []interface{}{":80"},
+		"routes": []interface{}{
+			map[string]interface{}{
+				"handle": []interface{}{
+					map[string]interface{}{
+						"handler":     "static_response",
+						"headers":     map[string]interface{}{"Location": []interface{}{"https://{host}{uri}"}},
+						"status_code": 308,
+					},
+				},
+				"terminal": true,
+			},
+		},
+	}
 }
 
 func (c *CaddyAdminClient) ApplyRoute(ctx context.Context, route database.PublicRoute, cfg RouteConfig) error {
@@ -229,7 +248,7 @@ func bootstrapConfig(routeCfg RouteConfig, email string) map[string]interface{} 
 
 func buildServerConfig(routes []database.PublicRoute, cfg RouteConfig) map[string]interface{} {
 	server := map[string]interface{}{
-		"listen": []interface{}{":443", ":80"},
+		"listen": []interface{}{":443"},
 		"automatic_https": map[string]interface{}{
 			"disable_redirects": false,
 		},
