@@ -19,6 +19,8 @@ type Config struct {
 	RabbitMQCAFile         string
 	SharedToken            string
 	SecretsKey             string
+	FlagshipAdminUser      string
+	FlagshipAdminPassword  string
 	TLSCertFile            string
 	TLSKeyFile             string
 	NetworkingBaseDomain   string
@@ -44,6 +46,8 @@ func load(path string) (*Config, error) {
 		"rabbitmq_ca_file":         "",
 		"shared_token":             "",
 		"secrets_key":              "",
+		"flagship_admin_user":      "",
+		"flagship_admin_pswd":      "",
 		"tls_cert_file":            "",
 		"tls_key_file":             "",
 		"networking_base_domain":   "",
@@ -64,6 +68,8 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "rabbitmq_url", "ADMIRAL_RABBITMQ_URL")
 	applyEnv(values, "shared_token", "ADMIRAL_SHARED_TOKEN")
 	applyEnv(values, "secrets_key", "ADMIRAL_SECRETS_KEY")
+	applyEnv(values, "flagship_admin_user", "ADMIRAL_FLAGSHIP_ADMIN_USER")
+	applyEnv(values, "flagship_admin_pswd", "ADMIRAL_FLAGSHIP_ADMIN_PSWD")
 	applyEnv(values, "tls_cert_file", "ADMIRAL_TLS_CERT_FILE")
 	applyEnv(values, "tls_key_file", "ADMIRAL_TLS_KEY_FILE")
 	applyEnv(values, "rabbitmq_ca_file", "ADMIRAL_RABBITMQ_CA_FILE")
@@ -132,6 +138,8 @@ func load(path string) (*Config, error) {
 		RabbitMQCAFile:         values["rabbitmq_ca_file"],
 		SharedToken:            values["shared_token"],
 		SecretsKey:             values["secrets_key"],
+		FlagshipAdminUser:      values["flagship_admin_user"],
+		FlagshipAdminPassword:  values["flagship_admin_pswd"],
 		TLSCertFile:            values["tls_cert_file"],
 		TLSKeyFile:             values["tls_key_file"],
 		NetworkingBaseDomain:   values["networking_base_domain"],

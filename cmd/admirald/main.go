@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/admiral-project/admiral/admirald/internal/api"
+	"github.com/admiral-project/admiral/admirald/internal/bootstrap"
 	"github.com/admiral-project/admiral/admirald/internal/config"
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
@@ -48,9 +49,14 @@ func main() {
 	}
 	logger.Info("Database migrations completed successfully", nil)
 
-	// Ensure default admin user is present
-	if err := api.EnsureDefaultAdmin(db); err != nil {
-		logger.Error("Failed to initialize default admin user", err, nil)
+	// Ensure initial admin user exists
+	created, err := bootstrap.EnsureInitialAdmin(db, cfg)
+	if err != nil {
+		logger.Error("Failed to initialize administrative user", err, nil)
+		log.Fatalf("Fatal: admin credential initialization failed: %v", err)
+	}
+	if created {
+		logger.Info("Initial administrative user created from environment configuration", map[string]interface{}{"username": cfg.FlagshipAdminUser})
 	}
 
 	// Initialize RabbitMQ Task Publisher

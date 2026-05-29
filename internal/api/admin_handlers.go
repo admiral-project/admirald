@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,31 +9,10 @@ import (
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
+	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"gopkg.in/yaml.v2"
 )
-
-func hashSHA256(input string) string {
-	h := sha256.New()
-	h.Write([]byte(input))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// EnsureDefaultAdmin checks if any admin exists and creates 'admin' / 'secret' if empty
-func EnsureDefaultAdmin(db *database.DB) error {
-	passwordHash, err := db.GetAdminUser("admin")
-	if err != nil {
-		return err
-	}
-	if passwordHash == "" {
-		// Auto-create default admin
-		hash := hashSHA256("secret")
-		if err := db.CreateAdminUser("admin", hash); err != nil {
-			return fmt.Errorf("create default admin: %w", err)
-		}
-	}
-	return nil
-}
 
 func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -108,9 +85,18 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
+	if storedHash == "" {
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
 
-	inputHash := hashSHA256(req.Password)
-	if storedHash == "" || storedHash != inputHash {
+	ok, err := security.VerifyPassword(req.Password, storedHash)
+	if err != nil {
+		h.log.Error("Failed to verify admin password hash", err, map[string]interface{}{"username": req.Username})
+		writeError(w, http.StatusInternalServerError, "Authentication configuration error")
+		return
+	}
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -347,7 +333,7 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, apps)
 
-		case http.MethodPost:
+	case http.MethodPost:
 		if instanceID != "" && len(parts) >= 5 {
 			action := parts[4]
 			// Delegate all backup sub-paths to HandleAdminBackups

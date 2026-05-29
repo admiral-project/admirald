@@ -10,6 +10,8 @@ import (
 func TestLoadRequiresSharedToken(t *testing.T) {
 	setEnv(t, "ADMIRAL_SHARED_TOKEN", "")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", "")
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", "")
 
@@ -26,6 +28,8 @@ func TestLoadUsesSharedTokenAsDefaultSecretsKey(t *testing.T) {
 
 	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
 	setEnv(t, "ADMIRAL_RABBITMQ_URL", "amqps://guest:guest@localhost:5671/")
@@ -45,12 +49,39 @@ func TestLoadUsesSharedTokenAsDefaultSecretsKey(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsMissingFlagshipAdminCredentials(t *testing.T) {
+	tempDir := t.TempDir()
+	certFile := writeTempFile(t, tempDir, "server.crt")
+	keyFile := writeTempFile(t, tempDir, "server.key")
+
+	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
+	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
+	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
+	setEnv(t, "ADMIRAL_RABBITMQ_URL", "amqps://guest:guest@localhost:5671/")
+
+	cfg, err := load("/tmp/does-not-exist.ini")
+	if err != nil {
+		t.Fatalf("load returned error: %v", err)
+	}
+	if cfg.FlagshipAdminUser != "" {
+		t.Fatalf("expected flagship admin user to remain empty, got %q", cfg.FlagshipAdminUser)
+	}
+	if cfg.FlagshipAdminPassword != "" {
+		t.Fatalf("expected flagship admin password to remain empty, got %q", cfg.FlagshipAdminPassword)
+	}
+}
+
 func TestLoadRejectsPlainAMQP(t *testing.T) {
 	tempDir := t.TempDir()
 	certFile := writeTempFile(t, tempDir, "server.crt")
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
 	setEnv(t, "ADMIRAL_RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
@@ -67,6 +98,8 @@ func TestLoadDerivesNetworkingHostsFromBaseDomain(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
+	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
 	setEnv(t, "ADMIRAL_RABBITMQ_URL", "amqps://guest:guest@localhost:5671/")

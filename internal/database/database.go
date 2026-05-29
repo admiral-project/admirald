@@ -800,6 +800,15 @@ func (d *DB) GetAdminUser(username string) (string, error) {
 	return passwordHash, nil
 }
 
+func (d *DB) HasAnyAdminUser() (bool, error) {
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM admin_users)"
+	if err := d.QueryRow(query).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check admin users: %w", err)
+	}
+	return exists, nil
+}
+
 // --- Admin Sessions CRUD ---
 
 func (d *DB) CreateAdminSession(tokenHash, username string, expiresAt, lastActivityAt time.Time) error {
