@@ -546,7 +546,7 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		TierID:                      inst.TierName,
 		NodeID:                      *inst.NodeID,
 		BackupType:                  backupType,
-		DatabaseType:                "postgresql", // Default fallback database
+		DatabaseType:                "postgresql",
 		Status:                      "pending",
 		StorageBackend:              backend,
 		StorageKey:                  key,
@@ -554,8 +554,8 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		TierSnapshotJSON:            inst.TierSnapshotJSON,
 		RetentionPolicySnapshotJSON: `{"count":7,"days":30}`,
 	}
-	if payload.Backup != nil {
-		bkRec.DatabaseType = payload.Backup.Type
+	if payload.Backup != nil && payload.Backup.Engine != "" {
+		bkRec.DatabaseType = payload.Backup.Engine
 	}
 	_ = h.db.CreateBackupRecord(bkRec)
 
@@ -603,10 +603,14 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		Services: services,
 	}
 	if payload.Backup != nil {
+		dbType := payload.Backup.Engine
+		if dbType == "" {
+			dbType = payload.Backup.Type
+		}
 		task.Backup = &admiral.BackupInfo{
 			Type:         payload.Backup.Type,
 			Service:      payload.Backup.Service,
-			DatabaseType: payload.Backup.Type,
+			DatabaseType: dbType,
 			DatabaseEnv:  payload.Backup.DatabaseEnv,
 			UsernameEnv:  payload.Backup.UsernameEnv,
 			PasswordEnv:  payload.Backup.PasswordEnv,
@@ -957,6 +961,11 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		srcURI = bk.StorageKey
 	}
 
+	dbType := payload.Backup.Engine
+	if dbType == "" {
+		dbType = payload.Backup.Type
+	}
+
 	task := &admiral.FleetTask{
 		TaskID:      generateID("task"),
 		OperationID: opID,
@@ -969,7 +978,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		Backup: &admiral.BackupInfo{
 			Type:         payload.Backup.Type,
 			Service:      payload.Backup.Service,
-			DatabaseType: payload.Backup.Type,
+			DatabaseType: dbType,
 			DatabaseEnv:  payload.Backup.DatabaseEnv,
 			UsernameEnv:  payload.Backup.UsernameEnv,
 			PasswordEnv:  payload.Backup.PasswordEnv,

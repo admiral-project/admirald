@@ -213,7 +213,7 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 			TierID:                      inst.TierName,
 			NodeID:                      *inst.NodeID,
 			BackupType:                  "database",
-			DatabaseType:                payload.Backup.Type,
+			DatabaseType:                payload.Backup.Engine,
 			Status:                      "pending",
 			StorageBackend:              backend,
 			StorageKey:                  key,
