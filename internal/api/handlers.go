@@ -435,19 +435,27 @@ func normalizeInstanceSecrets(all map[string]map[string]string, payload admiral.
 		return
 	}
 
-	// Find the DB user, password, and database env var names
-	var dbUser, dbPass, dbName string
+	// Find the DB user, password, and database env var names.
+	// When both ROOT and non-root credentials exist, prefer the non-root variant.
+	var dbUser, dbPass, dbRootPass, dbName string
 	for envName := range dbSecrets {
 		upper := strings.ToUpper(envName)
 		if strings.HasSuffix(upper, "_USER") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
 			dbUser = envName
 		}
 		if strings.HasSuffix(upper, "_PASSWORD") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
-			dbPass = envName
+			if strings.Contains(upper, "_ROOT_") || strings.HasSuffix(upper, "_ROOT_PASSWORD") {
+				dbRootPass = envName
+			} else {
+				dbPass = envName
+			}
 		}
 		if strings.HasSuffix(upper, "_DATABASE") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
 			dbName = envName
 		}
+	}
+	if dbPass == "" && dbRootPass != "" {
+		dbPass = dbRootPass
 	}
 
 	// Propagate to client services
