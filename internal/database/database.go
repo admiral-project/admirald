@@ -1056,6 +1056,12 @@ func (d *DB) UpdateOutboxEntryRetry(id, lastError string, retryCount int) error 
 	return nil
 }
 
+func (d *DB) UpdateInstanceHealth(instanceID, healthStatus, message string) error {
+	_, err := d.Exec("UPDATE customer_apps SET health_status = $1, health_message = $2, last_health_checked_at = CURRENT_TIMESTAMP WHERE id = $3",
+		healthStatus, message, instanceID)
+	return err
+}
+
 func (d *DB) DeleteOutboxEntry(id string) error {
 	_, err := d.Exec("DELETE FROM task_outbox WHERE id = $1", id)
 	if err != nil {

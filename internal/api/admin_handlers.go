@@ -1002,3 +1002,25 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
 }
+
+func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var report admiral.HealthReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if report.InstanceID == "" || report.NodeID == "" || report.HealthStatus == "" {
+		writeError(w, http.StatusBadRequest, "instance_id, node_id, and health_status are required")
+		return
+	}
+	if err := h.db.UpdateInstanceHealth(report.InstanceID, string(report.HealthStatus), report.Message); err != nil {
+		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to update health")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}

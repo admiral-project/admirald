@@ -37,7 +37,8 @@ type YAMLService struct {
 	Public  bool                  `yaml:"public,omitempty" json:"public,omitempty"`
 	Volume  string                `yaml:"volume,omitempty" json:"volume,omitempty"`
 	Env     map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
-	Secrets map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Secrets     map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	HealthCheck *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 }
 
 type YAMLSecret struct {
@@ -53,6 +54,17 @@ type YAMLBackup struct {
 	DatabaseEnv string `yaml:"database_env" json:"database_env"`
 	UsernameEnv string `yaml:"username_env" json:"username_env"`
 	PasswordEnv string `yaml:"password_env" json:"password_env"`
+}
+
+type YAMLHealthCheck struct {
+	Type             string   `yaml:"type" json:"type"`
+	Port             int      `yaml:"port,omitempty" json:"port,omitempty"`
+	Path             string   `yaml:"path,omitempty" json:"path,omitempty"`
+	ExpectedStatus   int      `yaml:"expected_status,omitempty" json:"expected_status,omitempty"`
+	Command          []string `yaml:"command,omitempty" json:"command,omitempty"`
+	TimeoutSeconds   int      `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	IntervalSeconds  int      `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"`
+	FailureThreshold int      `yaml:"failure_threshold,omitempty" json:"failure_threshold,omitempty"`
 }
 
 type YAMLTier struct {
@@ -185,6 +197,24 @@ const (
 	RouteStatusDeleting RouteStatus = "deleting"
 	RouteStatusDeleted  RouteStatus = "deleted"
 )
+
+type HealthStatus string
+
+const (
+	HealthHealthy   HealthStatus = "healthy"
+	HealthUnhealthy HealthStatus = "unhealthy"
+	HealthUnknown   HealthStatus = "unknown"
+	HealthStarting  HealthStatus = "starting"
+	HealthStopped   HealthStatus = "stopped"
+)
+
+type HealthReport struct {
+	InstanceID   string       `json:"instance_id"`
+	NodeID       string       `json:"node_id"`
+	HealthStatus HealthStatus `json:"health_status"`
+	Message      string       `json:"message,omitempty"`
+	CheckedAt    string       `json:"checked_at"`
+}
 
 type PublicRoute struct {
 	ID                  string      `json:"id"`

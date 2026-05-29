@@ -34,6 +34,11 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if svc.Public && svc.Port <= 0 {
 			return fmt.Errorf("service %q marked public requires a port greater than zero", name)
 		}
+		if errs := validateHealthcheck(name, svc.HealthCheck); len(errs) > 0 {
+			for _, e := range errs {
+				return e
+			}
+		}
 		for envName, secret := range svc.Secrets {
 			if envName == "" {
 				return fmt.Errorf("service %q secret name is required", name)
@@ -129,4 +134,31 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	}
 
 	return nil
+}
+
+func validateHealthcheck(serviceName string, hc *YAMLHealthCheck) []error {
+	var errs []error
+	if hc == nil {
+		return nil
+	}
+	switch hc.Type {
+	case "http":
+		if hc.Path == "" {
+			errs = append(errs, fmt.Errorf("service %q: healthcheck type http requires path", serviceName))
+		}
+		if hc.ExpectedStatus == 0 {
+			hc.ExpectedStatus = 200
+		}
+	case "tcp":
+		if hc.Port == 0 {
+			errs = append(errs, fmt.Errorf("service %q: healthcheck type tcp requires port", serviceName))
+		}
+	case "command":
+		if len(hc.Command) == 0 {
+			errs = append(errs, fmt.Errorf("service %q: healthcheck type command requires command", serviceName))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("service %q: invalid healthcheck type %q, must be http, tcp, or command", serviceName, hc.Type))
+	}
+	return errs
 }
