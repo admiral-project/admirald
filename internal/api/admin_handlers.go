@@ -350,6 +350,12 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 	case http.MethodPost:
 		if instanceID != "" && len(parts) >= 5 {
 			action := parts[4]
+			// Route backups sub-path to HandleTriggerBackup
+			if action == "backups" && len(parts) >= 6 {
+				backupType := parts[5]
+				h.HandleTriggerBackup(w, r, instanceID, backupType)
+				return
+			}
 			if action == "inspect" {
 				inst, _ := h.db.GetCustomerApp(instanceID)
 				if inst == nil {
@@ -878,7 +884,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "Target instance not found")
 		return
 	}
-	if inst.TechnicalStatus != "paused" {
+	if inst.TechnicalStatus != "paused" && inst.TechnicalStatus != "stopped" {
 		writeError(w, http.StatusConflict, "Restore is only allowed when the app is paused")
 		return
 	}
