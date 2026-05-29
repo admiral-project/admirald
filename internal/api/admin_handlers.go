@@ -253,6 +253,7 @@ func (h *APIHandlers) HandleAdminAppTiers(w http.ResponseWriter, r *http.Request
 			Memory       string                `json:"memory"`
 			Storage      string                `json:"storage"`
 			PriceMonthly float64               `json:"price_monthly"`
+			Environment  map[string]string     `json:"environment,omitempty"`
 			Backups      *admiral.BackupPolicy `json:"backups,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -262,6 +263,10 @@ func (h *APIHandlers) HandleAdminAppTiers(w http.ResponseWriter, r *http.Request
 
 		if req.Name == "" || req.CPU <= 0 || req.Memory == "" || req.Storage == "" {
 			writeError(w, http.StatusBadRequest, "Missing required tier fields")
+			return
+		}
+		if err := admiral.ValidateTierEnvironment(req.Name, req.Environment); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -293,11 +298,33 @@ func (h *APIHandlers) HandleAdminAppTiers(w http.ResponseWriter, r *http.Request
 			Memory:           req.Memory,
 			Storage:          req.Storage,
 			PriceMonthly:     req.PriceMonthly,
+			Environment:      req.Environment,
 			BackupPolicyJSON: backupPolicyJSON,
 		})
 
-		err := h.db.SaveAppDefinition(app.Name, app.DisplayName, app.Description, app.RawYAML, updatedTiers)
+		var payload admiral.AppDefinitionPayload
+		if err := yaml.Unmarshal([]byte(app.RawYAML), &payload); err != nil {
+			writeError(w, http.StatusInternalServerError, "Stored application definition is invalid")
+			return
+		}
+		if payload.Tiers == nil {
+			payload.Tiers = make(map[string]admiral.YAMLTier)
+		}
+		payload.Tiers[req.Name] = admiral.YAMLTier{
+			CPU:          req.CPU,
+			Memory:       req.Memory,
+			Storage:      req.Storage,
+			PriceMonthly: req.PriceMonthly,
+			Environment:  req.Environment,
+			Backups:      req.Backups,
+		}
+		updatedRawYAML, err := yaml.Marshal(payload)
 		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed serializing updated application definition")
+			return
+		}
+
+		if err := h.db.SaveAppDefinition(app.Name, app.DisplayName, app.Description, string(updatedRawYAML), updatedTiers); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -363,7 +390,7 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 						break
 					}
 				}
-				h.dispatchTask(opID, instanceID, *inst.NodeID, appDef.RawYAML, matchedTier, admiral.TaskAction("inspect_app"))
+				h.dispatchTask(opID, instanceID, *inst.NodeID, inst.CustomerID, appDef.RawYAML, matchedTier, admiral.TaskAction("inspect_app"))
 
 				writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 					OperationID: opID,
@@ -558,17 +585,7 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 	allSecretValues, _ := h.decryptedSecretMap(instanceID)
 	secretValues := scopeTaskSecrets(action, payload, allSecretValues)
 
-	var services []admiral.ServiceInfo
-	for name, s := range payload.Services {
-		services = append(services, admiral.ServiceInfo{
-			Name:    name,
-			Image:   s.Image,
-			Port:    s.Port,
-			Volume:  s.Volume,
-			Env:     s.Env,
-			Secrets: secretValues[name],
-		})
-	}
+	services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
 
 	task := &admiral.FleetTask{
 		TaskID:      generateID("task"),
@@ -581,10 +598,11 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 			Version: "latest",
 		},
 		Tier: admiral.TierInfo{
-			Name:    matchedTier.Name,
-			CPU:     matchedTier.CPU,
-			Memory:  matchedTier.Memory,
-			Storage: matchedTier.Storage,
+			Name:        matchedTier.Name,
+			CPU:         matchedTier.CPU,
+			Memory:      matchedTier.Memory,
+			Storage:     matchedTier.Storage,
+			Environment: matchedTier.Environment,
 		},
 		Services: services,
 	}
@@ -922,17 +940,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	services := make([]admiral.ServiceInfo, 0, len(payload.Services))
-	for name, svc := range payload.Services {
-		services = append(services, admiral.ServiceInfo{
-			Name:    name,
-			Image:   svc.Image,
-			Port:    svc.Port,
-			Volume:  svc.Volume,
-			Env:     svc.Env,
-			Secrets: allSecretValues[name],
-		})
-	}
+	services := buildServiceInfos(payload, matchedTier, inst.ID, inst.CustomerID, allSecretValues)
 
 	srcType := strings.ToLower(strings.TrimSpace(req.Source.Type))
 	srcURI := strings.TrimSpace(req.Source.URI)
@@ -959,7 +967,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		Action:      admiral.ActionRestoreBackup,
 		InstanceID:  inst.ID,
 		App:         admiral.AppInfo{Name: payload.Name, Version: "latest"},
-		Tier:        admiral.TierInfo{Name: matchedTier.Name, CPU: matchedTier.CPU, Memory: matchedTier.Memory, Storage: matchedTier.Storage},
+		Tier:        admiral.TierInfo{Name: matchedTier.Name, CPU: matchedTier.CPU, Memory: matchedTier.Memory, Storage: matchedTier.Storage, Environment: matchedTier.Environment},
 		Services:    services,
 		Backup: &admiral.BackupInfo{
 			Type:         payload.Backup.Type,

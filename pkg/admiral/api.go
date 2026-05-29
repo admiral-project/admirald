@@ -32,11 +32,11 @@ type AppDefinitionPayload struct {
 }
 
 type YAMLService struct {
-	Image   string                `yaml:"image" json:"image"`
-	Port    int                   `yaml:"port,omitempty" json:"port,omitempty"`
-	Public  bool                  `yaml:"public,omitempty" json:"public,omitempty"`
-	Volume  string                `yaml:"volume,omitempty" json:"volume,omitempty"`
-	Env     map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
+	Image       string                `yaml:"image" json:"image"`
+	Port        int                   `yaml:"port,omitempty" json:"port,omitempty"`
+	Public      bool                  `yaml:"public,omitempty" json:"public,omitempty"`
+	Volume      string                `yaml:"volume,omitempty" json:"volume,omitempty"`
+	Env         map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
 	Secrets     map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	HealthCheck *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 }
@@ -68,11 +68,12 @@ type YAMLHealthCheck struct {
 }
 
 type YAMLTier struct {
-	CPU          int           `yaml:"cpu" json:"cpu"`
-	Memory       string        `yaml:"memory" json:"memory"`
-	Storage      string        `yaml:"storage" json:"storage"`
-	PriceMonthly float64       `yaml:"price_monthly" json:"price_monthly"`
-	Backups      *BackupPolicy `yaml:"backups,omitempty" json:"backups,omitempty"`
+	CPU          int               `yaml:"cpu" json:"cpu"`
+	Memory       string            `yaml:"memory" json:"memory"`
+	Storage      string            `yaml:"storage" json:"storage"`
+	PriceMonthly float64           `yaml:"price_monthly" json:"price_monthly"`
+	Environment  map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Backups      *BackupPolicy     `yaml:"backups,omitempty" json:"backups,omitempty"`
 }
 
 type BackupPolicy struct {

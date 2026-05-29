@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -50,13 +51,14 @@ type AppDefinition struct {
 }
 
 type AppTier struct {
-	AppName          string  `json:"app_name"`
-	Name             string  `json:"name"`
-	CPU              int     `json:"cpu"`
-	Memory           string  `json:"memory"`
-	Storage          string  `json:"storage"`
-	PriceMonthly     float64 `json:"price_monthly"`
-	BackupPolicyJSON string  `json:"backup_policy_json,omitempty"`
+	AppName          string            `json:"app_name"`
+	Name             string            `json:"name"`
+	CPU              int               `json:"cpu"`
+	Memory           string            `json:"memory"`
+	Storage          string            `json:"storage"`
+	PriceMonthly     float64           `json:"price_monthly"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	BackupPolicyJSON string            `json:"backup_policy_json,omitempty"`
 }
 
 type CustomerApp struct {
@@ -248,11 +250,19 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 	}
 
 	queryTier := `
-		INSERT INTO app_tiers (app_name, name, cpu, memory, storage, price_monthly, backup_policy_json)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO app_tiers (app_name, name, cpu, memory, storage, price_monthly, environment_json, backup_policy_json)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	for _, tier := range tiers {
-		if _, err := tx.Exec(queryTier, name, tier.Name, tier.CPU, tier.Memory, tier.Storage, tier.PriceMonthly, tier.BackupPolicyJSON); err != nil {
+		envJSON := ""
+		if len(tier.Environment) > 0 {
+			data, err := json.Marshal(tier.Environment)
+			if err != nil {
+				return fmt.Errorf("marshal tier %q environment: %w", tier.Name, err)
+			}
+			envJSON = string(data)
+		}
+		if _, err := tx.Exec(queryTier, name, tier.Name, tier.CPU, tier.Memory, tier.Storage, tier.PriceMonthly, envJSON, tier.BackupPolicyJSON); err != nil {
 			return fmt.Errorf("insert tier %q: %w", tier.Name, err)
 		}
 	}
@@ -291,7 +301,7 @@ func (d *DB) GetAppDefinition(name string) (*AppDefinition, error) {
 }
 
 func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
-	rows, err := d.Query("SELECT app_name, name, cpu, memory, storage, price_monthly, backup_policy_json FROM app_tiers WHERE app_name = $1", appName)
+	rows, err := d.Query("SELECT app_name, name, cpu, memory, storage, price_monthly, environment_json, backup_policy_json FROM app_tiers WHERE app_name = $1", appName)
 	if err != nil {
 		return nil, fmt.Errorf("query app tiers: %w", err)
 	}
@@ -300,8 +310,14 @@ func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
 	var tiers []AppTier
 	for rows.Next() {
 		var t AppTier
-		if err := rows.Scan(&t.AppName, &t.Name, &t.CPU, &t.Memory, &t.Storage, &t.PriceMonthly, &t.BackupPolicyJSON); err != nil {
+		var envJSON string
+		if err := rows.Scan(&t.AppName, &t.Name, &t.CPU, &t.Memory, &t.Storage, &t.PriceMonthly, &envJSON, &t.BackupPolicyJSON); err != nil {
 			return nil, fmt.Errorf("scan tier row: %w", err)
+		}
+		if envJSON != "" {
+			if err := json.Unmarshal([]byte(envJSON), &t.Environment); err != nil {
+				return nil, fmt.Errorf("unmarshal tier %q environment: %w", t.Name, err)
+			}
 		}
 		tiers = append(tiers, t)
 	}

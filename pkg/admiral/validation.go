@@ -6,6 +6,7 @@ import (
 )
 
 var appNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	if payload.Name == "" {
@@ -84,6 +85,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if tier.PriceMonthly < 0 {
 			return fmt.Errorf("tier %q price_monthly must not be negative", name)
 		}
+		if err := ValidateTierEnvironment(name, tier.Environment); err != nil {
+			return err
+		}
 		if tier.Backups != nil && tier.Backups.Enabled {
 			s := tier.Backups.Schedule
 			if s != "disabled" && s != "daily" && s != "weekly" {
@@ -133,6 +137,25 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		}
 	}
 
+	return nil
+}
+
+func ValidateTierEnvironment(tierName string, environment map[string]string) error {
+	for key, value := range environment {
+		if key == "" {
+			return fmt.Errorf("tier %q environment variable name is required", tierName)
+		}
+		if !envNamePattern.MatchString(key) {
+			return fmt.Errorf("tier %q environment variable %q is invalid, must match %s", tierName, key, envNamePattern.String())
+		}
+		if len(key) >= len("ADMIRAL_") && key[:len("ADMIRAL_")] == "ADMIRAL_" {
+			return fmt.Errorf("tier %q environment variable %q uses reserved ADMIRAL_ prefix", tierName, key)
+		}
+		if value == "" {
+			// Empty strings are allowed; Admiral treats values as strings.
+			continue
+		}
+	}
 	return nil
 }
 

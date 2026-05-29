@@ -346,7 +346,7 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		h.enqueueTask(operationID, instanceID, nodeID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp)
+		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp)
 
 		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
 			OperationID: operationID,
@@ -568,7 +568,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	h.enqueueTask(operationID, req.InstanceID, *inst.NodeID, appDef.RawYAML, matchedTier, action)
+	h.enqueueTask(operationID, req.InstanceID, *inst.NodeID, inst.CustomerID, appDef.RawYAML, matchedTier, action)
 
 	writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
 		OperationID: operationID,
@@ -576,7 +576,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (h *APIHandlers) enqueueTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
+func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
 		h.log.Error("Failed to parse app definition for task dispatch", err, map[string]interface{}{"operation_id": opID})
@@ -605,17 +605,7 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, rawYAML string, tier dat
 		secretValues = scopeTaskSecrets(action, payload, allSecretValues)
 	}
 
-	var services []admiral.ServiceInfo
-	for name, s := range payload.Services {
-		services = append(services, admiral.ServiceInfo{
-			Name:    name,
-			Image:   s.Image,
-			Port:    s.Port,
-			Volume:  s.Volume,
-			Env:     s.Env,
-			Secrets: secretValues[name],
-		})
-	}
+	services := buildServiceInfos(payload, tier, instID, tenantID, secretValues)
 
 	task := &admiral.FleetTask{
 		TaskID:      generateID("task"),
@@ -628,10 +618,11 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, rawYAML string, tier dat
 			Version: "latest",
 		},
 		Tier: admiral.TierInfo{
-			Name:    tier.Name,
-			CPU:     tier.CPU,
-			Memory:  tier.Memory,
-			Storage: tier.Storage,
+			Name:        tier.Name,
+			CPU:         tier.CPU,
+			Memory:      tier.Memory,
+			Storage:     tier.Storage,
+			Environment: tier.Environment,
 		},
 		Services: services,
 	}
@@ -673,8 +664,8 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, rawYAML string, tier dat
 	}
 }
 
-func (h *APIHandlers) dispatchTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
-	h.enqueueTask(opID, instID, nodeID, rawYAML, tier, action)
+func (h *APIHandlers) dispatchTask(opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
+	h.enqueueTask(opID, instID, nodeID, tenantID, rawYAML, tier, action)
 }
 
 func (h *APIHandlers) enqueueRawTask(task *admiral.FleetTask) {

@@ -52,10 +52,11 @@ type AppInfo struct {
 }
 
 type TierInfo struct {
-	Name    string `json:"name"`
-	CPU     int    `json:"cpu"`
-	Memory  string `json:"memory"`
-	Storage string `json:"storage"`
+	Name        string            `json:"name"`
+	CPU         int               `json:"cpu"`
+	Memory      string            `json:"memory"`
+	Storage     string            `json:"storage"`
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 type ServiceInfo struct {

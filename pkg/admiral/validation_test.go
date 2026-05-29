@@ -19,7 +19,15 @@ func TestValidateAppDefinitionWithSecretsAndBackup(t *testing.T) {
 			},
 		},
 		Tiers: map[string]YAMLTier{
-			"starter": {CPU: 1, Memory: "1G", Storage: "10G", PriceMonthly: 10},
+			"starter": {
+				CPU:          1,
+				Memory:       "1G",
+				Storage:      "10G",
+				PriceMonthly: 10,
+				Environment: map[string]string{
+					"MAX_USERS": "3",
+				},
+			},
 		},
 		Backup: &YAMLBackup{
 			Type:        "database",
@@ -118,5 +126,55 @@ func TestValidateAppDefinitionRejectsInvalidAppName(t *testing.T) {
 
 	if err := ValidateAppDefinition(payload); err == nil {
 		t.Fatal("expected invalid app name to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsInvalidTierEnvironmentName(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "sample",
+		DisplayName: "Sample",
+		Services: map[string]YAMLService{
+			"web": {Image: "example.com/web:1"},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {
+				CPU:          1,
+				Memory:       "1G",
+				Storage:      "10G",
+				PriceMonthly: 10,
+				Environment: map[string]string{
+					"MAX-APP": "1",
+				},
+			},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected invalid tier environment name to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsReservedTierEnvironmentName(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "sample",
+		DisplayName: "Sample",
+		Services: map[string]YAMLService{
+			"web": {Image: "example.com/web:1"},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {
+				CPU:          1,
+				Memory:       "1G",
+				Storage:      "10G",
+				PriceMonthly: 10,
+				Environment: map[string]string{
+					"ADMIRAL_TENANT_ID": "fake",
+				},
+			},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected reserved tier environment name to fail")
 	}
 }

@@ -44,9 +44,22 @@ func TestSQLiteMigrationsAndCRUD(t *testing.T) {
 		Memory:       "512M",
 		Storage:      "1G",
 		PriceMonthly: 5,
+		Environment: map[string]string{
+			"MAX_USERS": "3",
+		},
 	}}
 	if err := db.SaveAppDefinition("whoami", "Whoami", "demo app", "name: whoami", tiers); err != nil {
 		t.Fatalf("save app definition: %v", err)
+	}
+	storedTiers, err := db.GetAppTiers("whoami")
+	if err != nil {
+		t.Fatalf("get app tiers: %v", err)
+	}
+	if len(storedTiers) != 1 {
+		t.Fatalf("expected 1 tier, got %d", len(storedTiers))
+	}
+	if storedTiers[0].Environment["MAX_USERS"] != "3" {
+		t.Fatalf("unexpected tier environment: %+v", storedTiers[0].Environment)
 	}
 	if err := db.CreateCustomerApp("inst_1", "cust_1", "whoami", "small", "node_1", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)

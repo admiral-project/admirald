@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS app_tiers (
     memory TEXT NOT NULL,
     storage TEXT NOT NULL,
     price_monthly NUMERIC(10, 2) NOT NULL,
+    environment_json TEXT NOT NULL DEFAULT '',
     backup_policy_json TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (app_name, name)
 );
@@ -177,6 +178,7 @@ func RunMigrations(db *sql.DB) error {
 	}
 
 	// Exec optional alters to be backwards compatible if tables already exist
+	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN environment_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN backup_policy_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN tier_snapshot_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN target_url TEXT NOT NULL DEFAULT ''")

@@ -226,17 +226,7 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 		allSecretValues, _ := h.decryptedSecretMap(instanceID)
 		secretValues := scopeTaskSecrets(admiral.ActionBackupDatabase, payload, allSecretValues)
 
-		var services []admiral.ServiceInfo
-		for name, s := range payload.Services {
-			services = append(services, admiral.ServiceInfo{
-				Name:    name,
-				Image:   s.Image,
-				Port:    s.Port,
-				Volume:  s.Volume,
-				Env:     s.Env,
-				Secrets: secretValues[name],
-			})
-		}
+		services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
 
 		task := &admiral.FleetTask{
 			TaskID:      generateID("task"),
@@ -249,10 +239,11 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 				Version: "latest",
 			},
 			Tier: admiral.TierInfo{
-				Name:    matchedTier.Name,
-				CPU:     matchedTier.CPU,
-				Memory:  matchedTier.Memory,
-				Storage: matchedTier.Storage,
+				Name:        matchedTier.Name,
+				CPU:         matchedTier.CPU,
+				Memory:      matchedTier.Memory,
+				Storage:     matchedTier.Storage,
+				Environment: matchedTier.Environment,
 			},
 			Services: services,
 			Backup: &admiral.BackupInfo{
@@ -325,7 +316,8 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 				Version: "latest",
 			},
 			Tier: admiral.TierInfo{
-				Name: inst.TierName,
+				Name:        inst.TierName,
+				Environment: matchedTier.Environment,
 			},
 		}
 		task.Storage = &admiral.StorageConfig{
