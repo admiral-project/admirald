@@ -744,6 +744,14 @@ func (d *DB) DeletePublicRoute(hostname string) error {
 	return nil
 }
 
+func (d *DB) DeletePublicRouteByKindAndNotHostname(kind, hostname string) error {
+	_, err := d.Exec("DELETE FROM public_routes WHERE route_kind = $1 AND hostname != $2", kind, hostname)
+	if err != nil {
+		return fmt.Errorf("delete public routes by kind %q except %q: %w", kind, hostname, err)
+	}
+	return nil
+}
+
 func (d *DB) UpdatePublicRouteStatus(hostname, status, lastError, lastHealth string, checkedAt *time.Time) error {
 	query := `
 		UPDATE public_routes
