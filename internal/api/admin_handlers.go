@@ -347,13 +347,12 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, apps)
 
-	case http.MethodPost:
+		case http.MethodPost:
 		if instanceID != "" && len(parts) >= 5 {
 			action := parts[4]
-			// Route backups sub-path to HandleTriggerBackup
-			if action == "backups" && len(parts) >= 6 {
-				backupType := parts[5]
-				h.HandleTriggerBackup(w, r, instanceID, backupType)
+			// Delegate all backup sub-paths to HandleAdminBackups
+			if action == "backups" {
+				h.HandleAdminBackups(w, r)
 				return
 			}
 			if action == "inspect" {
