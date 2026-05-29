@@ -229,7 +229,7 @@ func bootstrapConfig(routeCfg RouteConfig, email string) map[string]interface{} 
 
 func buildServerConfig(routes []database.PublicRoute, cfg RouteConfig) map[string]interface{} {
 	server := map[string]interface{}{
-		"listen": []interface{}{":443"},
+		"listen": []interface{}{":443", ":80"},
 		"automatic_https": map[string]interface{}{
 			"disable_redirects": false,
 		},
@@ -311,7 +311,14 @@ func redirectRoute(match []interface{}, location string) map[string]interface{} 
 func reverseProxyRoute(match []interface{}, upstream string) map[string]interface{} {
 	upstreams := []interface{}{}
 	if upstream != "" {
-		upstreams = append(upstreams, map[string]interface{}{"dial": upstream})
+		// Strip http:// prefix if present; Caddy dial expects host:port
+		dial := upstream
+		if strings.HasPrefix(dial, "http://") {
+			dial = dial[len("http://"):]
+		} else if strings.HasPrefix(dial, "https://") {
+			dial = dial[len("https://"):]
+		}
+		upstreams = append(upstreams, map[string]interface{}{"dial": dial})
 	}
 	return map[string]interface{}{
 		"match": match,
