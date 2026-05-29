@@ -260,17 +260,28 @@ func buildCaddyRoute(route database.PublicRoute, cfg RouteConfig) map[string]int
 			"terminal": true,
 		}
 	}
+	var target string
+	if route.TargetHost != "" && route.TargetPort > 0 {
+		target = fmt.Sprintf("http://%s:%d", route.TargetHost, route.TargetPort)
+	} else if strings.HasPrefix(route.TargetURL, "http://") || strings.HasPrefix(route.TargetURL, "https://") {
+		target = route.TargetURL
+	}
 	switch route.RouteKind {
 	case string(admiral.RouteKindAdmin):
+		if target != "" {
+			return reverseProxyRoute(match, target)
+		}
 		return staticResponseRoute(match, "Admiral admin placeholder")
 	case string(admiral.RouteKindPortal):
+		if target != "" {
+			return reverseProxyRoute(match, target)
+		}
 		return staticResponseRoute(match, "Admiral portal placeholder")
 	case string(admiral.RouteKindAppsRoot):
 		return redirectRoute(match, cfg.AppsRedirectTo)
 	default:
-		target := route.TargetURL
-		if target == "" && route.TargetHost != "" && route.TargetPort > 0 {
-			target = fmt.Sprintf("http://%s:%d", route.TargetHost, route.TargetPort)
+		if route.TargetURL != "" {
+			target = route.TargetURL
 		}
 		return reverseProxyRoute(match, target)
 	}

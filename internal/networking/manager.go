@@ -50,10 +50,20 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 			return err
 		}
 	}
+	adminTarget := "Admiral admin placeholder"
+	if m.Config.NetworkingAdminTarget != "" {
+		adminTarget = m.Config.NetworkingAdminTarget
+	}
 	routes := []database.PublicRoute{
-		m.staticRoute(m.Config.NetworkingAdminHost, string(admiral.RouteKindAdmin), "admin", "Admiral admin placeholder"),
+		m.staticRoute(m.Config.NetworkingAdminHost, string(admiral.RouteKindAdmin), "admin", adminTarget),
 		m.staticRoute(m.Config.NetworkingPortalHost, string(admiral.RouteKindPortal), "portal", "Admiral portal placeholder"),
 		m.staticRoute(m.Config.NetworkingAppsDomain, string(admiral.RouteKindAppsRoot), "apps", m.Config.NetworkingAppsRedirect),
+	}
+	// Remove stale static routes (same route_kind, different hostname).
+	for _, route := range routes {
+		if route.Hostname != "" {
+			m.DB.DeletePublicRouteByKindAndNotHostname(route.RouteKind, route.Hostname)
+		}
 	}
 	for _, route := range routes {
 		if route.Hostname == "" {
@@ -67,6 +77,11 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 			if err := m.DB.CreatePublicRoute(route); err != nil {
 				return err
 			}
+			continue
+		}
+		// Do not overwrite routes that have been configured with a real proxy target.
+		if strings.HasPrefix(existing.TargetURL, "http://") || strings.HasPrefix(existing.TargetURL, "https://") ||
+			existing.TargetHost != "" && existing.TargetPort > 0 {
 			continue
 		}
 		existing.PublicID = route.PublicID
