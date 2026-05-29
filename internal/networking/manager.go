@@ -141,7 +141,7 @@ func (m *Manager) CreateInstanceRoutes(instanceID string, appDef admiral.AppDefi
 	return []database.PublicRoute{route}, nil
 }
 
-func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string) error {
+func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string, hostPorts map[string]int) error {
 	routes, err := m.DB.GetPublicRoutes()
 	if err != nil {
 		return err
@@ -177,8 +177,12 @@ func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string)
 		}
 		route.NodeID = &node.ID
 		route.TargetHost = node.IP
-		route.TargetPort = svc.Port
-		route.TargetURL = fmt.Sprintf("http://%s:%d", node.IP, svc.Port)
+		if hp, ok := hostPorts[route.ServiceName]; ok && hp > 0 {
+			route.TargetPort = hp
+		} else {
+			route.TargetPort = svc.Port
+		}
+		route.TargetURL = fmt.Sprintf("http://%s:%d", node.IP, route.TargetPort)
 		route.TargetScheme = "http"
 		route.Status = string(admiral.RouteStatusActive)
 		route.LastError = ""
@@ -296,9 +300,6 @@ func (m *Manager) Sync(ctx context.Context) error {
 		route.LastError = lastErr
 		if route.Status == string(admiral.RouteStatusPending) && health == "healthy" {
 			route.Status = string(admiral.RouteStatusActive)
-		}
-		if health != "healthy" && route.Status == string(admiral.RouteStatusActive) {
-			route.Status = string(admiral.RouteStatusFailed)
 		}
 		_ = m.DB.UpdatePublicRoute(&route)
 	}

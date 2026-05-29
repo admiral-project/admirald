@@ -79,3 +79,13 @@ func TestScopeTaskSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHostPortsFromMetadata(t *testing.T) {
+	metadata := `{"executor":"systemd-podman","action":"provision_app","host_ports":{"web":8080,"db":15432}}`
+	got := parseHostPortsFromMetadata(metadata)
+	want := map[string]int{"web": 8080, "db": 15432}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %#v, got %#v", want, got)
+	}
+}

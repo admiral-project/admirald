@@ -236,7 +236,7 @@ func buildServerConfig(routes []database.PublicRoute, cfg RouteConfig) map[strin
 	}
 	caddyRoutes := make([]interface{}, 0, len(routes))
 	for _, route := range routes {
-		if route.Status == string(admiral.RouteStatusFailed) || route.Status == string(admiral.RouteStatusDeleting) || route.Status == string(admiral.RouteStatusDeleted) {
+		if route.Status == string(admiral.RouteStatusDeleting) || route.Status == string(admiral.RouteStatusDeleted) {
 			continue
 		}
 		caddyRoutes = append(caddyRoutes, buildCaddyRoute(route, cfg))

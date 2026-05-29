@@ -373,13 +373,27 @@ func (h *APIHandlers) firstActiveNodeID() (string, error) {
 }
 
 func (h *APIHandlers) createInstanceSecrets(instanceID string, payload admiral.AppDefinitionPayload) ([]admiral.Credential, error) {
-	var credentials []admiral.Credential
+	// First pass: generate all secrets for all services
+	allPlain := make(map[string]map[string]string) // serviceName -> envName -> plaintext
 	for serviceName, svc := range payload.Services {
+		allPlain[serviceName] = make(map[string]string)
 		for envName, secretDef := range svc.Secrets {
 			plain := secretDef.Value
 			if secretDef.Generate != "" {
 				plain = generateSecretValue(secretDef.Generate)
 			}
+			allPlain[serviceName][envName] = plain
+		}
+	}
+
+	// Second pass: normalize credentials that must match across services
+	normalizeInstanceSecrets(allPlain, payload)
+
+	// Encrypt and save
+	var credentials []admiral.Credential
+	for serviceName, svc := range payload.Services {
+		for envName, secretDef := range svc.Secrets {
+			plain := allPlain[serviceName][envName]
 
 			encrypted, err := h.secrets.Encrypt(plain)
 			if err != nil {
@@ -394,6 +408,65 @@ func (h *APIHandlers) createInstanceSecrets(instanceID string, payload admiral.A
 		}
 	}
 	return credentials, nil
+}
+
+// normalizeInstanceSecrets propagates database credentials from the database
+// service to any client service (e.g., WORDPRESS_DB_USER gets MARIADB_USER's value).
+func normalizeInstanceSecrets(all map[string]map[string]string, payload admiral.AppDefinitionPayload) {
+	// Identify the database service — the one with a volume or DB-like image
+	dbService := ""
+	for name, svc := range payload.Services {
+		if svc.Volume != "" {
+			dbService = name
+			break
+		}
+		img := strings.ToLower(svc.Image)
+		if strings.Contains(img, "postgres") || strings.Contains(img, "mysql") || strings.Contains(img, "mariadb") {
+			dbService = name
+			break
+		}
+	}
+	if dbService == "" {
+		return
+	}
+
+	dbSecrets := all[dbService]
+	if dbSecrets == nil {
+		return
+	}
+
+	// Find the DB user, password, and database env var names
+	var dbUser, dbPass, dbName string
+	for envName := range dbSecrets {
+		upper := strings.ToUpper(envName)
+		if strings.HasSuffix(upper, "_USER") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
+			dbUser = envName
+		}
+		if strings.HasSuffix(upper, "_PASSWORD") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
+			dbPass = envName
+		}
+		if strings.HasSuffix(upper, "_DATABASE") && (strings.HasPrefix(upper, "POSTGRES_") || strings.HasPrefix(upper, "MYSQL_") || strings.HasPrefix(upper, "MARIADB_")) {
+			dbName = envName
+		}
+	}
+
+	// Propagate to client services
+	for svcName, secrets := range all {
+		if svcName == dbService {
+			continue
+		}
+		for envName, _ := range secrets {
+			if dbUser != "" && strings.HasSuffix(strings.ToUpper(envName), "_DB_USER") {
+				all[svcName][envName] = dbSecrets[dbUser]
+			}
+			if dbPass != "" && strings.HasSuffix(strings.ToUpper(envName), "_DB_PASSWORD") {
+				all[svcName][envName] = dbSecrets[dbPass]
+			}
+			if dbName != "" && strings.HasSuffix(strings.ToUpper(envName), "_DB_NAME") {
+				all[svcName][envName] = dbSecrets[dbName]
+			}
+		}
+	}
 }
 
 func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Request) {
@@ -753,7 +826,8 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		case string(admiral.ActionProvisionApp), string(admiral.ActionStartApp), string(admiral.ActionResumeApp):
 			nextTechStatus = "running"
 			if op.Action == string(admiral.ActionProvisionApp) && h.networking != nil {
-				if err := h.networking.ActivateInstanceRoutes(context.Background(), op.InstanceID); err != nil {
+				hostPorts := parseHostPortsFromMetadata(res.Metadata)
+				if err := h.networking.ActivateInstanceRoutes(context.Background(), op.InstanceID, hostPorts); err != nil {
 					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
 				}
 			}
@@ -973,4 +1047,14 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func parseHostPortsFromMetadata(metadata string) map[string]int {
+	var data struct {
+		HostPorts map[string]int `json:"host_ports"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &data); err != nil {
+		return nil
+	}
+	return data.HostPorts
 }
