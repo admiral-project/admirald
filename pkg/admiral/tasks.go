@@ -53,7 +53,7 @@ type AppInfo struct {
 
 type TierInfo struct {
 	Name        string            `json:"name"`
-	CPU         int               `json:"cpu"`
+	CPU         float64           `json:"cpu"`
 	Memory      string            `json:"memory"`
 	Storage     string            `json:"storage"`
 	Environment map[string]string `json:"environment,omitempty"`

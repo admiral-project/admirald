@@ -53,7 +53,7 @@ type AppDefinition struct {
 type AppTier struct {
 	AppName          string            `json:"app_name"`
 	Name             string            `json:"name"`
-	CPU              int               `json:"cpu"`
+	CPU              float64           `json:"cpu"`
 	Memory           string            `json:"memory"`
 	Storage          string            `json:"storage"`
 	PriceMonthly     float64           `json:"price_monthly"`

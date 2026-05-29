@@ -141,6 +141,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 }
 
 func ValidateTierEnvironment(tierName string, environment map[string]string) error {
+	if environment == nil {
+		return nil
+	}
 	for key, value := range environment {
 		if key == "" {
 			return fmt.Errorf("tier %q environment variable name is required", tierName)

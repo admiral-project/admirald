@@ -68,7 +68,7 @@ type YAMLHealthCheck struct {
 }
 
 type YAMLTier struct {
-	CPU          int               `yaml:"cpu" json:"cpu"`
+	CPU          float64           `yaml:"cpu" json:"cpu"`
 	Memory       string            `yaml:"memory" json:"memory"`
 	Storage      string            `yaml:"storage" json:"storage"`
 	PriceMonthly float64           `yaml:"price_monthly" json:"price_monthly"`

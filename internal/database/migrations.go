@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS app_definitions (
 CREATE TABLE IF NOT EXISTS app_tiers (
     app_name TEXT REFERENCES app_definitions(name) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    cpu INTEGER NOT NULL,
+    cpu DOUBLE PRECISION NOT NULL,
     memory TEXT NOT NULL,
     storage TEXT NOT NULL,
     price_monthly NUMERIC(10, 2) NOT NULL,
@@ -178,6 +178,7 @@ func RunMigrations(db *sql.DB) error {
 	}
 
 	// Exec optional alters to be backwards compatible if tables already exist
+	_, _ = db.Exec("ALTER TABLE app_tiers ALTER COLUMN cpu TYPE DOUBLE PRECISION USING cpu::DOUBLE PRECISION")
 	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN environment_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE app_tiers ADD COLUMN backup_policy_json TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN tier_snapshot_json TEXT NOT NULL DEFAULT ''")
