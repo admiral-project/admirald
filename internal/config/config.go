@@ -23,6 +23,7 @@ type Config struct {
 	TLSKeyFile             string
 	NetworkingBaseDomain   string
 	NetworkingAdminHost    string
+	NetworkingAdminTarget  string
 	NetworkingPortalHost   string
 	NetworkingAppsDomain   string
 	NetworkingAppsRedirect string
@@ -47,6 +48,7 @@ func load(path string) (*Config, error) {
 		"tls_key_file":             "",
 		"networking_base_domain":   "",
 		"networking_admin_host":    "",
+		"networking_admin_target":  "",
 		"networking_portal_host":   "",
 		"networking_apps_domain":   "",
 		"networking_apps_redirect": "",
@@ -67,6 +69,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "rabbitmq_ca_file", "ADMIRAL_RABBITMQ_CA_FILE")
 	applyEnv(values, "networking_base_domain", "ADMIRAL_NETWORKING_BASE_DOMAIN")
 	applyEnv(values, "networking_admin_host", "ADMIRAL_NETWORKING_ADMIN_HOSTNAME")
+	applyEnv(values, "networking_admin_target", "ADMIRAL_NETWORKING_ADMIN_TARGET")
 	applyEnv(values, "networking_portal_host", "ADMIRAL_NETWORKING_PORTAL_HOSTNAME")
 	applyEnv(values, "networking_apps_domain", "ADMIRAL_NETWORKING_APPS_DOMAIN")
 	applyEnv(values, "networking_apps_redirect", "ADMIRAL_NETWORKING_APPS_REDIRECT_TO")
@@ -133,6 +136,7 @@ func load(path string) (*Config, error) {
 		TLSKeyFile:             values["tls_key_file"],
 		NetworkingBaseDomain:   values["networking_base_domain"],
 		NetworkingAdminHost:    values["networking_admin_host"],
+		NetworkingAdminTarget:  values["networking_admin_target"],
 		NetworkingPortalHost:   values["networking_portal_host"],
 		NetworkingAppsDomain:   values["networking_apps_domain"],
 		NetworkingAppsRedirect: values["networking_apps_redirect"],
