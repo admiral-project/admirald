@@ -769,6 +769,8 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 					h.log.Error("Delete public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
 				}
 			}
+		case string(admiral.ActionRestoreBackup):
+			nextTechStatus = "running"
 		case string(admiral.ActionBackupDatabase), "backup_volumes":
 			nextTechStatus = "running"
 
