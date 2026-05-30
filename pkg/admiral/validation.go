@@ -218,6 +218,44 @@ func parseStorageBytes(value string) int64 {
 	return int64(num * float64(multiplier))
 }
 
+var allowedRestoreSourceTypes = map[string]bool{
+	"local_path": true,
+	"https":      true,
+}
+
+func ValidateRestoreSource(source BackupRestoreSource, backupRecord *BackupRecord) error {
+	srcType := strings.ToLower(strings.TrimSpace(source.Type))
+	if srcType == "" {
+		srcType = strings.ToLower(strings.TrimSpace(backupRecord.StorageBackend))
+	}
+	if srcType == "" {
+		srcType = "local_path"
+	}
+
+	if !allowedRestoreSourceTypes[srcType] {
+		return fmt.Errorf("restore source type %q is not allowed: only local_path and https are permitted", srcType)
+	}
+
+	srcURI := strings.TrimSpace(source.URI)
+	if srcURI == "" {
+		srcURI = backupRecord.StorageKey
+	}
+
+	if srcType == "local_path" && srcURI != "" {
+		if strings.Contains(srcURI, "..") {
+			return fmt.Errorf("restore source path %q contains path traversal sequences", srcURI)
+		}
+	}
+
+	if srcType == "https" && srcURI != "" {
+		if !strings.HasPrefix(srcURI, "https://") {
+			return fmt.Errorf("restore source URI %q must use https scheme", srcURI)
+		}
+	}
+
+	return nil
+}
+
 func validateHealthcheck(serviceName string, hc *YAMLHealthCheck) []error {
 	var errs []error
 	if hc == nil {

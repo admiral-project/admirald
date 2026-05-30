@@ -154,6 +154,45 @@ func TestValidateAppDefinitionRejectsInvalidTierEnvironmentName(t *testing.T) {
 	}
 }
 
+func TestValidateRestoreSourceAllowsLocalPath(t *testing.T) {
+	rec := &BackupRecord{StorageBackend: "local_path", StorageKey: "/var/lib/admiral/backups/test.tgz"}
+	if err := ValidateRestoreSource(BackupRestoreSource{}, rec); err != nil {
+		t.Fatalf("expected local_path restore to pass: %v", err)
+	}
+}
+
+func TestValidateRestoreSourceAllowsHTTPS(t *testing.T) {
+	src := BackupRestoreSource{Type: "https", URI: "https://storage.example.com/backups/test.tgz"}
+	rec := &BackupRecord{}
+	if err := ValidateRestoreSource(src, rec); err != nil {
+		t.Fatalf("expected https restore to pass: %v", err)
+	}
+}
+
+func TestValidateRestoreSourceRejectsPathTraversal(t *testing.T) {
+	src := BackupRestoreSource{Type: "local_path", URI: "/var/lib/../../etc/passwd"}
+	rec := &BackupRecord{}
+	if err := ValidateRestoreSource(src, rec); err == nil {
+		t.Fatal("expected path traversal to fail")
+	}
+}
+
+func TestValidateRestoreSourceRejectsUnsupportedType(t *testing.T) {
+	src := BackupRestoreSource{Type: "s3"}
+	rec := &BackupRecord{}
+	if err := ValidateRestoreSource(src, rec); err == nil {
+		t.Fatal("expected unsupported type to fail")
+	}
+}
+
+func TestValidateRestoreSourceRejectsHTTP(t *testing.T) {
+	src := BackupRestoreSource{Type: "https", URI: "http://example.com/backup.tgz"}
+	rec := &BackupRecord{}
+	if err := ValidateRestoreSource(src, rec); err == nil {
+		t.Fatal("expected http scheme to fail")
+	}
+}
+
 func TestValidateAppDefinitionRejectsReservedTierEnvironmentName(t *testing.T) {
 	payload := AppDefinitionPayload{
 		Name:        "sample",

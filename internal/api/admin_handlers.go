@@ -899,6 +899,10 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "Target instance not found")
 		return
 	}
+	if err := admiral.ValidateRestoreSource(req.Source, bk); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if inst.TechnicalStatus != "paused" && inst.TechnicalStatus != "stopped" {
 		writeError(w, http.StatusConflict, "Restore is only allowed when the app is paused")
 		return
