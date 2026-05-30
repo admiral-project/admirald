@@ -216,10 +216,12 @@ type BackupRestoreSource struct {
 type RouteKind string
 
 const (
-	RouteKindAdmin    RouteKind = "admin"
-	RouteKindPortal   RouteKind = "portal"
-	RouteKindAppsRoot RouteKind = "apps_root"
-	RouteKindInstance RouteKind = "app_instance"
+	RouteKindAdmin     RouteKind = "admin"
+	RouteKindPortal    RouteKind = "portal"
+	RouteKindAppsRoot  RouteKind = "apps_root"
+	RouteKindInstance  RouteKind = "app_instance"
+	RouteKindFlagship  RouteKind = "flagship"
+	RouteKindCockpit   RouteKind = "cockpit"
 )
 
 type RouteStatus string

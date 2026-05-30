@@ -615,14 +615,11 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		Services: services,
 	}
 	if payload.Backup != nil {
-		dbType := payload.Backup.Engine
-		if dbType == "" {
-			dbType = payload.Backup.Type
-		}
 		task.Backup = &admiral.BackupInfo{
 			Type:         payload.Backup.Type,
+			Engine:       payload.Backup.Engine,
 			Service:      payload.Backup.Service,
-			DatabaseType: dbType,
+			DatabaseType: payload.Backup.Engine,
 			DatabaseEnv:  payload.Backup.DatabaseEnv,
 			UsernameEnv:  payload.Backup.UsernameEnv,
 			PasswordEnv:  payload.Backup.PasswordEnv,

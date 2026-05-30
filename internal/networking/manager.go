@@ -59,6 +59,12 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 		m.staticRoute(m.Config.NetworkingPortalHost, string(admiral.RouteKindPortal), "portal", "Admiral portal placeholder"),
 		m.staticRoute(m.Config.NetworkingAppsDomain, string(admiral.RouteKindAppsRoot), "apps", m.Config.NetworkingAppsRedirect),
 	}
+	if m.Config.NetworkingFlagshipHost != "" && m.Config.NetworkingFlagshipTarget != "" {
+		routes = append(routes, m.staticRoute(m.Config.NetworkingFlagshipHost, string(admiral.RouteKindFlagship), "flagship", m.Config.NetworkingFlagshipTarget))
+	}
+	if m.Config.NetworkingCockpitHost != "" && m.Config.NetworkingCockpitTarget != "" {
+		routes = append(routes, m.staticRoute(m.Config.NetworkingCockpitHost, string(admiral.RouteKindCockpit), "cockpit", m.Config.NetworkingCockpitTarget))
+	}
 	// Remove stale static routes (same route_kind, different hostname).
 	for _, route := range routes {
 		if route.Hostname != "" {
@@ -326,7 +332,8 @@ func (m *Manager) checkRouteHealth(route database.PublicRoute) (string, string) 
 		return "disabled", ""
 	}
 	switch route.RouteKind {
-	case string(admiral.RouteKindAdmin), string(admiral.RouteKindPortal), string(admiral.RouteKindAppsRoot):
+	case string(admiral.RouteKindAdmin), string(admiral.RouteKindPortal), string(admiral.RouteKindAppsRoot),
+		string(admiral.RouteKindFlagship), string(admiral.RouteKindCockpit):
 		return "healthy", ""
 	}
 	target := route.TargetURL

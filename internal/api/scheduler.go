@@ -247,11 +247,13 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 			},
 			Services: services,
 			Backup: &admiral.BackupInfo{
-				Type:        payload.Backup.Type,
-				Service:     payload.Backup.Service,
-				DatabaseEnv: payload.Backup.DatabaseEnv,
-				UsernameEnv: payload.Backup.UsernameEnv,
-				PasswordEnv: payload.Backup.PasswordEnv,
+				Type:         payload.Backup.Type,
+				Engine:       payload.Backup.Engine,
+				Service:      payload.Backup.Service,
+				DatabaseType: payload.Backup.Engine,
+				DatabaseEnv:  payload.Backup.DatabaseEnv,
+				UsernameEnv:  payload.Backup.UsernameEnv,
+				PasswordEnv:  payload.Backup.PasswordEnv,
 			},
 		}
 		task.Storage = &admiral.StorageConfig{

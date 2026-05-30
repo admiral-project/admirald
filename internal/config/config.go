@@ -29,9 +29,13 @@ type Config struct {
 	NetworkingPortalHost   string
 	NetworkingAppsDomain   string
 	NetworkingAppsRedirect string
-	NetworkingTLSProvider  string
-	NetworkingTLSEmail     string
-	CaddyAdminURL          string
+	NetworkingTLSProvider   string
+	NetworkingTLSEmail      string
+	NetworkingFlagshipHost  string
+	NetworkingFlagshipTarget string
+	NetworkingCockpitHost   string
+	NetworkingCockpitTarget string
+	CaddyAdminURL           string
 }
 
 func Load() (*Config, error) {
@@ -57,8 +61,12 @@ func load(path string) (*Config, error) {
 		"networking_apps_domain":   "",
 		"networking_apps_redirect": "",
 		"networking_tls_provider":  "letsencrypt",
-		"networking_tls_email":     "",
-		"caddy_admin_url":          "http://127.0.0.1:2019",
+		"networking_tls_email":      "",
+		"networking_flagship_host":   "",
+		"networking_flagship_target": "http://127.0.0.1:5000",
+		"networking_cockpit_host":    "",
+		"networking_cockpit_target":  "http://127.0.0.1:9090",
+		"caddy_admin_url":           "http://127.0.0.1:2019",
 	}
 
 	loadINI(path, values)
@@ -81,6 +89,10 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "networking_apps_redirect", "ADMIRAL_NETWORKING_APPS_REDIRECT_TO")
 	applyEnv(values, "networking_tls_provider", "ADMIRAL_NETWORKING_TLS_PROVIDER")
 	applyEnv(values, "networking_tls_email", "ADMIRAL_NETWORKING_TLS_EMAIL")
+	applyEnv(values, "networking_flagship_host", "ADMIRAL_NETWORKING_FLAGSHIP_HOST")
+	applyEnv(values, "networking_flagship_target", "ADMIRAL_NETWORKING_FLAGSHIP_TARGET")
+	applyEnv(values, "networking_cockpit_host", "ADMIRAL_NETWORKING_COCKPIT_HOST")
+	applyEnv(values, "networking_cockpit_target", "ADMIRAL_NETWORKING_COCKPIT_TARGET")
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 
 	if values["shared_token"] == "" {
@@ -120,6 +132,12 @@ func load(path string) (*Config, error) {
 	if values["networking_apps_redirect"] == "" && values["networking_base_domain"] != "" {
 		values["networking_apps_redirect"] = "portal." + values["networking_base_domain"]
 	}
+	if values["networking_flagship_host"] == "" && values["networking_base_domain"] != "" {
+		values["networking_flagship_host"] = "flagship." + values["networking_base_domain"]
+	}
+	if values["networking_cockpit_host"] == "" && values["networking_base_domain"] != "" {
+		values["networking_cockpit_host"] = "cockpit." + values["networking_base_domain"]
+	}
 	if values["networking_tls_provider"] == "" {
 		values["networking_tls_provider"] = "letsencrypt"
 	}
@@ -149,8 +167,12 @@ func load(path string) (*Config, error) {
 		NetworkingAppsDomain:   values["networking_apps_domain"],
 		NetworkingAppsRedirect: values["networking_apps_redirect"],
 		NetworkingTLSProvider:  values["networking_tls_provider"],
-		NetworkingTLSEmail:     values["networking_tls_email"],
-		CaddyAdminURL:          values["caddy_admin_url"],
+		NetworkingTLSEmail:      values["networking_tls_email"],
+		NetworkingFlagshipHost:   values["networking_flagship_host"],
+		NetworkingFlagshipTarget: values["networking_flagship_target"],
+		NetworkingCockpitHost:    values["networking_cockpit_host"],
+		NetworkingCockpitTarget:  values["networking_cockpit_target"],
+		CaddyAdminURL:           values["caddy_admin_url"],
 	}, nil
 }
 

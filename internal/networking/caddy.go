@@ -296,6 +296,11 @@ func buildCaddyRoute(route database.PublicRoute, cfg RouteConfig) map[string]int
 			return reverseProxyRoute(match, target)
 		}
 		return staticResponseRoute(match, "Admiral portal placeholder")
+	case string(admiral.RouteKindFlagship), string(admiral.RouteKindCockpit):
+		if target != "" {
+			return reverseProxyRoute(match, target)
+		}
+		return staticResponseRoute(match, "Service placeholder")
 	case string(admiral.RouteKindAppsRoot):
 		return redirectRoute(match, cfg.AppsRedirectTo)
 	default:
