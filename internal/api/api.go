@@ -43,6 +43,11 @@ func (s *Server) Listen(port, certFile, keyFile string) error {
 	mux.HandleFunc("/api/v1/fleet/storage", AuthMiddleware(s.token, s.handlers.HandleStorageReport))
 	mux.HandleFunc("/api/v1/routes", AuthMiddleware(s.token, s.handlers.HandleRoutes))
 	mux.HandleFunc("/api/v1/routes/", AuthMiddleware(s.token, s.handlers.HandleRoutes))
+	mux.HandleFunc("/api/v1/instances", AuthMiddleware(s.token, s.handlers.HandleAdminInstances))
+	mux.HandleFunc("/api/v1/instances/", AuthMiddleware(s.token, s.handlers.HandleAdminInstances))
+	mux.HandleFunc("/api/v1/backups", AuthMiddleware(s.token, s.handlers.HandleAdminBackups))
+	mux.HandleFunc("/api/v1/backups/", AuthMiddleware(s.token, s.handlers.HandleAdminBackups))
+	mux.HandleFunc("/api/v1/backups/restore", AuthMiddleware(s.token, s.handlers.HandleAdminRestoreBackup))
 
 	// Administrative endpoints
 	mux.HandleFunc("/api/admin/auth/login", s.handlers.HandleAdminLogin)
