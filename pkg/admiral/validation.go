@@ -3,6 +3,7 @@ package admiral
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 var appNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -82,6 +83,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if tier.Storage == "" {
 			return fmt.Errorf("tier %q storage is required", name)
 		}
+		if !isValidStorageFormat(tier.Storage) {
+			return fmt.Errorf("tier %q storage %q has invalid format: expected a number followed by unit (e.g., 10G, 5Gi, 1024M, 1T)", name, tier.Storage)
+		}
 		if tier.PriceMonthly < 0 {
 			return fmt.Errorf("tier %q price_monthly must not be negative", name)
 		}
@@ -160,6 +164,12 @@ func ValidateTierEnvironment(tierName string, environment map[string]string) err
 		}
 	}
 	return nil
+}
+
+var validStorageUnit = regexp.MustCompile(`^(?i)[0-9]+(\.[0-9]+)?\s*(k|kb|kib|ki|m|mb|mib|mi|g|gb|gib|gi|t|tb|tib|ti)?$`)
+
+func isValidStorageFormat(value string) bool {
+	return validStorageUnit.MatchString(strings.TrimSpace(value))
 }
 
 func validateHealthcheck(serviceName string, hc *YAMLHealthCheck) []error {
