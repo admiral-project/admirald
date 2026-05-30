@@ -62,15 +62,25 @@ type AppTier struct {
 }
 
 type CustomerApp struct {
-	ID                string    `json:"id"`
-	CustomerID        string    `json:"customer_id"`
-	AppDefinitionName string    `json:"app_definition_name"`
-	TierName          string    `json:"tier_name"`
-	NodeID            *string   `json:"node_id"`
-	CommercialStatus  string    `json:"commercial_status"`
-	TechnicalStatus   string    `json:"technical_status"`
-	TierSnapshotJSON  string    `json:"tier_snapshot_json"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string     `json:"id"`
+	CustomerID        string     `json:"customer_id"`
+	AppDefinitionName string     `json:"app_definition_name"`
+	TierName          string     `json:"tier_name"`
+	NodeID            *string    `json:"node_id"`
+	CommercialStatus  string     `json:"commercial_status"`
+	TechnicalStatus   string     `json:"technical_status"`
+	TierSnapshotJSON  string     `json:"tier_snapshot_json"`
+	CreatedAt         time.Time  `json:"created_at"`
+	HealthStatus      string     `json:"health_status"`
+	HealthMessage     string     `json:"health_message,omitempty"`
+	LastHealthChecked *time.Time `json:"last_health_checked_at,omitempty"`
+	StorageLimitBytes int64      `json:"storage_limit_bytes"`
+	StorageUsedBytes  int64      `json:"storage_used_bytes"`
+	StorageUsedPct    float64    `json:"storage_used_percent"`
+	StorageState      string     `json:"storage_state"`
+	StorageMessage    string     `json:"storage_message,omitempty"`
+	StorageCheckedAt  *time.Time `json:"storage_checked_at,omitempty"`
+	StorageExceeded   bool       `json:"storage_exceeded"`
 }
 
 type Operation struct {
@@ -359,7 +369,15 @@ func (d *DB) UpdateCustomerAppStatus(id, commStatus, techStatus string) error {
 }
 
 func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
-	rows, err := d.Query("SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, created_at FROM customer_apps ORDER BY created_at DESC")
+	rows, err := d.Query(`SELECT id, customer_id, app_definition_name, tier_name, node_id,
+		commercial_status, technical_status, tier_snapshot_json, created_at,
+		COALESCE(health_status, ''), COALESCE(health_message, ''),
+		last_health_checked_at,
+		COALESCE(storage_limit_bytes, 0), COALESCE(storage_used_bytes, 0),
+		COALESCE(storage_used_percent, 0), COALESCE(storage_state, 'unknown'),
+		COALESCE(storage_message, ''), storage_checked_at,
+		COALESCE(storage_exceeded, FALSE)
+		FROM customer_apps ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query customer apps: %w", err)
 	}
@@ -368,7 +386,13 @@ func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
 	var apps []CustomerApp
 	for rows.Next() {
 		var a CustomerApp
-		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID,
+			&a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt,
+			&a.HealthStatus, &a.HealthMessage, &a.LastHealthChecked,
+			&a.StorageLimitBytes, &a.StorageUsedBytes, &a.StorageUsedPct,
+			&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
+			&a.StorageExceeded,
+		); err != nil {
 			return nil, fmt.Errorf("scan customer app row: %w", err)
 		}
 		apps = append(apps, a)
@@ -378,8 +402,22 @@ func (d *DB) GetCustomerApps() ([]CustomerApp, error) {
 
 func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 	var a CustomerApp
-	query := "SELECT id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, created_at FROM customer_apps WHERE id = $1"
-	err := d.QueryRow(query, id).Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID, &a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt)
+	query := `SELECT id, customer_id, app_definition_name, tier_name, node_id,
+		commercial_status, technical_status, tier_snapshot_json, created_at,
+		COALESCE(health_status, ''), COALESCE(health_message, ''),
+		last_health_checked_at,
+		COALESCE(storage_limit_bytes, 0), COALESCE(storage_used_bytes, 0),
+		COALESCE(storage_used_percent, 0), COALESCE(storage_state, 'unknown'),
+		COALESCE(storage_message, ''), storage_checked_at,
+		COALESCE(storage_exceeded, FALSE)
+		FROM customer_apps WHERE id = $1`
+	err := d.QueryRow(query, id).Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID,
+		&a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt,
+		&a.HealthStatus, &a.HealthMessage, &a.LastHealthChecked,
+		&a.StorageLimitBytes, &a.StorageUsedBytes, &a.StorageUsedPct,
+		&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
+		&a.StorageExceeded,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -1092,6 +1130,15 @@ func (d *DB) UpdateOutboxEntryRetry(id, lastError string, retryCount int) error 
 func (d *DB) UpdateInstanceHealth(instanceID, healthStatus, message string) error {
 	_, err := d.Exec("UPDATE customer_apps SET health_status = $1, health_message = $2, last_health_checked_at = CURRENT_TIMESTAMP WHERE id = $3",
 		healthStatus, message, instanceID)
+	return err
+}
+
+func (d *DB) UpdateInstanceStorage(instanceID, storageState, storageMessage string, limitBytes, usedBytes int64, usedPct float64, exceeded bool) error {
+	_, err := d.Exec(`UPDATE customer_apps SET
+		storage_limit_bytes = $1, storage_used_bytes = $2, storage_used_percent = $3,
+		storage_state = $4, storage_message = $5, storage_checked_at = CURRENT_TIMESTAMP,
+		storage_exceeded = $6 WHERE id = $7`,
+		limitBytes, usedBytes, usedPct, storageState, storageMessage, exceeded, instanceID)
 	return err
 }
 

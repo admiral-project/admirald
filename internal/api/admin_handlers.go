@@ -1018,3 +1018,55 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
+
+func (h *APIHandlers) HandleStorageReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var report admiral.StorageReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if report.InstanceID == "" || report.NodeID == "" || report.StorageState == "" {
+		writeError(w, http.StatusBadRequest, "instance_id, node_id, and storage_state are required")
+		return
+	}
+
+	inst, _ := h.db.GetCustomerApp(report.InstanceID)
+	prevState := ""
+	if inst != nil {
+		prevState = inst.StorageState
+	}
+
+	exceeded := string(report.StorageState) == string(admiral.StorageExceeded)
+	if err := h.db.UpdateInstanceStorage(
+		report.InstanceID,
+		string(report.StorageState),
+		report.StorageMessage,
+		report.StorageLimitBytes,
+		report.StorageUsedBytes,
+		report.StorageUsedPct,
+		exceeded,
+	); err != nil {
+		h.log.Error("Failed to update instance storage", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to update storage")
+		return
+	}
+
+	newState := string(report.StorageState)
+	if prevState != newState {
+		h.log.Info("Storage state changed", map[string]interface{}{
+			"instance_id":  report.InstanceID,
+			"node_id":      report.NodeID,
+			"prev_state":   prevState,
+			"new_state":    newState,
+			"used_bytes":   report.StorageUsedBytes,
+			"used_percent": report.StorageUsedPct,
+			"limit_bytes":  report.StorageLimitBytes,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}

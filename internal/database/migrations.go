@@ -185,5 +185,17 @@ func RunMigrations(db *sql.DB) error {
 	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN target_url TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN last_health_checked_at TIMESTAMP")
 
+	// Storage monitoring columns
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN health_status TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN health_message TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN last_health_checked_at TIMESTAMP")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_limit_bytes BIGINT NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_used_bytes BIGINT NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_used_percent REAL NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_state TEXT NOT NULL DEFAULT 'unknown'")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_message TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_checked_at TIMESTAMP")
+	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN storage_exceeded BOOLEAN NOT NULL DEFAULT FALSE")
+
 	return nil
 }

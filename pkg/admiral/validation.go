@@ -3,6 +3,7 @@ package admiral
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -85,6 +86,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		}
 		if !isValidStorageFormat(tier.Storage) {
 			return fmt.Errorf("tier %q storage %q has invalid format: expected a number followed by unit (e.g., 10G, 5Gi, 1024M, 1T)", name, tier.Storage)
+		}
+		if storageBytes := parseStorageBytes(tier.Storage); storageBytes <= 0 {
+			return fmt.Errorf("tier %q storage %q must be greater than zero", name, tier.Storage)
 		}
 		if tier.PriceMonthly < 0 {
 			return fmt.Errorf("tier %q price_monthly must not be negative", name)
@@ -170,6 +174,48 @@ var validStorageUnit = regexp.MustCompile(`^(?i)[0-9]+(\.[0-9]+)?\s*(k|kb|kib|ki
 
 func isValidStorageFormat(value string) bool {
 	return validStorageUnit.MatchString(strings.TrimSpace(value))
+}
+
+func parseStorageBytes(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	lower := strings.ToLower(value)
+	multiplier := int64(1)
+
+	switch {
+	case strings.HasSuffix(lower, "tib"), strings.HasSuffix(lower, "ti"), strings.HasSuffix(lower, "tb"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		value = value[:len(value)-2]
+	case strings.HasSuffix(lower, "t"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		value = value[:len(value)-1]
+	case strings.HasSuffix(lower, "gib"), strings.HasSuffix(lower, "gi"), strings.HasSuffix(lower, "gb"):
+		multiplier = 1024 * 1024 * 1024
+		value = value[:len(value)-2]
+	case strings.HasSuffix(lower, "g"):
+		multiplier = 1024 * 1024 * 1024
+		value = value[:len(value)-1]
+	case strings.HasSuffix(lower, "mib"), strings.HasSuffix(lower, "mi"), strings.HasSuffix(lower, "mb"):
+		multiplier = 1024 * 1024
+		value = value[:len(value)-2]
+	case strings.HasSuffix(lower, "m"):
+		multiplier = 1024 * 1024
+		value = value[:len(value)-1]
+	case strings.HasSuffix(lower, "kib"), strings.HasSuffix(lower, "ki"), strings.HasSuffix(lower, "kb"):
+		multiplier = 1024
+		value = value[:len(value)-2]
+	case strings.HasSuffix(lower, "k"):
+		multiplier = 1024
+		value = value[:len(value)-1]
+	}
+
+	num, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || num <= 0 {
+		return 0
+	}
+	return int64(num * float64(multiplier))
 }
 
 func validateHealthcheck(serviceName string, hc *YAMLHealthCheck) []error {

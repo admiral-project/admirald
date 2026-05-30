@@ -217,6 +217,27 @@ type HealthReport struct {
 	CheckedAt    string       `json:"checked_at"`
 }
 
+type StorageState string
+
+const (
+	StorageOK       StorageState = "ok"
+	StorageWarning  StorageState = "warning"
+	StorageCritical StorageState = "critical"
+	StorageExceeded StorageState = "exceeded"
+	StorageUnknown  StorageState = "unknown"
+)
+
+type StorageReport struct {
+	InstanceID        string       `json:"instance_id"`
+	NodeID            string       `json:"node_id"`
+	StorageLimitBytes int64        `json:"storage_limit_bytes"`
+	StorageUsedBytes  int64        `json:"storage_used_bytes"`
+	StorageUsedPct    float64      `json:"storage_used_percent"`
+	StorageState      StorageState `json:"storage_state"`
+	StorageMessage    string       `json:"storage_message,omitempty"`
+	CheckedAt         string       `json:"checked_at"`
+}
+
 type PublicRoute struct {
 	ID                  string      `json:"id"`
 	Hostname            string      `json:"hostname"`
