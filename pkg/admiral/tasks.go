@@ -64,6 +64,7 @@ type ServiceInfo struct {
 	Image   string            `json:"image"`
 	Port    int               `json:"port,omitempty"`
 	Volume  string            `json:"volume,omitempty"`
+	Command string            `json:"command,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Secrets map[string]string `json:"secrets,omitempty"`
 }

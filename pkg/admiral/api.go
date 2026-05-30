@@ -41,6 +41,7 @@ type YAMLService struct {
 	Port        int                   `yaml:"port,omitempty" json:"port,omitempty"`
 	Public      bool                  `yaml:"public,omitempty" json:"public,omitempty"`
 	Volume      string                `yaml:"volume,omitempty" json:"volume,omitempty"`
+	Command     string                `yaml:"command,omitempty" json:"command,omitempty"`
 	Env         map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
 	Secrets     map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	HealthCheck *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`

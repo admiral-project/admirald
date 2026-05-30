@@ -15,6 +15,7 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 			Image:   svc.Image,
 			Port:    svc.Port,
 			Volume:  svc.Volume,
+			Command: svc.Command,
 			Env:     env,
 			Secrets: secretValues[name],
 		})
