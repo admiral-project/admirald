@@ -31,6 +31,10 @@ func (l *Logger) Info(message string, fields map[string]interface{}) {
 	l.log("INFO", message, fields)
 }
 
+func (l *Logger) Warn(message string, fields map[string]interface{}) {
+	l.log("WARN", message, fields)
+}
+
 func (l *Logger) Error(message string, err error, fields map[string]interface{}) {
 	if fields == nil {
 		fields = make(map[string]interface{})

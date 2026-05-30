@@ -4,6 +4,10 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +37,42 @@ func NewPublisher(url string, tlsConfig *tls.Config, log *logging.Logger) *AMQPP
 	return p
 }
 
+func (p *AMQPPublisher) ensureVhost() {
+	u, err := url.Parse(p.url)
+	if err != nil {
+		return
+	}
+	vhost := strings.TrimPrefix(u.Path, "/")
+	if vhost == "" {
+		return
+	}
+	host := u.Hostname()
+	mgmtURL := fmt.Sprintf("http://%s:15672/api/vhosts/%s", host, url.PathEscape(vhost))
+
+	req, err := http.NewRequest("PUT", mgmtURL, nil)
+	if err != nil {
+		p.log.Warn("Failed to build management API request for vhost creation", nil)
+		return
+	}
+	password, _ := u.User.Password()
+	req.SetBasicAuth(u.User.Username(), password)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		p.log.Warn("Management API call for vhost creation failed", map[string]interface{}{"vhost": vhost, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+		p.log.Info("RabbitMQ vhost created or already exists via Management API", map[string]interface{}{"vhost": vhost})
+	} else {
+		body, _ := ioutil.ReadAll(resp.Body)
+		p.log.Warn("Unexpected Management API response for vhost creation", map[string]interface{}{"vhost": vhost, "status": resp.StatusCode, "body": string(body)})
+	}
+}
+
 func (p *AMQPPublisher) connectLoop() {
 	for {
 		p.mu.Lock()
@@ -45,6 +85,8 @@ func (p *AMQPPublisher) connectLoop() {
 		p.log.Info("Connecting to RabbitMQ server...", map[string]interface{}{"url": config.RedactURL(p.url)})
 		conn, err := amqp.DialTLS(p.url, p.tlsConfig)
 		if err != nil {
+			p.log.Warn("AMQP connection failed, attempting to ensure vhost exists via Management API", map[string]interface{}{"error": err.Error()})
+			p.ensureVhost()
 			p.log.Error("RabbitMQ connection failed, retrying in 5 seconds", err, nil)
 			time.Sleep(5 * time.Second)
 			continue
