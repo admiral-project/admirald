@@ -305,6 +305,10 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 		}
 		_ = h.db.CreateBackupRecord(bkRec)
 
+		decryptedSecrets, _ := h.decryptedSecretMap(instanceID)
+		secretValues := scopeTaskSecrets(admiral.ActionBackupVolumes, payload, decryptedSecrets)
+		services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
+
 		task := &admiral.FleetTask{
 			TaskID:      generateID("task"),
 			OperationID: opID,
@@ -319,6 +323,7 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 				Name:        inst.TierName,
 				Environment: matchedTier.Environment,
 			},
+			Services: services,
 		}
 		task.Storage = &admiral.StorageConfig{
 			Backend: backend,
