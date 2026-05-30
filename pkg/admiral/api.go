@@ -100,8 +100,10 @@ type AdminLoginRequest struct {
 }
 
 type AdminLoginResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expires_at"`
+	Token                  string `json:"token,omitempty"`
+	ExpiresAt              string `json:"expires_at,omitempty"`
+	PasswordChangeRequired bool   `json:"password_change_required,omitempty"`
+	Username               string `json:"username,omitempty"`
 }
 
 type AdminMeResponse struct {

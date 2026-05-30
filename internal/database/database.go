@@ -829,29 +829,41 @@ func (d *DB) UpdatePublicRouteStatus(hostname, status, lastError, lastHealth str
 
 // --- Admin Users CRUD ---
 
-func (d *DB) CreateAdminUser(username, passwordHash string) error {
+func (d *DB) CreateAdminUser(username, passwordHash string, mustChangePassword bool) error {
 	query := `
-		INSERT INTO admin_users (username, password_hash)
-		VALUES ($1, $2)
-		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash
+		INSERT INTO admin_users (username, password_hash, must_change_password)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (username) DO UPDATE SET
+			password_hash = EXCLUDED.password_hash,
+			must_change_password = EXCLUDED.must_change_password
 	`
-	_, err := d.Exec(query, username, passwordHash)
+	_, err := d.Exec(query, username, passwordHash, mustChangePassword)
 	if err != nil {
 		return fmt.Errorf("create admin user: %w", err)
 	}
 	return nil
 }
 
-func (d *DB) GetAdminUser(username string) (string, error) {
+func (d *DB) GetAdminUser(username string) (string, bool, error) {
 	var passwordHash string
-	query := "SELECT password_hash FROM admin_users WHERE username = $1"
-	err := d.QueryRow(query, username).Scan(&passwordHash)
+	var mustChange bool
+	query := "SELECT password_hash, must_change_password FROM admin_users WHERE username = $1"
+	err := d.QueryRow(query, username).Scan(&passwordHash, &mustChange)
 	if err == sql.ErrNoRows {
-		return "", nil
+		return "", false, nil
 	} else if err != nil {
-		return "", fmt.Errorf("get admin user: %w", err)
+		return "", false, fmt.Errorf("get admin user: %w", err)
 	}
-	return passwordHash, nil
+	return passwordHash, mustChange, nil
+}
+
+func (d *DB) UpdateAdminPassword(username, passwordHash string) error {
+	query := "UPDATE admin_users SET password_hash = $1, must_change_password = FALSE WHERE username = $2"
+	_, err := d.Exec(query, passwordHash, username)
+	if err != nil {
+		return fmt.Errorf("update admin password: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) HasAnyAdminUser() (bool, error) {

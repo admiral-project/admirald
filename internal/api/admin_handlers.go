@@ -79,7 +79,7 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storedHash, err := h.db.GetAdminUser(req.Username)
+	storedHash, mustChange, err := h.db.GetAdminUser(req.Username)
 	if err != nil {
 		h.log.Error("Failed to fetch admin user", err, map[string]interface{}{"username": req.Username})
 		writeError(w, http.StatusInternalServerError, "Database error")
@@ -98,6 +98,14 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+
+	if mustChange {
+		writeJSON(w, http.StatusOK, admiral.AdminLoginResponse{
+			PasswordChangeRequired: true,
+			Username:               req.Username,
+		})
 		return
 	}
 

@@ -83,7 +83,7 @@ func newAdminLoginTestHandler(t *testing.T) *APIHandlers {
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
-	if err := db.CreateAdminUser("admin", hash); err != nil {
+	if err := db.CreateAdminUser("admin", hash, false); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 

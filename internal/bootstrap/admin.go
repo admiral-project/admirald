@@ -34,7 +34,7 @@ func EnsureInitialAdmin(db *database.DB, cfg *config.Config) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("hash initial admin password: %w", err)
 	}
-	if err := db.CreateAdminUser(username, hash); err != nil {
+	if err := db.CreateAdminUser(username, hash, true); err != nil {
 		return false, fmt.Errorf("create initial admin user: %w", err)
 	}
 	return true, nil

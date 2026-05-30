@@ -185,6 +185,9 @@ func RunMigrations(db *sql.DB) error {
 	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN target_url TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE public_routes ADD COLUMN last_health_checked_at TIMESTAMP")
 
+	// Admin hardening
+	_, _ = db.Exec("ALTER TABLE admin_users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE")
+
 	// Storage monitoring columns
 	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN health_status TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE customer_apps ADD COLUMN health_message TEXT NOT NULL DEFAULT ''")

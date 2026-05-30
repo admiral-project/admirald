@@ -23,7 +23,7 @@ func TestEnsureInitialAdminCreatesBootstrapAdmin(t *testing.T) {
 		t.Fatal("expected admin to be created")
 	}
 
-	storedHash, err := db.GetAdminUser("admin")
+	storedHash, _, err := db.GetAdminUser("admin")
 	if err != nil {
 		t.Fatalf("get admin user: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestEnsureInitialAdminCreatesBootstrapAdmin(t *testing.T) {
 
 func TestEnsureInitialAdminSkipsWhenAdminExists(t *testing.T) {
 	db := openTestDB(t)
-	if err := db.CreateAdminUser("existing", "stored-hash"); err != nil {
+	if err := db.CreateAdminUser("existing", "stored-hash", false); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestEnsureInitialAdminSkipsWhenAdminExists(t *testing.T) {
 		t.Fatal("expected bootstrap to be skipped when an admin already exists")
 	}
 
-	storedHash, err := db.GetAdminUser("existing")
+	storedHash, _, err := db.GetAdminUser("existing")
 	if err != nil {
 		t.Fatalf("get existing admin user: %v", err)
 	}
