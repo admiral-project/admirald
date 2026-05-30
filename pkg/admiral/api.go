@@ -22,6 +22,8 @@ type HeartbeatRequest struct {
 	RunningPods []string `json:"running_pods"`
 }
 
+// AppDefinitionPayload is the parsed YAML structure for an Admiral app definition.
+// It declares services, tiers, and backup sources for an application.
 type AppDefinitionPayload struct {
 	Name        string                 `yaml:"name" json:"name"`
 	DisplayName string                 `yaml:"display_name" json:"display_name"`
@@ -31,6 +33,9 @@ type AppDefinitionPayload struct {
 	Backup      *YAMLBackup            `yaml:"backup,omitempty" json:"backup,omitempty"`
 }
 
+// YAMLService describes a single container service within an app.
+// A service with a Volume gets a persistent Podman volume mounted at a
+// default target path determined by the image type (see defaultVolumeTarget).
 type YAMLService struct {
 	Image       string                `yaml:"image" json:"image"`
 	Port        int                   `yaml:"port,omitempty" json:"port,omitempty"`
@@ -47,13 +52,40 @@ type YAMLSecret struct {
 	Expose   bool   `yaml:"expose,omitempty" json:"expose,omitempty"`
 }
 
+// YAMLBackup defines the backup source for an app.
+//
+// For type "database", Service must be the database container and all env
+// references (DatabaseEnv, UsernameEnv, PasswordEnv) must point to valid
+// env vars or secrets defined in that service.
+//
+// For type "volume", Service must be a container that declares a Volume.
+// Volume backups are also independently activatable via the tier-level
+// backup_policy.backup_volumes flag, which auto-discovers all services
+// with volumes.
+//
+// The recommended pattern for apps with both databases and file data
+// (e.g., WordPress) is:
+//
+//	backup:
+//	  type: database         # logical DB dump config
+//	  engine: mariadb
+//	  service: db
+//	  database_env: MARIADB_DATABASE
+//	  username_env: MARIADB_USER
+//	  password_env: MARIADB_PASSWORD
+//
+//	tiers:
+//	  small:
+//	    backups:
+//	      backup_database: true  # enables scheduled DB dumps
+//	      backup_volumes: true   # enables volume backups of wp-content, etc.
 type YAMLBackup struct {
 	Type        string `yaml:"type" json:"type"`
 	Engine      string `yaml:"engine,omitempty" json:"engine,omitempty"`
 	Service     string `yaml:"service" json:"service"`
-	DatabaseEnv string `yaml:"database_env" json:"database_env"`
-	UsernameEnv string `yaml:"username_env" json:"username_env"`
-	PasswordEnv string `yaml:"password_env" json:"password_env"`
+	DatabaseEnv string `yaml:"database_env,omitempty" json:"database_env,omitempty"`
+	UsernameEnv string `yaml:"username_env,omitempty" json:"username_env,omitempty"`
+	PasswordEnv string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
 }
 
 type YAMLHealthCheck struct {

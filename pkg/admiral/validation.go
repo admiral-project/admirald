@@ -117,14 +117,6 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if payload.Backup.Type != "database" && payload.Backup.Type != "volume" {
 			return fmt.Errorf("backup type must be database or volume")
 		}
-		if payload.Backup.Type == "database" {
-			if payload.Backup.Engine == "" {
-				return fmt.Errorf("backup engine is required for database backups")
-			}
-			if payload.Backup.Engine != "postgresql" && payload.Backup.Engine != "mysql" && payload.Backup.Engine != "mariadb" {
-				return fmt.Errorf("backup engine %q is unsupported", payload.Backup.Engine)
-			}
-		}
 		if payload.Backup.Service == "" {
 			return fmt.Errorf("backup service is required")
 		}
@@ -133,14 +125,29 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if !ok {
 			return fmt.Errorf("backup service %q is not defined", payload.Backup.Service)
 		}
-		for _, envName := range []string{payload.Backup.DatabaseEnv, payload.Backup.UsernameEnv, payload.Backup.PasswordEnv} {
-			if envName == "" {
-				return fmt.Errorf("backup env references are required")
+
+		switch payload.Backup.Type {
+		case "database":
+			if payload.Backup.Engine == "" {
+				return fmt.Errorf("backup engine is required for database backups")
 			}
-			if _, ok := svc.Env[envName]; !ok {
-				if _, ok := svc.Secrets[envName]; !ok {
-					return fmt.Errorf("backup env %q is not defined in service %q", envName, payload.Backup.Service)
+			if payload.Backup.Engine != "postgresql" && payload.Backup.Engine != "mysql" && payload.Backup.Engine != "mariadb" {
+				return fmt.Errorf("backup engine %q is unsupported", payload.Backup.Engine)
+			}
+			for _, envName := range []string{payload.Backup.DatabaseEnv, payload.Backup.UsernameEnv, payload.Backup.PasswordEnv} {
+				if envName == "" {
+					return fmt.Errorf("backup env references are required")
 				}
+				if _, ok := svc.Env[envName]; !ok {
+					if _, ok := svc.Secrets[envName]; !ok {
+						return fmt.Errorf("backup env %q is not defined in service %q", envName, payload.Backup.Service)
+					}
+				}
+			}
+
+		case "volume":
+			if svc.Volume == "" {
+				return fmt.Errorf("backup service %q does not declare a volume", payload.Backup.Service)
 			}
 		}
 	}
