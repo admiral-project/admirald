@@ -900,14 +900,6 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 				}
 			}
 
-			// Keep existing backups legacy creation for compatibility
-			backupID := generateID("bk")
-			if uerr := h.db.CreateBackup(backupID, op.InstanceID, res.NodeID, "succeeded"); uerr != nil {
-				h.log.Error("Failed to create backup record", uerr, map[string]interface{}{"backup_id": backupID})
-			}
-			if uerr := h.db.UpdateBackup(backupID, "succeeded", res.Metadata, 1024*1024); uerr != nil {
-				h.log.Error("Failed to update backup metadata", uerr, map[string]interface{}{"backup_id": backupID})
-			}
 		}
 	} else {
 		nextTechStatus = "failed"

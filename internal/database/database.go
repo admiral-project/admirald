@@ -93,16 +93,6 @@ type Operation struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-type Backup struct {
-	ID         string    `json:"id"`
-	InstanceID string    `json:"instance_id"`
-	NodeID     string    `json:"node_id"`
-	Status     string    `json:"status"`
-	Filepath   *string   `json:"filepath"`
-	SizeBytes  int64     `json:"size_bytes"`
-	CreatedAt  time.Time `json:"created_at"`
-}
-
 type PublicRoute struct {
 	ID                  string     `json:"id"`
 	Hostname            string     `json:"hostname"`
@@ -481,51 +471,6 @@ func (d *DB) GetOperation(id string) (*Operation, error) {
 		return nil, fmt.Errorf("query operation %q: %w", id, err)
 	}
 	return &o, nil
-}
-
-// --- Backups CRUD ---
-
-func (d *DB) CreateBackup(id, instanceID, nodeID, status string) error {
-	query := `
-		INSERT INTO backups (id, instance_id, node_id, status, size_bytes)
-		VALUES ($1, $2, $3, $4, 0)
-	`
-	_, err := d.Exec(query, id, instanceID, nodeID, status)
-	if err != nil {
-		return fmt.Errorf("create backup: %w", err)
-	}
-	return nil
-}
-
-func (d *DB) UpdateBackup(id, status, filepath string, sizeBytes int64) error {
-	query := `
-		UPDATE backups
-		SET status = $1, filepath = NULLIF($2, ''), size_bytes = $3
-		WHERE id = $4
-	`
-	_, err := d.Exec(query, status, filepath, sizeBytes, id)
-	if err != nil {
-		return fmt.Errorf("update backup: %w", err)
-	}
-	return nil
-}
-
-func (d *DB) GetBackups() ([]Backup, error) {
-	rows, err := d.Query("SELECT id, instance_id, node_id, status, filepath, size_bytes, created_at FROM backups ORDER BY created_at DESC")
-	if err != nil {
-		return nil, fmt.Errorf("query backups: %w", err)
-	}
-	defer rows.Close()
-
-	var backups []Backup
-	for rows.Next() {
-		var b Backup
-		if err := rows.Scan(&b.ID, &b.InstanceID, &b.NodeID, &b.Status, &b.Filepath, &b.SizeBytes, &b.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan backup row: %w", err)
-		}
-		backups = append(backups, b)
-	}
-	return backups, nil
 }
 
 // --- Instance Secrets CRUD ---
