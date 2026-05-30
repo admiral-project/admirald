@@ -829,6 +829,51 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 				if err := h.networking.ActivateInstanceRoutes(context.Background(), op.InstanceID, hostPorts); err != nil {
 					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
 				}
+				// Update route target with actual host port from fleet metadata
+				h.log.Info("Provision callback metadata", map[string]interface{}{"metadata": res.Metadata, "instance_id": op.InstanceID})
+				if res.Metadata != "" {
+					var meta struct {
+						HostPorts map[string]string `json:"host_ports"`
+					}
+					if uerr := json.Unmarshal([]byte(res.Metadata), &meta); uerr != nil {
+						h.log.Error("Failed to parse host_ports from metadata", uerr, map[string]interface{}{"metadata": res.Metadata})
+					} else {
+						h.log.Info("Parsed host_ports", map[string]interface{}{"host_ports": meta.HostPorts})
+					}
+					if len(meta.HostPorts) > 0 {
+						routes, err := h.db.GetPublicRoutes()
+						if err == nil {
+							for _, route := range routes {
+								if route.AppInstanceID != op.InstanceID {
+									continue
+								}
+								hostPortStr, ok := meta.HostPorts[route.ServiceName]
+								if !ok || hostPortStr == "" {
+									continue
+								}
+								// Parse host port from "127.0.0.1:XXXXX" format
+								
+								hostPortStr = strings.TrimSpace(hostPortStr)
+								colonIdx := strings.LastIndex(hostPortStr, ":")
+								var portNum int
+								if colonIdx >= 0 {
+									fmt.Sscanf(hostPortStr[colonIdx+1:], "%d", &portNum)
+								}
+								if portNum > 0 {
+									route.TargetHost = "127.0.0.1"
+									route.TargetPort = portNum
+									route.TargetURL = fmt.Sprintf("http://127.0.0.1:%d", portNum)
+									if uerr := h.db.UpdatePublicRoute(&route); uerr != nil {
+										h.log.Error("Failed to update route with host port", uerr, map[string]interface{}{"hostname": route.Hostname})
+									}
+								}
+							}
+							if uerr := h.networking.Sync(context.Background()); uerr != nil {
+								h.log.Error("Failed to sync routes after host port update", uerr, nil)
+							}
+						}
+					}
+				}
 			}
 		case string(admiral.ActionStopApp), string(admiral.ActionPauseApp):
 			nextTechStatus = "stopped"
