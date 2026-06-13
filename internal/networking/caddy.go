@@ -370,24 +370,42 @@ func redirectRoute(match []interface{}, location string) map[string]interface{} 
 
 func reverseProxyRoute(match []interface{}, upstream string) map[string]interface{} {
 	upstreams := []interface{}{}
+	var transport map[string]interface{}
 	if upstream != "" {
-		// Strip http:// prefix if present; Caddy dial expects host:port
 		dial := upstream
-		if strings.HasPrefix(dial, "http://") {
-			dial = dial[len("http://"):]
-		} else if strings.HasPrefix(dial, "https://") {
-			dial = dial[len("https://"):]
+		scheme := ""
+		if parsed, err := url.Parse(upstream); err == nil && parsed.Host != "" {
+			dial = parsed.Host
+			scheme = parsed.Scheme
+		} else {
+			if strings.HasPrefix(dial, "http://") {
+				dial = dial[len("http://"):]
+				scheme = "http"
+			} else if strings.HasPrefix(dial, "https://") {
+				dial = dial[len("https://"):]
+				scheme = "https"
+			}
+		}
+		if scheme == "https" {
+			transport = map[string]interface{}{
+				"protocol": "http",
+				"tls": map[string]interface{}{
+					"insecure_skip_verify": true,
+				},
+			}
 		}
 		upstreams = append(upstreams, map[string]interface{}{"dial": dial})
 	}
+	handle := map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": upstreams,
+	}
+	if transport != nil {
+		handle["transport"] = transport
+	}
 	return map[string]interface{}{
 		"match": match,
-		"handle": []interface{}{
-			map[string]interface{}{
-				"handler":   "reverse_proxy",
-				"upstreams": upstreams,
-			},
-		},
+		"handle": []interface{}{handle},
 		"terminal": true,
 	}
 }
