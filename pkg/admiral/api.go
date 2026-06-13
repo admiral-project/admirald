@@ -373,9 +373,9 @@ type AvailabilityRequest struct {
 
 // ValidateProvisioningRequest is the payload for POST /api/v1/apps/{id}/validate-provisioning
 type ValidateProvisioningRequest struct {
-	TierID            string `json:"tier_id"`
-	ExpectedRevision  int    `json:"expected_revision,omitempty"`
-	ExpectedChecksum  string `json:"expected_checksum,omitempty"`
+	TierID           string `json:"tier_id"`
+	ExpectedRevision int    `json:"expected_revision,omitempty"`
+	ExpectedChecksum string `json:"expected_checksum,omitempty"`
 }
 
 // ValidateProvisioningResponse is the response for validation

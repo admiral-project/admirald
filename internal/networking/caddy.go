@@ -399,13 +399,20 @@ func reverseProxyRoute(match []interface{}, upstream string) map[string]interfac
 	handle := map[string]interface{}{
 		"handler":   "reverse_proxy",
 		"upstreams": upstreams,
+		"headers": map[string]interface{}{
+			"request": map[string]interface{}{
+				"set": map[string]interface{}{
+					"X-Forwarded-Proto": []interface{}{"{http.request.scheme}"},
+				},
+			},
+		},
 	}
 	if transport != nil {
 		handle["transport"] = transport
 	}
 	return map[string]interface{}{
-		"match": match,
-		"handle": []interface{}{handle},
+		"match":    match,
+		"handle":   []interface{}{handle},
 		"terminal": true,
 	}
 }
