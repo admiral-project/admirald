@@ -21,6 +21,8 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
 )
 
+var Version = "dev"
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -33,7 +35,7 @@ func main() {
 
 	// Initialize logger
 	logger := logging.New("admirald")
-	logger.Info("Initializing Admiral Control Plane (admirald)", nil)
+	logger.Info("Initializing Admiral Control Plane (admirald)", map[string]interface{}{"version": Version})
 	secretManager := secrets.NewManager(cfg.SecretsKey)
 
 	// Connect to Database
