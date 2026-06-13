@@ -73,7 +73,7 @@ func load(path string) (*Config, error) {
 		"networking_flagship_host":   "",
 		"networking_flagship_target": "https://127.0.0.1:5000",
 		"networking_cockpit_host":    "",
-		"networking_cockpit_target":  "https://127.0.0.1:9090",
+"networking_cockpit_target": "http://127.0.0.1:9090",
 		"caddy_admin_url":            "http://127.0.0.1:2019",
 	}
 
