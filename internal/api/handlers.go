@@ -617,8 +617,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		}
 
 		var hostname string
+		var routes []database.PublicRoute
 		if h.networking != nil {
-			routes, err := h.networking.CreateInstanceRoutes(instanceID, payload, nodeID)
+			routes, err = h.networking.CreateInstanceRoutes(instanceID, payload, nodeID)
 			if err != nil {
 				h.log.Error("Create public routes failed", err, map[string]interface{}{"instance_id": instanceID})
 				if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
