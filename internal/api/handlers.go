@@ -657,6 +657,12 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 	}
 	instanceID := parts[3]
 
+	// /api/v1/customer-apps/{id}/credentials
+	if len(parts) >= 5 && parts[4] == "credentials" {
+		h.handleCredentials(w, r, instanceID)
+		return
+	}
+
 	inst, err := h.db.GetCustomerApp(instanceID)
 	if err != nil {
 		h.log.Error("Get customer app failed", err, map[string]interface{}{"instance_id": instanceID})
@@ -668,6 +674,31 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, inst)
+}
+
+func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, instanceID string) {
+	secrets, err := h.db.GetExposedInstanceSecrets(instanceID)
+	if err != nil {
+		h.log.Error("Get exposed secrets failed", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	credentials := make([]admiral.Credential, 0, len(secrets))
+	for _, s := range secrets {
+		plain, err := h.secrets.Decrypt(s.EncryptedValue)
+		if err != nil {
+			h.log.Error("Decrypt secret failed", err, nil)
+			continue
+		}
+		credentials = append(credentials, admiral.Credential{
+			Service: s.ServiceName,
+			Name:    s.EnvName,
+			Value:   plain,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, credentials)
 }
 
 func isMetricsFresh(lastMetricsAt *time.Time) bool {
