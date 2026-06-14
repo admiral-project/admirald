@@ -218,6 +218,7 @@ type InstanceActionRequest struct {
 type ProvisionResponse struct {
 	OperationID string       `json:"operation_id"`
 	Status      string       `json:"status"`
+	Hostname    string       `json:"hostname,omitempty"`
 	Credentials []Credential `json:"credentials,omitempty"`
 }
 

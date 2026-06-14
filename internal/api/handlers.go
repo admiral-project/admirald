@@ -616,8 +616,10 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		var hostname string
 		if h.networking != nil {
-			if _, err := h.networking.CreateInstanceRoutes(instanceID, payload, nodeID); err != nil {
+			routes, err := h.networking.CreateInstanceRoutes(instanceID, payload, nodeID)
+			if err != nil {
 				h.log.Error("Create public routes failed", err, map[string]interface{}{"instance_id": instanceID})
 				if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
 					h.log.Error("Failed to mark instance as failed after routes error", uerr, map[string]interface{}{"instance_id": instanceID})
@@ -631,13 +633,18 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
+		if len(routes) > 0 {
+			hostname = routes[0].Hostname
+		}
+
 		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
 
-		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
-			OperationID: operationID,
-			Status:      "queued",
-			Credentials: credentials,
-		})
+	writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
+		OperationID: operationID,
+		Status:      "queued",
+		Hostname:    hostname,
+		Credentials: credentials,
+	})
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
