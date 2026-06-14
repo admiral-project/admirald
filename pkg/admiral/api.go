@@ -241,9 +241,10 @@ type ProvisioningRejectedResponse struct {
 }
 
 type Credential struct {
-	Service string `json:"service"`
-	Name    string `json:"name"`
-	Value   string `json:"value"`
+	Service  string `json:"service"`
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Generate string `json:"generate,omitempty"`
 }
 
 type BackupRestoreSource struct {

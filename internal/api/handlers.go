@@ -1115,7 +1115,7 @@ func (h *APIHandlers) createInstanceSecrets(instanceID string, payload admiral.A
 				return nil, err
 			}
 			if secretDef.Expose {
-				credentials = append(credentials, admiral.Credential{Service: serviceName, Name: envName, Value: plain})
+				credentials = append(credentials, admiral.Credential{Service: serviceName, Name: envName, Value: plain, Generate: secretDef.Generate})
 			}
 		}
 	}
@@ -1130,7 +1130,7 @@ func (h *APIHandlers) createInstanceSecrets(instanceID string, payload admiral.A
 			return nil, err
 		}
 		if secretDef.Expose {
-			credentials = append(credentials, admiral.Credential{Service: "__global__", Name: envName, Value: plain})
+			credentials = append(credentials, admiral.Credential{Service: "__global__", Name: envName, Value: plain, Generate: secretDef.Generate})
 		}
 	}
 	return credentials, nil
