@@ -641,12 +641,12 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 
 		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
 
-	writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
-		OperationID: operationID,
-		Status:      "queued",
-		Hostname:    hostname,
-		Credentials: credentials,
-	})
+		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
+			OperationID: operationID,
+			Status:      "queued",
+			Hostname:    hostname,
+			Credentials: credentials,
+		})
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

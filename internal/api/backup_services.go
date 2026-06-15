@@ -52,6 +52,13 @@ func resolveBackupTarget(payload admiral.AppDefinitionPayload, serviceName strin
 }
 
 func resolveRestoreTarget(payload admiral.AppDefinitionPayload, backupType, serviceName string) (serviceBackupTarget, error) {
+	if serviceName == "" {
+		targets := backupTargetsByType(payload, backupType)
+		if len(targets) == 0 {
+			return serviceBackupTarget{}, fmt.Errorf("no service found for backup type %q", backupType)
+		}
+		return targets[0], nil
+	}
 	target, err := resolveBackupTarget(payload, serviceName)
 	if err != nil {
 		return serviceBackupTarget{}, err

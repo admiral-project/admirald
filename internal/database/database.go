@@ -844,6 +844,24 @@ func (d *DB) GetOperation(id string) (*Operation, error) {
 	return o, nil
 }
 
+func (d *DB) GetRunningOperationsByInstance(instanceID string) ([]Operation, error) {
+	query := "SELECT id, instance_id, node_id, task_id, action, status, error_message, admin_user, created_at, updated_at, metadata FROM operations WHERE instance_id = $1 AND status = 'running'"
+	rows, err := d.Query(query, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("query operations by instance: %w", err)
+	}
+	defer rows.Close()
+	var ops []Operation
+	for rows.Next() {
+		o, err := scanOperationRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan operation: %w", err)
+		}
+		ops = append(ops, *o)
+	}
+	return ops, rows.Err()
+}
+
 func scanOperationRow(rows *sql.Rows) (*Operation, error) {
 	var o Operation
 	var instID sql.NullString

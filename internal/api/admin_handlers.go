@@ -989,31 +989,31 @@ func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {
 				rec.Status = "deleted"
 				_ = h.db.UpdateBackupRecord(&rec)
 
-			task := &admiral.FleetTask{
-				TaskID:      generateID("task"),
-				OperationID: opID,
-				NodeID:      rec.NodeID,
-				Action:      admiral.TaskAction("delete_backup"),
-				InstanceID:  rec.InstanceID,
-				Storage: &admiral.StorageConfig{
-					Backend:  rec.StorageBackend,
-					Key:      rec.StorageKey,
-					BackupID: rec.ID,
-				},
-			}
-			storageCfg, _ := h.db.GetActiveBackupStorageConfig()
-			if storageCfg != nil {
-				task.Storage.Endpoint = storageCfg.Endpoint
-				task.Storage.Region = storageCfg.Region
-				task.Storage.Bucket = storageCfg.Bucket
-				task.Storage.Prefix = storageCfg.Prefix
-				task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
-				task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
-				task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
-				task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
-			}
-			h.enqueueRawTask(task)
-			prunedCount++
+				task := &admiral.FleetTask{
+					TaskID:      generateID("task"),
+					OperationID: opID,
+					NodeID:      rec.NodeID,
+					Action:      admiral.TaskAction("delete_backup"),
+					InstanceID:  rec.InstanceID,
+					Storage: &admiral.StorageConfig{
+						Backend:  rec.StorageBackend,
+						Key:      rec.StorageKey,
+						BackupID: rec.ID,
+					},
+				}
+				storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+				if storageCfg != nil {
+					task.Storage.Endpoint = storageCfg.Endpoint
+					task.Storage.Region = storageCfg.Region
+					task.Storage.Bucket = storageCfg.Bucket
+					task.Storage.Prefix = storageCfg.Prefix
+					task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+					task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+					task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+					task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+				}
+				h.enqueueRawTask(task)
+				prunedCount++
 			}
 		}
 	}
@@ -1539,6 +1539,17 @@ func (h *APIHandlers) HandleMigrateInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	sourceNode, err := h.db.GetNode(sourceNodeID)
+	if err != nil {
+		h.log.Error("Database error fetching source node for migration", err, map[string]interface{}{"node_id": sourceNodeID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if sourceNode == nil {
+		writeError(w, http.StatusNotFound, "Source node not found")
+		return
+	}
+
 	targetNode, err := h.db.GetNode(req.TargetNodeID)
 	if err != nil {
 		h.log.Error("Database error fetching target node", err, map[string]interface{}{"node_id": req.TargetNodeID})
@@ -1548,6 +1559,30 @@ func (h *APIHandlers) HandleMigrateInstance(w http.ResponseWriter, r *http.Reque
 	if targetNode == nil {
 		writeError(w, http.StatusNotFound, "Target node not found")
 		return
+	}
+	if targetNode.Status != "active" {
+		writeError(w, http.StatusConflict, "Target node is not active")
+		return
+	}
+	if !targetNode.AvailableForProvisioning {
+		writeError(w, http.StatusConflict, "Target node is not available for provisioning")
+		return
+	}
+
+	if inst.TechnicalStatus != "running" {
+		writeError(w, http.StatusConflict, "Instance must be in running state to migrate")
+		return
+	}
+
+	// Check for concurrent migration on the same instance
+	existingOps, err := h.db.GetRunningOperationsByInstance(instanceID)
+	if err == nil {
+		for _, op := range existingOps {
+			if op.Action == "migrate" {
+				writeError(w, http.StatusConflict, "Instance is already being migrated")
+				return
+			}
+		}
 	}
 
 	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
@@ -1664,17 +1699,17 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		savedRoutes, _ = h.db.GetRoutesByInstance(instID)
 	}
 
-	// Step 4: Update instance node to target
-	setStep("updating_node")
-	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
-		fail("update node: " + err.Error())
-		return
-	}
-
-	// Step 5: Deprovision on source
+	// Step 4: Deprovision on source
 	setStep("deprovisioning_source")
 	if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, sourceNodeID, "", ""); !ok {
 		fail("deprovision source: " + errMsg)
+		return
+	}
+
+	// Step 5: Update instance node to target
+	setStep("updating_node")
+	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
+		fail("update node: " + err.Error())
 		return
 	}
 
@@ -1687,22 +1722,30 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 
 	// Step 7: Restore backup on target
 	backups, err := h.db.GetBackupRecords(instID)
-	if err == nil {
-		for _, bk := range backups {
-			if bk.Status != "succeeded" {
-				continue
-			}
-			setStep("restoring_" + bk.BackupType)
-			stepOpID := generateID("op")
-			if err := h.db.CreateOperation(stepOpID, instID, targetNodeID, string(admiral.ActionRestoreBackup), "pending_dispatch", "system"); err != nil {
-				fail("restore create op: " + err.Error())
-				return
-			}
-			h.enqueueRestoreTask(stepOpID, instID, targetNodeID, rawYAML, tier, &bk)
-			if ok, errMsg := waitForOp(stepOpID); !ok {
-				fail("restore " + bk.BackupType + ": " + errMsg)
-				return
-			}
+	if err != nil {
+		fail("get backup records: " + err.Error())
+		return
+	}
+	// Restore only the latest succeeded backup of each type
+	restoreTypes := map[string]bool{}
+	for _, bk := range backups {
+		if bk.Status != "succeeded" {
+			continue
+		}
+		if restoreTypes[bk.BackupType] {
+			continue
+		}
+		restoreTypes[bk.BackupType] = true
+		setStep("restoring_" + bk.BackupType)
+		stepOpID := generateID("op")
+		if err := h.db.CreateOperation(stepOpID, instID, targetNodeID, string(admiral.ActionRestoreBackup), "pending_dispatch", "system"); err != nil {
+			fail("restore create op: " + err.Error())
+			return
+		}
+		h.enqueueRestoreTask(stepOpID, instID, targetNodeID, rawYAML, tier, &bk)
+		if ok, errMsg := waitForOp(stepOpID); !ok {
+			fail("restore " + bk.BackupType + ": " + errMsg)
+			return
 		}
 	}
 
