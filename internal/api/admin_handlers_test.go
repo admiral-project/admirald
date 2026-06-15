@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"testing"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -32,6 +33,60 @@ func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error {
 func (m *mockPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
 	m.rejected = append(m.rejected, task)
 	return nil
+}
+
+type migrationTestPublisher struct {
+	db         *database.DB
+	failAction admiral.TaskAction
+	failNodeID string
+	failed     bool
+	published  []*admiral.FleetTask
+}
+
+func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
+	m.published = append(m.published, task)
+	status := "succeeded"
+	errMsg := ""
+	if !m.failed && task.Action == m.failAction && (m.failNodeID == "" || m.failNodeID == task.NodeID) {
+		status = "failed"
+		errMsg = "simulated " + string(task.Action) + " failure"
+		m.failed = true
+	}
+	go func(operationID, status, errMsg string) {
+		time.Sleep(25 * time.Millisecond)
+		_ = m.db.UpdateOperation(operationID, status, errMsg)
+	}(task.OperationID, status, errMsg)
+	return nil
+}
+
+func (m *migrationTestPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
+	return nil
+}
+
+func migrationTestAppYAML() string {
+	return "name: migrate-app\n" +
+		"display_name: Migration Test App\n" +
+		"description: migration test\n" +
+		"services:\n" +
+		"  database:\n" +
+		"    image: docker.io/library/postgres:16\n" +
+		"    backup:\n" +
+		"      type: database\n" +
+		"      engine: postgresql\n" +
+		"      database_env: POSTGRES_DB\n" +
+		"      username_env: POSTGRES_USER\n" +
+		"      password_env: POSTGRES_PASSWORD\n" +
+		"  volumes:\n" +
+		"    image: docker.io/library/busybox:latest\n" +
+		"    volume: /data\n" +
+		"    backup:\n" +
+		"      type: volume\n" +
+		"tiers:\n" +
+		"  starter:\n" +
+		"    cpu: 1\n" +
+		"    memory: 256M\n" +
+		"    storage: 1G\n" +
+		"    price_monthly: 1\n"
 }
 
 func TestHandleAdminLoginSuccess(t *testing.T) {
@@ -653,6 +708,153 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	}
 	if op.Status != "running" {
 		t.Fatalf("expected status=running, got %s", op.Status)
+	}
+}
+
+func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
+	h := newTestHandler(t, false)
+	publisher := &migrationTestPublisher{db: h.db, failAction: admiral.ActionStartApp, failNodeID: "node_002"}
+	h.publisher = publisher
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "203.0.113.11", "fedora", "5.0"); err != nil {
+		t.Fatalf("register source node: %v", err)
+	}
+	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "10.99.0.3", "worker", "203.0.113.12", "fedora", "5.0"); err != nil {
+		t.Fatalf("register target node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_rollback", "cust_001", "migrate-app", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if _, err := h.db.Exec("UPDATE customer_apps SET logical_instance_id = $1, technical_status = 'running' WHERE id = $2", "li_rollback", "inst_rollback"); err != nil {
+		t.Fatalf("seed logical instance id: %v", err)
+	}
+	if err := h.db.CreateOperation("op_migrate_rollback", "inst_rollback", "node_001", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration op: %v", err)
+	}
+
+	h.runMigration("op_migrate_rollback", "inst_rollback", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "li_rollback")
+
+	inst, err := h.db.GetCustomerApp("inst_rollback")
+	if err != nil {
+		t.Fatalf("get instance after rollback: %v", err)
+	}
+	if inst == nil || inst.NodeID == nil || *inst.NodeID != "node_001" {
+		t.Fatalf("expected instance to remain on source node after rollback, got %+v", inst)
+	}
+	if inst.LogicalInstanceID != "li_rollback" {
+		t.Fatalf("expected logical_instance_id to be preserved, got %q", inst.LogicalInstanceID)
+	}
+
+	op, err := h.db.GetOperation("op_migrate_rollback")
+	if err != nil {
+		t.Fatalf("get migration operation: %v", err)
+	}
+	if op == nil || op.Status != "failed" {
+		t.Fatalf("expected migration op to fail, got %+v", op)
+	}
+	if op.ErrorMessage == nil || !strings.Contains(*op.ErrorMessage, "start target") {
+		t.Fatalf("expected start target failure in operation error, got %+v", op.ErrorMessage)
+	}
+
+	var sawTargetCleanup bool
+	var sawSourceRestart bool
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionDeprovisionApp && task.NodeID == "node_002" {
+			sawTargetCleanup = true
+		}
+		if task.Action == admiral.ActionStartApp && task.NodeID == "node_001" {
+			sawSourceRestart = true
+		}
+	}
+	if !sawTargetCleanup {
+		t.Fatal("expected rollback to deprovision the target node workload")
+	}
+	if !sawSourceRestart {
+		t.Fatal("expected rollback to restart the source workload")
+	}
+}
+
+func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
+	h := newTestHandler(t, false)
+	publisher := &migrationTestPublisher{db: h.db}
+	h.publisher = publisher
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "203.0.113.11", "fedora", "5.0"); err != nil {
+		t.Fatalf("register source node: %v", err)
+	}
+	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "10.99.0.3", "worker", "203.0.113.12", "fedora", "5.0"); err != nil {
+		t.Fatalf("register target node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_cutover", "cust_001", "migrate-app", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if _, err := h.db.Exec("UPDATE customer_apps SET logical_instance_id = $1, technical_status = 'running' WHERE id = $2", "li_cutover", "inst_cutover"); err != nil {
+		t.Fatalf("seed logical instance id: %v", err)
+	}
+	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
+		ID:             "bk_db",
+		InstanceID:     "inst_cutover",
+		AppID:          "migrate-app",
+		TierID:         "starter",
+		NodeID:         "node_001",
+		BackupType:     "database",
+		DatabaseType:   "postgresql",
+		Status:         "succeeded",
+		StorageBackend: "local",
+		StorageKey:     "/var/lib/admiral/backups/inst_cutover/database.tgz",
+		TriggeredBy:    "manual",
+	}); err != nil {
+		t.Fatalf("create database backup record: %v", err)
+	}
+	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
+		ID:             "bk_vol",
+		InstanceID:     "inst_cutover",
+		AppID:          "migrate-app",
+		TierID:         "starter",
+		NodeID:         "node_001",
+		BackupType:     "volume",
+		DatabaseType:   "none",
+		Status:         "succeeded",
+		StorageBackend: "local",
+		StorageKey:     "/var/lib/admiral/backups/inst_cutover/volume.tgz",
+		TriggeredBy:    "manual",
+	}); err != nil {
+		t.Fatalf("create volume backup record: %v", err)
+	}
+	if err := h.db.CreateOperation("op_migrate_cutover", "inst_cutover", "node_001", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration op: %v", err)
+	}
+
+	h.runMigration("op_migrate_cutover", "inst_cutover", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "li_cutover")
+
+	inst, err := h.db.GetCustomerApp("inst_cutover")
+	if err != nil {
+		t.Fatalf("get instance after cutover: %v", err)
+	}
+	if inst == nil || inst.NodeID == nil || *inst.NodeID != "node_002" {
+		t.Fatalf("expected instance to move to target node after cutover, got %+v", inst)
+	}
+	if inst.LogicalInstanceID != "li_cutover" {
+		t.Fatalf("expected logical_instance_id to be preserved, got %q", inst.LogicalInstanceID)
+	}
+
+	op, err := h.db.GetOperation("op_migrate_cutover")
+	if err != nil {
+		t.Fatalf("get migration operation: %v", err)
+	}
+	if op == nil || op.Status != "succeeded" {
+		t.Fatalf("expected migration op to succeed, got %+v", op)
+	}
+
+	var sawRestore bool
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionRestoreBackup && task.NodeID == "node_002" {
+			sawRestore = true
+			break
+		}
+	}
+	if !sawRestore {
+		t.Fatal("expected migration to restore backups on the target node")
 	}
 }
 
