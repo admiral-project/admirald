@@ -968,9 +968,18 @@ func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {
 		if len(backups) <= 1 {
 			continue
 		}
-		// Policy check: count=7, days=30
-		retCount := 7
-		// Keep the first 7 succeeded backups, prune others
+		// Read retention policy from the first backup record's snapshot
+		retCount := 7 // default fallback
+		if len(backups) > 0 {
+			var policy struct {
+				Count int `json:"count"`
+				Days  int `json:"days"`
+			}
+			if err := json.Unmarshal([]byte(backups[0].RetentionPolicySnapshotJSON), &policy); err == nil && policy.Count > 0 {
+				retCount = policy.Count
+			}
+		}
+		// Keep the first N succeeded backups (based on retention policy), prune others
 		for i, rec := range backups {
 			if i >= retCount {
 				// Create prune task
