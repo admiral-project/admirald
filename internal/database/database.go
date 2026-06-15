@@ -290,8 +290,8 @@ func (d *DB) UpdateNodeStatus(id, status string) error {
 	return nil
 }
 
-func (d *DB) MarkNodesOffline(timeout time.Duration) (int, error) {
-	result, err := d.Exec(`
+func (d *DB) MarkNodesOffline(timeout time.Duration) ([]string, error) {
+	rows, err := d.Query(`
 		UPDATE nodes SET
 			status = 'offline',
 			health_status = 'degraded',
@@ -299,12 +299,22 @@ func (d *DB) MarkNodesOffline(timeout time.Duration) (int, error) {
 			unavailable_reason_codes = 'heartbeat_timeout'
 		WHERE status NOT IN ('offline', 'disabled')
 		  AND last_heartbeat < CURRENT_TIMESTAMP - $1::interval
+		RETURNING id
 	`, fmt.Sprintf("%d microseconds", timeout.Microseconds()))
 	if err != nil {
-		return 0, fmt.Errorf("mark nodes offline: %w", err)
+		return nil, fmt.Errorf("mark nodes offline: %w", err)
 	}
-	n, _ := result.RowsAffected()
-	return int(n), nil
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan offline node id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (d *DB) SetNodeManualDisabled(id string, disabled bool) error {

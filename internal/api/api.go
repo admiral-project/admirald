@@ -179,13 +179,13 @@ func (s *Server) StartNodeHealthMonitor(ctx context.Context) {
 			s.log.Info("Node health monitor stopped", nil)
 			return
 		case <-ticker.C:
-			n, err := s.handlers.db.MarkNodesOffline(2 * time.Minute)
+			ids, err := s.handlers.db.MarkNodesOffline(2 * time.Minute)
 			if err != nil {
 				s.log.Error("Node health monitor failed", err, nil)
 				continue
 			}
-			if n > 0 {
-				s.log.Info("Nodes marked offline by health monitor", map[string]interface{}{"count": n})
+			if len(ids) > 0 {
+				s.log.Warn("Nodes marked offline by health monitor", map[string]interface{}{"count": len(ids), "node_ids": ids})
 			}
 		}
 	}
