@@ -4,4 +4,4 @@
 package version
 
 // Version is the Admirald release version.
-var Version = "0.0.1alpha5"
+var Version = "0.0.1alpha6"
