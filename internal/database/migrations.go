@@ -154,6 +154,17 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 7,
+			Name:    "add_operation_metadata",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec("ALTER TABLE operations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'")
+				if err != nil {
+					return fmt.Errorf("migration 7 failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

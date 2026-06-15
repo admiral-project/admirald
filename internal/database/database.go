@@ -122,17 +122,28 @@ type CustomerApp struct {
 	LogicalInstanceID   string     `json:"logical_instance_id"`
 }
 
+type OperationMetadata struct {
+	TargetNodeID      string   `json:"target_node_id,omitempty"`
+	SourceNodeID      string   `json:"source_node_id,omitempty"`
+	LogicalInstanceID string   `json:"logical_instance_id,omitempty"`
+	MigrationStep     string   `json:"migration_step,omitempty"`
+	BackupRecordIDs   []string `json:"backup_record_ids,omitempty"`
+	NewInstanceID     string   `json:"new_instance_id,omitempty"`
+	SourceAction      string   `json:"source_action,omitempty"`
+}
+
 type Operation struct {
-	ID           string    `json:"id"`
-	InstanceID   string    `json:"instance_id"`
-	NodeID       string    `json:"node_id,omitempty"`
-	TaskID       string    `json:"task_id,omitempty"`
-	Action       string    `json:"action"`
-	Status       string    `json:"status"`
-	ErrorMessage *string   `json:"error_message"`
-	AdminUser    string    `json:"admin_user"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string             `json:"id"`
+	InstanceID   string             `json:"instance_id"`
+	NodeID       string             `json:"node_id,omitempty"`
+	TaskID       string             `json:"task_id,omitempty"`
+	Action       string             `json:"action"`
+	Status       string             `json:"status"`
+	ErrorMessage *string            `json:"error_message"`
+	AdminUser    string             `json:"admin_user"`
+	Metadata     *OperationMetadata `json:"metadata,omitempty"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 type AdminUserRecord struct {
@@ -681,21 +692,54 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 // --- Operations CRUD ---
 
 func (d *DB) CreateOperation(id, instanceID, nodeID, action, status, adminUser string) error {
-	// Use NULL for instance_id when empty to avoid FK violation for
-	// system-level operations that are not tied to a specific instance.
-	var instanceIDArg interface{}
-	if instanceID == "" {
-		instanceIDArg = nil
-	} else {
-		instanceIDArg = instanceID
-	}
 	query := `
 		INSERT INTO operations (id, instance_id, node_id, action, status, admin_user)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
-	_, err := d.Exec(query, id, instanceIDArg, nodeID, action, status, adminUser)
+	_, err := d.Exec(query, id, instanceIDArg(instanceID), nodeID, action, status, adminUser)
 	if err != nil {
 		return fmt.Errorf("create operation: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) CreateOperationWithMetadata(id, instanceID, nodeID, action, status, adminUser string, metadata *OperationMetadata) error {
+	var metaJSON interface{}
+	if metadata != nil {
+		b, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("marshal operation metadata: %w", err)
+		}
+		metaJSON = string(b)
+	} else {
+		metaJSON = "{}"
+	}
+	query := `
+		INSERT INTO operations (id, instance_id, node_id, action, status, admin_user, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := d.Exec(query, id, instanceIDArg(instanceID), nodeID, action, status, adminUser, metaJSON)
+	if err != nil {
+		return fmt.Errorf("create operation with metadata: %w", err)
+	}
+	return nil
+}
+
+func instanceIDArg(instanceID string) interface{} {
+	if instanceID == "" {
+		return nil
+	}
+	return instanceID
+}
+
+func (d *DB) UpdateOperationMetadata(id string, metadata *OperationMetadata) error {
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal operation metadata: %w", err)
+	}
+	_, err = d.Exec("UPDATE operations SET metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", string(b), id)
+	if err != nil {
+		return fmt.Errorf("update operation metadata: %w", err)
 	}
 	return nil
 }
@@ -732,7 +776,7 @@ func (d *DB) GetOperationsPage(limit, offset int) ([]Operation, int, error) {
 		return nil, 0, fmt.Errorf("count operations: %w", err)
 	}
 
-	rows, err := d.Query("SELECT id, instance_id, node_id, task_id, action, status, error_message, admin_user, created_at, updated_at FROM operations ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", limit, offset)
+	rows, err := d.Query("SELECT id, instance_id, node_id, task_id, action, status, error_message, admin_user, created_at, updated_at, metadata FROM operations ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query operations: %w", err)
 	}
@@ -740,28 +784,58 @@ func (d *DB) GetOperationsPage(limit, offset int) ([]Operation, int, error) {
 
 	var ops []Operation
 	for rows.Next() {
-		var o Operation
-		var instID sql.NullString
-		if err := rows.Scan(&o.ID, &instID, &o.NodeID, &o.TaskID, &o.Action, &o.Status, &o.ErrorMessage, &o.AdminUser, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		o, err := scanOperationRow(rows)
+		if err != nil {
 			return nil, 0, fmt.Errorf("scan operation row: %w", err)
 		}
-		o.InstanceID = instID.String
-		ops = append(ops, o)
+		ops = append(ops, *o)
 	}
 	return ops, total, nil
 }
 
 func (d *DB) GetOperation(id string) (*Operation, error) {
-	var o Operation
-	var instID sql.NullString
-	query := "SELECT id, instance_id, node_id, task_id, action, status, error_message, admin_user, created_at, updated_at FROM operations WHERE id = $1"
-	err := d.QueryRow(query, id).Scan(&o.ID, &instID, &o.NodeID, &o.TaskID, &o.Action, &o.Status, &o.ErrorMessage, &o.AdminUser, &o.CreatedAt, &o.UpdatedAt)
+	query := "SELECT id, instance_id, node_id, task_id, action, status, error_message, admin_user, created_at, updated_at, metadata FROM operations WHERE id = $1"
+	row := d.QueryRow(query, id)
+	o, err := scanOperationRowSingle(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("query operation %q: %w", id, err)
 	}
+	return o, nil
+}
+
+func scanOperationRow(rows *sql.Rows) (*Operation, error) {
+	var o Operation
+	var instID sql.NullString
+	var metaJSON sql.NullString
+	if err := rows.Scan(&o.ID, &instID, &o.NodeID, &o.TaskID, &o.Action, &o.Status, &o.ErrorMessage, &o.AdminUser, &o.CreatedAt, &o.UpdatedAt, &metaJSON); err != nil {
+		return nil, err
+	}
 	o.InstanceID = instID.String
+	if metaJSON.Valid && metaJSON.String != "" && metaJSON.String != "{}" {
+		var meta OperationMetadata
+		if err := json.Unmarshal([]byte(metaJSON.String), &meta); err == nil {
+			o.Metadata = &meta
+		}
+	}
+	return &o, nil
+}
+
+func scanOperationRowSingle(row *sql.Row) (*Operation, error) {
+	var o Operation
+	var instID sql.NullString
+	var metaJSON sql.NullString
+	if err := row.Scan(&o.ID, &instID, &o.NodeID, &o.TaskID, &o.Action, &o.Status, &o.ErrorMessage, &o.AdminUser, &o.CreatedAt, &o.UpdatedAt, &metaJSON); err != nil {
+		return nil, err
+	}
+	o.InstanceID = instID.String
+	if metaJSON.Valid && metaJSON.String != "" && metaJSON.String != "{}" {
+		var meta OperationMetadata
+		if err := json.Unmarshal([]byte(metaJSON.String), &meta); err == nil {
+			o.Metadata = &meta
+		}
+	}
 	return &o, nil
 }
 
