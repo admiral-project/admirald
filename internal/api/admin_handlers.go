@@ -975,20 +975,31 @@ func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {
 				rec.Status = "deleted"
 				_ = h.db.UpdateBackupRecord(&rec)
 
-				task := &admiral.FleetTask{
-					TaskID:      generateID("task"),
-					OperationID: opID,
-					NodeID:      rec.NodeID,
-					Action:      admiral.TaskAction("delete_backup"),
-					InstanceID:  rec.InstanceID,
-					Storage: &admiral.StorageConfig{
-						Backend:  rec.StorageBackend,
-						Key:      rec.StorageKey,
-						BackupID: rec.ID,
-					},
-				}
-				h.enqueueRawTask(task)
-				prunedCount++
+			task := &admiral.FleetTask{
+				TaskID:      generateID("task"),
+				OperationID: opID,
+				NodeID:      rec.NodeID,
+				Action:      admiral.TaskAction("delete_backup"),
+				InstanceID:  rec.InstanceID,
+				Storage: &admiral.StorageConfig{
+					Backend:  rec.StorageBackend,
+					Key:      rec.StorageKey,
+					BackupID: rec.ID,
+				},
+			}
+			storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+			if storageCfg != nil {
+				task.Storage.Endpoint = storageCfg.Endpoint
+				task.Storage.Region = storageCfg.Region
+				task.Storage.Bucket = storageCfg.Bucket
+				task.Storage.Prefix = storageCfg.Prefix
+				task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+				task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+				task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+				task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+			}
+			h.enqueueRawTask(task)
+			prunedCount++
 			}
 		}
 	}
