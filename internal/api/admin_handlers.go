@@ -1673,6 +1673,39 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		_ = h.db.UpdateOperation(opID, "failed", msg)
 	}
 
+	reconcileRoutes := func(nodeID string, routes []database.PublicRoute) error {
+		targetNode, err := h.db.GetNode(nodeID)
+		if err != nil {
+			return err
+		}
+		if targetNode == nil {
+			return fmt.Errorf("target node %q not found for route reconciliation", nodeID)
+		}
+		targetHost := targetNode.WireguardIP
+		if targetHost == "" {
+			targetHost = targetNode.IP
+		}
+		for _, route := range routes {
+			route.NodeID = &nodeID
+			route.TargetHost = targetHost
+			route.TargetURL = fmt.Sprintf("http://%s:%d", targetHost, route.TargetPort)
+			route.Status = string(admiral.RouteStatusPending)
+			if err := h.db.CreatePublicRoute(route); err != nil {
+				return err
+			}
+		}
+		if h.networking != nil {
+			if err := h.networking.Sync(context.Background()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	sourceStopped := false
+	targetProvisioned := false
+	cutoverComplete := false
+
 	dbBackupService := "database"
 	volBackupService := "volumes"
 
@@ -1699,31 +1732,49 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		savedRoutes, _ = h.db.GetRoutesByInstance(instID)
 	}
 
-	// Step 4: Deprovision on source
-	setStep("deprovisioning_source")
-	if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, sourceNodeID, "", ""); !ok {
-		fail("deprovision source: " + errMsg)
-		return
+	rollbackPreCutover := func(reason string) {
+		if targetProvisioned {
+			setStep("rollback_target_cleanup")
+			if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, targetNodeID, "", ""); !ok {
+				reason += "; target cleanup failed: " + errMsg
+			}
+		}
+		if sourceStopped {
+			setStep("rollback_source_restart")
+			if _, ok, errMsg := subOp(admiral.ActionStartApp, sourceNodeID, "", ""); !ok {
+				reason += "; source restart failed: " + errMsg
+				_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+			}
+		}
+		if len(savedRoutes) > 0 && h.networking != nil {
+			setStep("rollback_routes")
+			if err := reconcileRoutes(sourceNodeID, savedRoutes); err != nil {
+				reason += "; route rollback failed: " + err.Error()
+			}
+		}
+		fail(reason)
 	}
 
-	// Step 5: Update instance node to target
-	setStep("updating_node")
-	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
-		fail("update node: " + err.Error())
+	// Step 4: Stop source before cutover
+	setStep("stopping_source")
+	if _, ok, errMsg := subOp(admiral.ActionStopApp, sourceNodeID, "", ""); !ok {
+		fail("stop source: " + errMsg)
 		return
 	}
+	sourceStopped = true
 
-	// Step 6: Provision on target
+	// Step 5: Provision on target
 	setStep("provisioning_target")
 	if _, ok, errMsg := subOp(admiral.ActionProvisionApp, targetNodeID, "", ""); !ok {
-		fail("provision target: " + errMsg)
+		rollbackPreCutover("provision target: " + errMsg)
 		return
 	}
+	targetProvisioned = true
 
-	// Step 7: Restore backup on target
+	// Step 6: Restore backup on target
 	backups, err := h.db.GetBackupRecords(instID)
 	if err != nil {
-		fail("get backup records: " + err.Error())
+		rollbackPreCutover("get backup records: " + err.Error())
 		return
 	}
 	// Restore only the latest succeeded backup of each type
@@ -1739,45 +1790,58 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		setStep("restoring_" + bk.BackupType)
 		stepOpID := generateID("op")
 		if err := h.db.CreateOperation(stepOpID, instID, targetNodeID, string(admiral.ActionRestoreBackup), "pending_dispatch", "system"); err != nil {
-			fail("restore create op: " + err.Error())
+			rollbackPreCutover("restore create op: " + err.Error())
 			return
 		}
 		h.enqueueRestoreTask(stepOpID, instID, targetNodeID, rawYAML, tier, &bk)
 		if ok, errMsg := waitForOp(stepOpID); !ok {
-			fail("restore " + bk.BackupType + ": " + errMsg)
+			rollbackPreCutover("restore " + bk.BackupType + ": " + errMsg)
 			return
 		}
 	}
 
-	// Step 8: Start on target
+	// Step 7: Start on target
 	setStep("starting_target")
 	if _, ok, errMsg := subOp(admiral.ActionStartApp, targetNodeID, "", ""); !ok {
-		fail("start target: " + errMsg)
+		rollbackPreCutover("start target: " + errMsg)
 		return
 	}
 
-	// Step 9: Recreate routes on target node
-	if h.networking != nil && len(savedRoutes) > 0 {
-		setStep("updating_routes")
-		targetNode, nerr := h.db.GetNode(targetNodeID)
-		if nerr == nil && targetNode != nil {
-			for _, route := range savedRoutes {
-				route.NodeID = &targetNodeID
-				route.TargetHost = targetNode.IP
-				route.TargetURL = fmt.Sprintf("http://%s:%d", targetNode.IP, route.TargetPort)
-				route.Status = string(admiral.RouteStatusPending)
-				if uerr := h.db.CreatePublicRoute(route); uerr != nil {
-					h.log.Error("Failed to recreate route after migration", uerr, map[string]interface{}{"hostname": route.Hostname, "instance_id": instID})
-				}
-			}
+	// Step 8: Validate target before cutover
+	setStep("validating_target")
+	currentInst, err := h.db.GetCustomerApp(instID)
+	if err != nil {
+		rollbackPreCutover("validate target instance: " + err.Error())
+		return
+	}
+	if currentInst == nil || currentInst.TechnicalStatus != "running" {
+		rollbackPreCutover("target validation failed: instance not running")
+		return
+	}
+
+	// Step 9: Move node assignment and public routes to target
+	setStep("cutover")
+	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
+		rollbackPreCutover("update node: " + err.Error())
+		return
+	}
+	if len(savedRoutes) > 0 && h.networking != nil {
+		if err := reconcileRoutes(targetNodeID, savedRoutes); err != nil {
+			_ = h.db.UpdateCustomerAppNode(instID, sourceNodeID)
+			rollbackPreCutover("cutover routes: " + err.Error())
+			return
 		}
-		// Sync routes to activate new ones
-		if serr := h.networking.Sync(context.Background()); serr != nil {
-			h.log.Error("Failed to sync routes after migration", serr, map[string]interface{}{"instance_id": instID})
-		}
+	}
+	cutoverComplete = true
+
+	// Step 10: Remove the old application after cutover
+	setStep("deprovisioning_source")
+	if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, sourceNodeID, "", ""); !ok {
+		h.log.Error("Source cleanup failed after migration cutover", nil, map[string]interface{}{"operation_id": opID, "instance_id": instID, "error": errMsg})
+		setStep("cleanup_source_failed")
 	}
 
 	setStep("completed")
 	_ = h.db.UpdateOperation(opID, "succeeded", "")
-	h.log.Info("Migration completed successfully", map[string]interface{}{"operation_id": opID, "instance_id": instID})
+	h.log.Info("Migration completed successfully", map[string]interface{}{"operation_id": opID, "instance_id": instID, "cutover_complete": cutoverComplete})
 }
