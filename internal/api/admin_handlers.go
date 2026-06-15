@@ -1657,28 +1657,35 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		return
 	}
 
-	// Step 3: Update instance node to target
+	// Step 3: Save existing routes before deprovision
+	setStep("saving_routes")
+	var savedRoutes []database.PublicRoute
+	if h.networking != nil {
+		savedRoutes, _ = h.db.GetRoutesByInstance(instID)
+	}
+
+	// Step 4: Update instance node to target
 	setStep("updating_node")
 	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
 		fail("update node: " + err.Error())
 		return
 	}
 
-	// Step 4: Deprovision on source
+	// Step 5: Deprovision on source
 	setStep("deprovisioning_source")
 	if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, sourceNodeID, "", ""); !ok {
 		fail("deprovision source: " + errMsg)
 		return
 	}
 
-	// Step 5: Provision on target
+	// Step 6: Provision on target
 	setStep("provisioning_target")
 	if _, ok, errMsg := subOp(admiral.ActionProvisionApp, targetNodeID, "", ""); !ok {
 		fail("provision target: " + errMsg)
 		return
 	}
 
-	// Step 6: Restore backup on target
+	// Step 7: Restore backup on target
 	backups, err := h.db.GetBackupRecords(instID)
 	if err == nil {
 		for _, bk := range backups {
@@ -1699,11 +1706,32 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		}
 	}
 
-	// Step 7: Start on target
+	// Step 8: Start on target
 	setStep("starting_target")
 	if _, ok, errMsg := subOp(admiral.ActionStartApp, targetNodeID, "", ""); !ok {
 		fail("start target: " + errMsg)
 		return
+	}
+
+	// Step 9: Recreate routes on target node
+	if h.networking != nil && len(savedRoutes) > 0 {
+		setStep("updating_routes")
+		targetNode, nerr := h.db.GetNode(targetNodeID)
+		if nerr == nil && targetNode != nil {
+			for _, route := range savedRoutes {
+				route.NodeID = &targetNodeID
+				route.TargetHost = targetNode.IP
+				route.TargetURL = fmt.Sprintf("http://%s:%d", targetNode.IP, route.TargetPort)
+				route.Status = string(admiral.RouteStatusPending)
+				if uerr := h.db.CreatePublicRoute(route); uerr != nil {
+					h.log.Error("Failed to recreate route after migration", uerr, map[string]interface{}{"hostname": route.Hostname, "instance_id": instID})
+				}
+			}
+		}
+		// Sync routes to activate new ones
+		if serr := h.networking.Sync(context.Background()); serr != nil {
+			h.log.Error("Failed to sync routes after migration", serr, map[string]interface{}{"instance_id": instID})
+		}
 	}
 
 	setStep("completed")
