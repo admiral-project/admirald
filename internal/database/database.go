@@ -290,6 +290,23 @@ func (d *DB) UpdateNodeStatus(id, status string) error {
 	return nil
 }
 
+func (d *DB) MarkNodesOffline(timeout time.Duration) (int, error) {
+	result, err := d.Exec(`
+		UPDATE nodes SET
+			status = 'offline',
+			health_status = 'degraded',
+			available_for_provisioning = FALSE,
+			unavailable_reason_codes = 'heartbeat_timeout'
+		WHERE status NOT IN ('offline', 'disabled')
+		  AND last_heartbeat < CURRENT_TIMESTAMP - $1::interval
+	`, fmt.Sprintf("%d microseconds", timeout.Microseconds()))
+	if err != nil {
+		return 0, fmt.Errorf("mark nodes offline: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 func (d *DB) SetNodeManualDisabled(id string, disabled bool) error {
 	_, err := d.Exec("UPDATE nodes SET manual_disabled = $1 WHERE id = $2", disabled, id)
 	if err != nil {
@@ -997,6 +1014,51 @@ func (d *DB) GetPublicRoutes() ([]PublicRoute, error) {
 			&lastHealthCheckedAt, &r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan public route row: %w", err)
+		}
+		if appInstanceID.Valid {
+			r.AppInstanceID = appInstanceID.String
+		}
+		if nodeID.Valid {
+			n := nodeID.String
+			r.NodeID = &n
+		}
+		if lastHealthCheckedAt.Valid {
+			t := lastHealthCheckedAt.Time
+			r.LastHealthCheckedAt = &t
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
+}
+
+func (d *DB) GetRoutesByInstance(instanceID string) ([]PublicRoute, error) {
+	rows, err := d.Query(`
+		SELECT id, hostname, public_id, app_instance_id, app_template_code, node_id,
+		       service_name, target_scheme, target_host, target_port, target_url,
+		       route_kind, tls_mode, status, last_error, last_health_status,
+		       last_health_checked_at, created_at, updated_at
+		FROM public_routes
+		WHERE app_instance_id = $1
+		ORDER BY created_at ASC
+	`, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("query routes by instance %q: %w", instanceID, err)
+	}
+	defer rows.Close()
+
+	var routes []PublicRoute
+	for rows.Next() {
+		var r PublicRoute
+		var appInstanceID sql.NullString
+		var nodeID sql.NullString
+		var lastHealthCheckedAt sql.NullTime
+		if err := rows.Scan(
+			&r.ID, &r.Hostname, &r.PublicID, &appInstanceID, &r.AppTemplateCode, &nodeID,
+			&r.ServiceName, &r.TargetScheme, &r.TargetHost, &r.TargetPort, &r.TargetURL,
+			&r.RouteKind, &r.TLSMode, &r.Status, &r.LastError, &r.LastHealthStatus,
+			&lastHealthCheckedAt, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan route row for instance %q: %w", instanceID, err)
 		}
 		if appInstanceID.Valid {
 			r.AppInstanceID = appInstanceID.String
