@@ -57,7 +57,7 @@ func TestHandleCustomerAppsRejectsInactiveDefinition(t *testing.T) {
 		_, _ = h.db.Exec("DELETE FROM app_definitions WHERE name = $1", "inactive-app")
 		_, _ = h.db.Exec("DELETE FROM nodes WHERE id = $1", nodeID)
 	})
-	if err := h.db.RegisterNode(nodeID, "worker-status", "10.0.0.10", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode(nodeID, "worker-status", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 

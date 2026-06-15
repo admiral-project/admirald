@@ -146,7 +146,7 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.db.RegisterNode(req.NodeID, req.Hostname, req.IP, req.OS, req.PodmanV); err != nil {
+		if err := h.db.RegisterNode(req.NodeID, req.Hostname, req.IP, req.WireguardIP, req.NodeRole, req.PublicIP, req.OS, req.PodmanV); err != nil {
 			h.log.Error("Register node failed", err, map[string]interface{}{"node_id": req.NodeID})
 			writeError(w, http.StatusInternalServerError, "Failed to register node")
 			return
@@ -857,6 +857,9 @@ func (h *APIHandlers) evaluateNodeForTier(node database.Node, requestedRAM, requ
 	evaluation := admiral.NodeProvisioningEvaluation{NodeID: node.ID}
 	reasons := []string{}
 
+	if node.NodeRole == "admin" || node.NodeRole == "portal" {
+		reasons = appendUniqueReason(reasons, "not_a_worker_node")
+	}
 	if node.Status != "active" || node.HealthStatus != "healthy" {
 		reasons = appendUniqueReason(reasons, "node_unhealthy")
 	}

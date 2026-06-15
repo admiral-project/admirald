@@ -4,11 +4,14 @@
 package admiral
 
 type RegisterNodeRequest struct {
-	NodeID   string `json:"node_id"`
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
-	OS       string `json:"os"`
-	PodmanV  string `json:"podman_version"`
+	NodeID      string `json:"node_id"`
+	Hostname    string `json:"hostname"`
+	IP          string `json:"ip"`
+	WireguardIP string `json:"wireguard_ip,omitempty"`
+	NodeRole    string `json:"node_role,omitempty"`
+	PublicIP    string `json:"public_ip,omitempty"`
+	OS          string `json:"os"`
+	PodmanV     string `json:"podman_version"`
 }
 
 type RegisterNodeResponse struct {
@@ -20,6 +23,8 @@ type HeartbeatRequest struct {
 	NodeID        string `json:"node_id"`
 	Hostname      string `json:"hostname,omitempty"`
 	IP            string `json:"ip,omitempty"`
+	WireguardIP   string `json:"wireguard_ip,omitempty"`
+	PublicIP      string `json:"public_ip,omitempty"`
 	PodmanVersion string `json:"podman_version,omitempty"`
 	FleetVersion  string `json:"fleet_version,omitempty"`
 	Status        string `json:"status"`

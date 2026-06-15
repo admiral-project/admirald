@@ -121,6 +121,23 @@ func getMigrations() []Migration {
 				return err
 			},
 		},
+		{
+			Version: 5,
+			Name:    "add_multinode_fields",
+			Up: func(db *sql.DB) error {
+				queries := []string{
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS wireguard_ip TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_role TEXT NOT NULL DEFAULT 'worker'",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS public_ip TEXT NOT NULL DEFAULT ''",
+				}
+				for _, q := range queries {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration 5 failed: %w", err)
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -129,6 +146,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,
     hostname TEXT NOT NULL,
     ip TEXT NOT NULL,
+    wireguard_ip TEXT NOT NULL DEFAULT '',
+    node_role TEXT NOT NULL DEFAULT 'worker',
+    public_ip TEXT NOT NULL DEFAULT '',
     os TEXT NOT NULL,
     podman_version TEXT NOT NULL,
     status TEXT NOT NULL,

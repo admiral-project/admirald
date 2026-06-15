@@ -42,6 +42,9 @@ type Node struct {
 	ID                       string     `json:"id"`
 	Hostname                 string     `json:"hostname"`
 	IP                       string     `json:"ip"`
+	WireguardIP              string     `json:"wireguard_ip"`
+	NodeRole                 string     `json:"node_role"`
+	PublicIP                 string     `json:"public_ip"`
 	OS                       string     `json:"os"`
 	PodmanVersion            string     `json:"podman_version"`
 	FleetVersion             string     `json:"fleet_version"`
@@ -200,19 +203,22 @@ func Connect(dbURL string) (*DB, error) {
 
 // --- Nodes CRUD ---
 
-func (d *DB) RegisterNode(id, hostname, ip, os, podmanV string) error {
+func (d *DB) RegisterNode(id, hostname, ip, wireguardIP, nodeRole, publicIP, os, podmanV string) error {
 	query := `
-		INSERT INTO nodes (id, hostname, ip, os, podman_version, status)
-		VALUES ($1, $2, $3, $4, $5, 'registered')
+		INSERT INTO nodes (id, hostname, ip, wireguard_ip, node_role, public_ip, os, podman_version, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'registered')
 		ON CONFLICT (id) DO UPDATE SET
 			hostname = EXCLUDED.hostname,
 			ip = EXCLUDED.ip,
+			wireguard_ip = EXCLUDED.wireguard_ip,
+			node_role = EXCLUDED.node_role,
+			public_ip = EXCLUDED.public_ip,
 			os = EXCLUDED.os,
 			podman_version = EXCLUDED.podman_version,
 			status = 'active',
 			last_heartbeat = CURRENT_TIMESTAMP
 	`
-	_, err := d.Exec(query, id, hostname, ip, os, podmanV)
+	_, err := d.Exec(query, id, hostname, ip, wireguardIP, nodeRole, publicIP, os, podmanV)
 	if err != nil {
 		return fmt.Errorf("register node: %w", err)
 	}
@@ -227,10 +233,10 @@ func (d *DB) DeleteExpiredAdminSessions() error {
 	return nil
 }
 
-var nodeColumns = "id, hostname, ip, os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at"
+var nodeColumns = "id, hostname, ip, COALESCE(wireguard_ip, ''), COALESCE(node_role, 'worker'), COALESCE(public_ip, ''), os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at"
 
 func scanNode(scanner interface{ Scan(...interface{}) error }, n *Node) error {
-	return scanner.Scan(&n.ID, &n.Hostname, &n.IP, &n.OS, &n.PodmanVersion, &n.FleetVersion, &n.Status, &n.LastHeartbeat, &n.DiskTotal, &n.DiskUsed, &n.PodsActive, &n.PodsPaused, &n.PodsFailed, &n.StorageState, &n.StorageMsg, &n.ManualDisabled, &n.HealthStatus, &n.HealthReasonCodes, &n.AvailableForProvisioning, &n.UnavailableReasonCodes, &n.RAMTotal, &n.RAMUsed, &n.RAMCommitLimit, &n.DiskCommitLimit, &n.CommittedRAM, &n.CommittedDisk, &n.LastMetricsAt)
+	return scanner.Scan(&n.ID, &n.Hostname, &n.IP, &n.WireguardIP, &n.NodeRole, &n.PublicIP, &n.OS, &n.PodmanVersion, &n.FleetVersion, &n.Status, &n.LastHeartbeat, &n.DiskTotal, &n.DiskUsed, &n.PodsActive, &n.PodsPaused, &n.PodsFailed, &n.StorageState, &n.StorageMsg, &n.ManualDisabled, &n.HealthStatus, &n.HealthReasonCodes, &n.AvailableForProvisioning, &n.UnavailableReasonCodes, &n.RAMTotal, &n.RAMUsed, &n.RAMCommitLimit, &n.DiskCommitLimit, &n.CommittedRAM, &n.CommittedDisk, &n.LastMetricsAt)
 }
 
 func (d *DB) GetNodes() ([]Node, error) {
@@ -288,18 +294,20 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 			status = 'active',
 			hostname = COALESCE(NULLIF($2, ''), hostname),
 			ip = COALESCE(NULLIF($3, ''), ip),
-			podman_version = COALESCE(NULLIF($4, ''), podman_version),
-			fleet_version = COALESCE(NULLIF($5, ''), fleet_version),
-			disk_total_bytes = $6,
-			disk_used_bytes = $7,
-			ram_total_bytes = $8,
-			ram_used_bytes = $9,
-			pods_active = $10,
-			pods_paused = $11,
-			pods_failed = $12
+			wireguard_ip = COALESCE(NULLIF($4, ''), wireguard_ip),
+			public_ip = COALESCE(NULLIF($5, ''), public_ip),
+			podman_version = COALESCE(NULLIF($6, ''), podman_version),
+			fleet_version = COALESCE(NULLIF($7, ''), fleet_version),
+			disk_total_bytes = $8,
+			disk_used_bytes = $9,
+			ram_total_bytes = $10,
+			ram_used_bytes = $11,
+			pods_active = $12,
+			pods_paused = $13,
+			pods_failed = $14
 		WHERE id = $1
 	`
-	_, err := d.Exec(query, id, req.Hostname, req.IP, req.PodmanVersion, req.FleetVersion,
+	_, err := d.Exec(query, id, req.Hostname, req.IP, req.WireguardIP, req.PublicIP, req.PodmanVersion, req.FleetVersion,
 		req.DiskTotal, req.DiskUsed, req.RAMTotal, req.RAMUsed,
 		req.PodsActive, req.PodsPaused, req.PodsFailed)
 	if err != nil {

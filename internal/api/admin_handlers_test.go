@@ -231,7 +231,7 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 func TestHandleAdminInstancesList(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -268,7 +268,7 @@ func TestHandleAdminInstancesList(t *testing.T) {
 func TestHandleAdminInstancesGetByID(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -307,7 +307,7 @@ func TestHandleAdminInstancesNotFound(t *testing.T) {
 func TestHandleAdminBackupsList(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -358,7 +358,7 @@ func TestHandleAdminBackupsList(t *testing.T) {
 func TestHandleFleetCallbackSuccess(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -405,7 +405,7 @@ func TestHandleFleetCallbackSuccess(t *testing.T) {
 func TestHandleFleetCallbackFailure(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -467,7 +467,7 @@ func TestHandleFleetCallbackRejectsUnknownOperation(t *testing.T) {
 func TestHandleFleetCallbackSchedulesBackupOnInstance(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "fedora", "5.0"); err != nil {
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	tierSnapshot := `{"name":"starter","cpu":1,"memory":"1G","storage":"10G","backup":{"enabled":true,"schedule":"daily","retention":{"count":7,"days":30}}}`
