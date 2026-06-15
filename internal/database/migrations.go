@@ -138,6 +138,22 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 6,
+			Name:    "add_logical_instance_id",
+			Up: func(db *sql.DB) error {
+				queries := []string{
+					"ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS logical_instance_id TEXT NOT NULL DEFAULT ''",
+					"UPDATE customer_apps SET logical_instance_id = id WHERE logical_instance_id = ''",
+				}
+				for _, q := range queries {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration 6 failed: %w", err)
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -220,6 +236,7 @@ CREATE TABLE IF NOT EXISTS customer_apps (
     grace_period_starts_at TIMESTAMP,
     grace_period_ends_at TIMESTAMP,
     emergency_limit_bytes BIGINT NOT NULL DEFAULT 0,
+    logical_instance_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -119,6 +119,7 @@ type CustomerApp struct {
 	GracePeriodEndsAt   *time.Time `json:"grace_period_ends_at,omitempty"`
 	EmergencyLimitBytes int64      `json:"emergency_limit_bytes"`
 	Hostname            string     `json:"hostname"`
+	LogicalInstanceID   string     `json:"logical_instance_id"`
 }
 
 type Operation struct {
@@ -465,8 +466,8 @@ func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
 
 func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {
 	query := `
-		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json)
-		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6)
+		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, logical_instance_id)
+		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6, $1)
 	`
 	var nID interface{}
 	if nodeID != "" {
@@ -492,8 +493,8 @@ func (d *DB) ReserveNodeCapacityAndCreateApp(id, customerID, appName, tierName, 
 		return err
 	}
 	query := `
-		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json)
-		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6)
+		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, logical_instance_id)
+		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6, $1)
 	`
 	if _, err := tx.Exec(query, id, customerID, appName, tierName, nodeID, tierSnapshotJSON); err != nil {
 		return fmt.Errorf("create customer app in reserve tx: %w", err)
@@ -601,7 +602,8 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.storage_used_percent, 0), COALESCE(ca.storage_state, 'unknown'),
 			COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 			COALESCE(ca.storage_exceeded, FALSE),
-			COALESCE(pr.hostname, '')
+			COALESCE(pr.hostname, ''),
+			COALESCE(ca.logical_instance_id, '')
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			WHERE ca.customer_id = $3 ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset, customerID)
@@ -614,7 +616,8 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.storage_used_percent, 0), COALESCE(ca.storage_state, 'unknown'),
 			COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 			COALESCE(ca.storage_exceeded, FALSE),
-			COALESCE(pr.hostname, '')
+			COALESCE(pr.hostname, ''),
+			COALESCE(ca.logical_instance_id, '')
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset)
@@ -634,6 +637,7 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
 			&a.StorageExceeded,
 			&a.Hostname,
+			&a.LogicalInstanceID,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan customer app row: %w", err)
 		}
@@ -652,7 +656,8 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		COALESCE(ca.storage_used_percent, 0), COALESCE(ca.storage_state, 'unknown'),
 		COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 		COALESCE(ca.storage_exceeded, FALSE),
-		COALESCE(pr.hostname, '')
+		COALESCE(pr.hostname, ''),
+		COALESCE(ca.logical_instance_id, '')
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 		WHERE ca.id = $1`
@@ -663,6 +668,7 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
 		&a.StorageExceeded,
 		&a.Hostname,
+		&a.LogicalInstanceID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1480,7 +1486,8 @@ func (d *DB) GetExpiredGracePeriodApps() ([]CustomerApp, error) {
 		COALESCE(storage_limit_bytes, 0), COALESCE(storage_used_bytes, 0),
 		COALESCE(storage_used_percent, 0), COALESCE(storage_state, 'unknown'),
 		COALESCE(storage_message, ''), storage_checked_at,
-		COALESCE(storage_exceeded, FALSE)
+		COALESCE(storage_exceeded, FALSE),
+		COALESCE(logical_instance_id, '')
 		FROM customer_apps
 		WHERE grace_period_ends_at IS NOT NULL
 		AND grace_period_ends_at < CURRENT_TIMESTAMP
@@ -1501,6 +1508,7 @@ func (d *DB) GetExpiredGracePeriodApps() ([]CustomerApp, error) {
 			&a.StorageLimitBytes, &a.StorageUsedBytes, &a.StorageUsedPct,
 			&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
 			&a.StorageExceeded,
+			&a.LogicalInstanceID,
 		); err != nil {
 			return nil, fmt.Errorf("scan expired grace period app: %w", err)
 		}
