@@ -1662,6 +1662,78 @@ func (h *APIHandlers) enqueueRawTask(task *admiral.FleetTask) {
 	_ = h.enqueueRawTaskWithErr(task)
 }
 
+func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, bk *admiral.BackupRecord) {
+	var payload admiral.AppDefinitionPayload
+	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
+		h.log.Error("Failed to parse app definition for restore", err, map[string]interface{}{"operation_id": opID})
+		_ = h.db.UpdateOperation(opID, "failed", "invalid stored app definition")
+		return
+	}
+
+	allSecretValues, err := h.decryptedSecretMap(instID)
+	if err != nil {
+		h.log.Error("Failed to decrypt secrets for restore", err, map[string]interface{}{"operation_id": opID})
+		_ = h.db.UpdateOperation(opID, "failed", "failed to prepare restore secrets")
+		return
+	}
+
+	services := buildServiceInfos(payload, tier, instID, "", allSecretValues)
+
+	srcType := strings.ToLower(strings.TrimSpace(bk.StorageBackend))
+	srcURI := bk.StorageKey
+	if srcType == "" || srcType == "local" {
+		srcType = "local_path"
+	}
+
+	target, err := resolveRestoreTarget(payload, bk.BackupType, "")
+	if err != nil {
+		h.log.Error("Failed to resolve restore target", err, map[string]interface{}{"operation_id": opID})
+		_ = h.db.UpdateOperation(opID, "failed", err.Error())
+		return
+	}
+
+	task := &admiral.FleetTask{
+		TaskID:      generateID("task"),
+		OperationID: opID,
+		NodeID:      nodeID,
+		Action:      admiral.ActionRestoreBackup,
+		InstanceID:  instID,
+		App:         admiral.AppInfo{Name: payload.Name, Version: "latest"},
+		Tier:        admiral.TierInfo{Name: tier.Name, CPU: tier.CPU, Memory: tier.Memory, Storage: tier.Storage, Environment: tier.Environment},
+		Services:    services,
+		Backup:      buildTaskBackupInfo(target),
+		Restore: &admiral.RestoreInfo{
+			BackupID:       bk.ID,
+			StorageBackend: srcType,
+			StorageKey:     srcURI,
+			BackupType:     bk.BackupType,
+			DatabaseType:   bk.DatabaseType,
+			Service:        target.ServiceName,
+			ChecksumSHA256: bk.ChecksumSHA256,
+		},
+	}
+
+	if srcType == "s3" {
+		storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+		if storageCfg != nil && storageCfg.Backend == "s3" {
+			task.Storage = &admiral.StorageConfig{
+				Backend:        storageCfg.Backend,
+				Endpoint:       storageCfg.Endpoint,
+				Region:         storageCfg.Region,
+				Bucket:         storageCfg.Bucket,
+				Prefix:         storageCfg.Prefix,
+				ForcePathStyle: storageCfg.ForcePathStyle,
+				AccessKeyEnv:   storageCfg.AccessKeyEnv,
+				SecretKeyEnv:   storageCfg.SecretKeyEnv,
+			}
+		}
+	}
+
+	h.enqueueRawTask(task)
+	_ = h.db.UpdateOperationTaskID(opID, task.TaskID)
+	_ = h.db.UpdateOperation(opID, "queued", "")
+}
+
 func (h *APIHandlers) enqueueRawTaskWithErr(task *admiral.FleetTask) error {
 	if uerr := h.db.UpdateOperationTaskID(task.OperationID, task.TaskID); uerr != nil {
 		h.log.Error("Failed to persist task_id on operation from raw task", uerr, map[string]interface{}{"task_id": task.TaskID, "operation_id": task.OperationID})

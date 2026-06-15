@@ -688,6 +688,11 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 				return
 			}
 
+			if action == "migrate" {
+				h.HandleMigrateInstance(w, r)
+				return
+			}
+
 			// Reuse HandleCustomerAppAction, passing tier query param if present
 			tierParam := r.URL.Query().Get("tier")
 			bodyMap := map[string]string{"instance_id": instanceID, "action": action}
@@ -1478,4 +1483,221 @@ func healthToTechStatus(h admiral.HealthStatus) string {
 	default:
 		return ""
 	}
+}
+
+// HandleMigrateInstance starts an offline migration of an instance to a target node.
+// POST /api/admin/instances/{id}/migrate
+func (h *APIHandlers) HandleMigrateInstance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		writeError(w, http.StatusBadRequest, "instance_id is required")
+		return
+	}
+	instanceID := parts[3]
+
+	var req admiral.MigrateAppRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if req.TargetNodeID == "" {
+		writeError(w, http.StatusBadRequest, "target_node_id is required")
+		return
+	}
+
+	inst, err := h.db.GetCustomerApp(instanceID)
+	if err != nil {
+		h.log.Error("Database error fetching instance for migration", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if inst.NodeID == nil || *inst.NodeID == "" {
+		writeError(w, http.StatusConflict, "Instance is not assigned to any node")
+		return
+	}
+	sourceNodeID := *inst.NodeID
+	if sourceNodeID == req.TargetNodeID {
+		writeError(w, http.StatusConflict, "Instance is already on the target node")
+		return
+	}
+
+	targetNode, err := h.db.GetNode(req.TargetNodeID)
+	if err != nil {
+		h.log.Error("Database error fetching target node", err, map[string]interface{}{"node_id": req.TargetNodeID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if targetNode == nil {
+		writeError(w, http.StatusNotFound, "Target node not found")
+		return
+	}
+
+	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+	if err != nil || appDef == nil {
+		writeError(w, http.StatusInternalServerError, "Failed retrieving app definition")
+		return
+	}
+
+	var matchedTier database.AppTier
+	if err := json.Unmarshal([]byte(inst.TierSnapshotJSON), &matchedTier); err != nil {
+		writeError(w, http.StatusInternalServerError, "Invalid tier snapshot on instance")
+		return
+	}
+
+	opID := generateID("op")
+	meta := &database.OperationMetadata{
+		TargetNodeID:      req.TargetNodeID,
+		SourceNodeID:      sourceNodeID,
+		LogicalInstanceID: inst.LogicalInstanceID,
+		MigrationStep:     "starting",
+	}
+	if err := h.db.CreateOperationWithMetadata(opID, instanceID, sourceNodeID, "migrate", "running", operatorFromRequest(r), meta); err != nil {
+		h.log.Error("Failed to create migration operation", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to create operation")
+		return
+	}
+
+	go h.runMigration(opID, instanceID, inst.CustomerID, sourceNodeID, req.TargetNodeID, appDef.RawYAML, matchedTier, inst.LogicalInstanceID)
+
+	writeJSON(w, http.StatusAccepted, admiral.MigrateAppResponse{
+		OperationID:       opID,
+		InstanceID:        instanceID,
+		LogicalInstanceID: inst.LogicalInstanceID,
+		Status:            "running",
+	})
+}
+
+func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targetNodeID, rawYAML string, tier database.AppTier, logicalInstanceID string) {
+	waitForOp := func(stepOpID string) (bool, string) {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		timeout := time.After(30 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				op, err := h.db.GetOperation(stepOpID)
+				if err != nil || op == nil {
+					continue
+				}
+				switch op.Status {
+				case "succeeded":
+					return true, ""
+				case "failed":
+					errMsg := ""
+					if op.ErrorMessage != nil {
+						errMsg = *op.ErrorMessage
+					}
+					return false, errMsg
+				}
+			case <-timeout:
+				return false, "operation timed out after 30 minutes"
+			}
+		}
+	}
+
+	setStep := func(step string) {
+		meta := &database.OperationMetadata{
+			TargetNodeID:      targetNodeID,
+			SourceNodeID:      sourceNodeID,
+			LogicalInstanceID: logicalInstanceID,
+			MigrationStep:     step,
+		}
+		_ = h.db.UpdateOperationMetadata(opID, meta)
+	}
+
+	subOp := func(action admiral.TaskAction, nodeID string, backupID, backupService string) (string, bool, string) {
+		stepOpID := generateID("op")
+		if err := h.db.CreateOperation(stepOpID, instID, nodeID, string(action), "pending_dispatch", "system"); err != nil {
+			return stepOpID, false, err.Error()
+		}
+		h.enqueueTask(stepOpID, instID, nodeID, customerID, rawYAML, tier, action, backupID, backupService)
+		ok, errMsg := waitForOp(stepOpID)
+		return stepOpID, ok, errMsg
+	}
+
+	fail := func(msg string) {
+		h.log.Error("Migration failed", nil, map[string]interface{}{"operation_id": opID, "instance_id": instID, "error": msg})
+		_ = h.db.UpdateOperation(opID, "failed", msg)
+	}
+
+	dbBackupService := "database"
+	volBackupService := "volumes"
+
+	// Step 1: Backup database on source
+	setStep("backup_db_source")
+	if _, ok, errMsg := subOp(admiral.ActionBackupDatabase, sourceNodeID, "", dbBackupService); !ok {
+		fail("backup database: " + errMsg)
+		_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+		return
+	}
+
+	// Step 2: Backup volumes on source
+	setStep("backup_volumes_source")
+	if _, ok, errMsg := subOp(admiral.ActionBackupVolumes, sourceNodeID, "", volBackupService); !ok {
+		fail("backup volumes: " + errMsg)
+		_ = h.db.UpdateCustomerAppStatus(instID, "", "failed")
+		return
+	}
+
+	// Step 3: Update instance node to target
+	setStep("updating_node")
+	if err := h.db.UpdateCustomerAppNode(instID, targetNodeID); err != nil {
+		fail("update node: " + err.Error())
+		return
+	}
+
+	// Step 4: Deprovision on source
+	setStep("deprovisioning_source")
+	if _, ok, errMsg := subOp(admiral.ActionDeprovisionApp, sourceNodeID, "", ""); !ok {
+		fail("deprovision source: " + errMsg)
+		return
+	}
+
+	// Step 5: Provision on target
+	setStep("provisioning_target")
+	if _, ok, errMsg := subOp(admiral.ActionProvisionApp, targetNodeID, "", ""); !ok {
+		fail("provision target: " + errMsg)
+		return
+	}
+
+	// Step 6: Restore backup on target
+	backups, err := h.db.GetBackupRecords(instID)
+	if err == nil {
+		for _, bk := range backups {
+			if bk.Status != "succeeded" {
+				continue
+			}
+			setStep("restoring_" + bk.BackupType)
+			stepOpID := generateID("op")
+			if err := h.db.CreateOperation(stepOpID, instID, targetNodeID, string(admiral.ActionRestoreBackup), "pending_dispatch", "system"); err != nil {
+				fail("restore create op: " + err.Error())
+				return
+			}
+			h.enqueueRestoreTask(stepOpID, instID, targetNodeID, rawYAML, tier, &bk)
+			if ok, errMsg := waitForOp(stepOpID); !ok {
+				fail("restore " + bk.BackupType + ": " + errMsg)
+				return
+			}
+		}
+	}
+
+	// Step 7: Start on target
+	setStep("starting_target")
+	if _, ok, errMsg := subOp(admiral.ActionStartApp, targetNodeID, "", ""); !ok {
+		fail("start target: " + errMsg)
+		return
+	}
+
+	setStep("completed")
+	_ = h.db.UpdateOperation(opID, "succeeded", "")
+	h.log.Info("Migration completed successfully", map[string]interface{}{"operation_id": opID, "instance_id": instID})
 }

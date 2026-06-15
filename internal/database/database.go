@@ -563,6 +563,14 @@ func reserveNodeCapacityTx(tx *sql.Tx, nodeID string, ramDelta, diskDelta int64)
 	return nil
 }
 
+func (d *DB) UpdateCustomerAppNode(id, nodeID string) error {
+	_, err := d.Exec("UPDATE customer_apps SET node_id = $1 WHERE id = $2", nodeID, id)
+	if err != nil {
+		return fmt.Errorf("update customer app node: %w", err)
+	}
+	return nil
+}
+
 func (d *DB) UpdateCustomerAppStatus(id, commStatus, techStatus string) error {
 	query := `
 		UPDATE customer_apps
