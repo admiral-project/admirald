@@ -101,6 +101,9 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	}
 
 	// Start background processors
+	if err := s.handlers.syncKnownHostInventory(); err != nil {
+		s.log.Error("Failed to sync know_host inventory at startup", err, nil)
+	}
 	go s.StartBackupScheduler(ctx)
 	go s.StartSessionCleaner(ctx)
 	go s.StartNodeHealthMonitor(ctx)

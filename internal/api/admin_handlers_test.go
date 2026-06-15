@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -262,6 +264,44 @@ func TestHandleAdminInstancesList(t *testing.T) {
 	}
 	if list.Page != 1 || list.Total != 1 {
 		t.Fatalf("expected page=1 total=1, got page=%d total=%d", list.Page, list.Total)
+	}
+}
+
+func TestSyncKnownHostInventoryWritesNodesAndNextAssignments(t *testing.T) {
+	h := newTestHandler(t, false)
+	tmpDir := t.TempDir()
+	h.knowHostPath = filepath.Join(tmpDir, "know_host.yaml")
+
+	if err := h.db.RegisterNode("worker-001", "worker-1", "10.0.0.11", "10.99.0.2", "worker", "203.0.113.11", "fedora", "5.0"); err != nil {
+		t.Fatalf("register worker node: %v", err)
+	}
+	if err := h.db.RegisterNode("portal-001", "portal-1", "10.0.0.21", "10.99.0.100", "portal", "203.0.113.21", "fedora", "5.0"); err != nil {
+		t.Fatalf("register portal node: %v", err)
+	}
+
+	if err := h.syncKnownHostInventory(); err != nil {
+		t.Fatalf("sync know_host inventory: %v", err)
+	}
+
+	content, err := os.ReadFile(h.knowHostPath)
+	if err != nil {
+		t.Fatalf("read know_host inventory: %v", err)
+	}
+	text := string(content)
+	for _, snippet := range []string{
+		"worker-001:",
+		"wireguard_ip: 10.99.0.2",
+		"public_ip: 203.0.113.11",
+		"portal-001:",
+		"wireguard_ip: 10.99.0.100",
+		"node_id: worker-002",
+		"wireguard_ip: 10.99.0.3",
+		"node_id: portal-002",
+		"wireguard_ip: 10.99.0.101",
+	} {
+		if !strings.Contains(text, snippet) {
+			t.Fatalf("expected know_host inventory to contain %q, got:\n%s", snippet, text)
+		}
 	}
 }
 

@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +40,7 @@ type APIHandlers struct {
 	networking   *networking.Manager
 	hmacKey      string
 	loginLimiter *loginRateLimiter
+	knowHostPath string
 }
 
 func (h *APIHandlers) auditEvent(eventType string, fields map[string]interface{}) {
@@ -79,7 +83,124 @@ func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secret
 		networking:   networkingManager,
 		hmacKey:      hmacKey,
 		loginLimiter: newLoginRateLimiter(),
+		knowHostPath: "/etc/admiral/know_host.yaml",
 	}
+}
+
+type knownHostInventory struct {
+	Version     int                          `yaml:"version"`
+	GeneratedAt string                       `yaml:"generated_at"`
+	Next        knownHostNextAssignments     `yaml:"next"`
+	Nodes       map[string]knownHostNodeSpec `yaml:"nodes"`
+}
+
+type knownHostNextAssignments struct {
+	Worker knownHostBootstrapAssignment `yaml:"worker"`
+	Portal knownHostBootstrapAssignment `yaml:"portal"`
+}
+
+type knownHostBootstrapAssignment struct {
+	NodeID      string `yaml:"node_id"`
+	WireguardIP string `yaml:"wireguard_ip"`
+}
+
+type knownHostNodeSpec struct {
+	NodeID      string `yaml:"node_id"`
+	Hostname    string `yaml:"hostname,omitempty"`
+	NodeRole    string `yaml:"node_role"`
+	PublicIP    string `yaml:"public_ip,omitempty"`
+	WireguardIP string `yaml:"wireguard_ip,omitempty"`
+	Status      string `yaml:"status,omitempty"`
+}
+
+func nextKnownHostAssignment(nodes []database.Node, role string) knownHostBootstrapAssignment {
+	startOctet := 2
+	if role == "portal" {
+		startOctet = 100
+	}
+	maxSuffix := 0
+	usedOctets := map[int]bool{}
+	prefix := role + "-"
+	for _, node := range nodes {
+		if node.NodeRole != role {
+			continue
+		}
+		if strings.HasPrefix(node.ID, prefix) {
+			if suffix, err := strconv.Atoi(strings.TrimPrefix(node.ID, prefix)); err == nil && suffix > maxSuffix {
+				maxSuffix = suffix
+			}
+		}
+		if octet := wireguardLastOctet(node.WireguardIP); octet >= startOctet {
+			usedOctets[octet] = true
+		}
+	}
+
+	nextOctet := startOctet
+	for usedOctets[nextOctet] {
+		nextOctet++
+	}
+	return knownHostBootstrapAssignment{
+		NodeID:      fmt.Sprintf("%s-%03d", role, maxSuffix+1),
+		WireguardIP: fmt.Sprintf("10.99.0.%d", nextOctet),
+	}
+}
+
+func wireguardLastOctet(ip string) int {
+	parts := strings.Split(strings.TrimSpace(ip), ".")
+	if len(parts) != 4 {
+		return 0
+	}
+	last, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return 0
+	}
+	return last
+}
+
+func (h *APIHandlers) syncKnownHostInventory() error {
+	nodes, err := h.db.GetNodes()
+	if err != nil {
+		return fmt.Errorf("get nodes for know_host inventory: %w", err)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
+
+	inv := knownHostInventory{
+		Version:     1,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Next: knownHostNextAssignments{
+			Worker: nextKnownHostAssignment(nodes, "worker"),
+			Portal: nextKnownHostAssignment(nodes, "portal"),
+		},
+		Nodes: map[string]knownHostNodeSpec{},
+	}
+	for _, node := range nodes {
+		inv.Nodes[node.ID] = knownHostNodeSpec{
+			NodeID:      node.ID,
+			Hostname:    node.Hostname,
+			NodeRole:    node.NodeRole,
+			PublicIP:    node.PublicIP,
+			WireguardIP: node.WireguardIP,
+			Status:      node.Status,
+		}
+	}
+
+	content, err := yaml.Marshal(inv)
+	if err != nil {
+		return fmt.Errorf("marshal know_host inventory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(h.knowHostPath), 0750); err != nil {
+		return fmt.Errorf("mkdir know_host path: %w", err)
+	}
+	tmpPath := h.knowHostPath + ".tmp"
+	if err := os.WriteFile(tmpPath, content, 0644); err != nil {
+		return fmt.Errorf("write know_host temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, h.knowHostPath); err != nil {
+		return fmt.Errorf("rename know_host inventory: %w", err)
+	}
+	return nil
 }
 
 func generateID(prefix string) string {
@@ -152,6 +273,9 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.recomputeNodePolicy(req.NodeID)
+		if err := h.syncKnownHostInventory(); err != nil {
+			h.log.Error("Sync know_host inventory failed after register", err, map[string]interface{}{"node_id": req.NodeID})
+		}
 
 		h.log.Info("Node registered successfully", map[string]interface{}{"node_id": req.NodeID, "hostname": req.Hostname})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -204,6 +328,9 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 
 	// Evaluate and persist node health, capacity limits, and provisioning availability.
 	h.recomputeNodePolicy(req.NodeID)
+	if err := h.syncKnownHostInventory(); err != nil {
+		h.log.Error("Sync know_host inventory failed after heartbeat", err, map[string]interface{}{"node_id": req.NodeID})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
