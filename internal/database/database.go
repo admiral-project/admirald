@@ -493,7 +493,7 @@ func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSn
 	return nil
 }
 
-func (d *DB) ReserveNodeCapacityAndCreateApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string, ramDelta, diskDelta int64) error {
+func (d *DB) ReserveNodeCapacityAndCreateApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON, logicalInstanceID string, ramDelta, diskDelta int64) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("begin reserve node capacity tx: %w", err)
@@ -505,9 +505,13 @@ func (d *DB) ReserveNodeCapacityAndCreateApp(id, customerID, appName, tierName, 
 	}
 	query := `
 		INSERT INTO customer_apps (id, customer_id, app_definition_name, tier_name, node_id, commercial_status, technical_status, tier_snapshot_json, logical_instance_id)
-		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6, $1)
+		VALUES ($1, $2, $3, $4, $5, 'active', 'pending_provision', $6, $7)
 	`
-	if _, err := tx.Exec(query, id, customerID, appName, tierName, nodeID, tierSnapshotJSON); err != nil {
+	lid := logicalInstanceID
+	if lid == "" {
+		lid = id
+	}
+	if _, err := tx.Exec(query, id, customerID, appName, tierName, nodeID, tierSnapshotJSON, lid); err != nil {
 		return fmt.Errorf("create customer app in reserve tx: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

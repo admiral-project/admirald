@@ -205,6 +205,18 @@ type ProvisionRequest struct {
 	TierName          string `json:"tier_name"`
 	CustomerID        string `json:"customer_id"`
 	NodeID            string `json:"node_id,omitempty"`
+	LogicalInstanceID string `json:"logical_instance_id,omitempty"`
+}
+
+type MigrateAppRequest struct {
+	TargetNodeID string `json:"target_node_id"`
+}
+
+type MigrateAppResponse struct {
+	OperationID       string `json:"operation_id"`
+	InstanceID        string `json:"instance_id"`
+	LogicalInstanceID string `json:"logical_instance_id"`
+	Status            string `json:"status"`
 }
 
 type OperationResponse struct {

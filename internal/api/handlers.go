@@ -566,9 +566,10 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		}
 		tierSnapshotJSON := string(tierBytes)
 
+		lid := req.LogicalInstanceID
 		ramBytes := database.ParseSizeBytes(matchedTier.Memory)
 		diskBytes := database.ParseSizeBytes(matchedTier.Storage)
-		if err := h.db.ReserveNodeCapacityAndCreateApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON, ramBytes, diskBytes); err != nil {
+		if err := h.db.ReserveNodeCapacityAndCreateApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON, lid, ramBytes, diskBytes); err != nil {
 			if err == database.ErrNodeCapacityPolicyBlocked {
 				evaluations := h.refreshNodeEvaluationsForTier(*matchedTier, nodeID)
 				if recErr := h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, nodeID, *matchedTier, evaluations); recErr != nil {
