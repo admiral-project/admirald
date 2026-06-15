@@ -485,6 +485,137 @@ func TestHandleFleetCallbackSchedulesBackupOnInstance(t *testing.T) {
 	}
 }
 
+func TestHandleMigrateInstanceRejectsMissingTargetNode(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
+
+	body, _ := json.Marshal(admiral.MigrateAppRequest{TargetNodeID: ""})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/instances/inst_001/migrate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleAdminInstances(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing target_node_id, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleMigrateInstanceRejectsNonexistentInstance(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	body, _ := json.Marshal(admiral.MigrateAppRequest{TargetNodeID: "node_002"})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/instances/nonexistent/migrate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleAdminInstances(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent instance, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleMigrateInstanceRejectsSameNode(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
+
+	body, _ := json.Marshal(admiral.MigrateAppRequest{TargetNodeID: "node_001"})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/instances/inst_001/migrate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleAdminInstances(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for same node, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleMigrateInstanceRejectsNonexistentTargetNode(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
+
+	body, _ := json.Marshal(admiral.MigrateAppRequest{TargetNodeID: "node_nonexistent"})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/instances/inst_001/migrate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleAdminInstances(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for nonexistent target node, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", `{"name":"testapp","services":{"web":{"image":"nginx"}}}`, []database.AppTier{}); err != nil {
+		t.Fatalf("save app definition: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
+
+	body, _ := json.Marshal(admiral.MigrateAppRequest{TargetNodeID: "node_002"})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/instances/inst_001/migrate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleAdminInstances(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp admiral.MigrateAppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal migrate response: %v", err)
+	}
+	if resp.OperationID == "" {
+		t.Fatal("expected non-empty operation_id")
+	}
+	if resp.InstanceID != "inst_001" {
+		t.Fatalf("expected instance_id=inst_001, got %s", resp.InstanceID)
+	}
+	if resp.Status != "running" {
+		t.Fatalf("expected status=running, got %s", resp.Status)
+	}
+
+	op, _ := h.db.GetOperation(resp.OperationID)
+	if op == nil {
+		t.Fatal("expected operation to be created")
+	}
+	if op.Action != "migrate" {
+		t.Fatalf("expected action=migrate, got %s", op.Action)
+	}
+	if op.Status != "running" {
+		t.Fatalf("expected status=running, got %s", op.Status)
+	}
+}
+
 func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 	payload := admiral.AppDefinitionPayload{
 		Name:        "envtest",
