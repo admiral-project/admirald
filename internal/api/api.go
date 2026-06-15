@@ -103,6 +103,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	// Start background processors
 	go s.StartBackupScheduler(ctx)
 	go s.StartSessionCleaner(ctx)
+	go s.StartNodeHealthMonitor(ctx)
 	if s.handlers.networking != nil {
 		if err := s.handlers.networking.SeedStaticRoutes(ctx); err != nil {
 			s.log.Error("Failed to seed public routes", err, nil)
@@ -163,6 +164,28 @@ func (s *Server) StartRouteReconciler(ctx context.Context) {
 			}
 			if err := s.handlers.networking.Sync(ctx); err != nil {
 				s.log.Error("Route reconciliation failed", err, nil)
+			}
+		}
+	}
+}
+
+func (s *Server) StartNodeHealthMonitor(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	s.log.Info("Node health monitor started", nil)
+	for {
+		select {
+		case <-ctx.Done():
+			s.log.Info("Node health monitor stopped", nil)
+			return
+		case <-ticker.C:
+			n, err := s.handlers.db.MarkNodesOffline(2 * time.Minute)
+			if err != nil {
+				s.log.Error("Node health monitor failed", err, nil)
+				continue
+			}
+			if n > 0 {
+				s.log.Info("Nodes marked offline by health monitor", map[string]interface{}{"count": n})
 			}
 		}
 	}
