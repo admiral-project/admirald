@@ -18,7 +18,7 @@ jobs:
           go-version: '1.21'
           check-latest: true
 
-      - run: go fmt ./... 2>&1 | tee /tmp/gofmt; test $(wc -l < /tmp/gofmt) -eq 0
+      - run: test -z "$(go fmt ./...)"
         name: Check gofmt
 
       - run: go vet ./...
