@@ -493,7 +493,7 @@ func randomDigits(n int) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("generate random digit: %w", err)
 		}
-		b.WriteByte(byte('0' + v.Int64()))
+		b.WriteByte(byte('0' + v.Int64())) //nolint:gosec // v.Int64() is 0-9 from rand.Int(..., big.NewInt(10))
 	}
 	return b.String(), nil
 }
@@ -558,7 +558,7 @@ func (m *Manager) CertificateInfo() (*CertInfo, error) {
 	if !isSafePath(certPath) {
 		return nil, fmt.Errorf("unsafe certificate path %q", certPath)
 	}
-	data, err := os.ReadFile(certPath)
+	data, err := os.ReadFile(certPath) //nolint:gosec // path validated by isSafePath()
 	if err != nil {
 		return nil, fmt.Errorf("read cert file %q: %w", certPath, err)
 	}
