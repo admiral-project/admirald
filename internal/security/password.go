@@ -142,12 +142,12 @@ func parseArgon2Param(value, prefix string) (int, error) {
 	if len(parts) != 2 || parts[0] != prefix {
 		return 0, fmt.Errorf("invalid argon2 parameter %q", value)
 	}
-	n, err := strconv.Atoi(parts[1])
+	n, err := strconv.ParseUint(parts[1], 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("parse argon2 parameter %q: %w", value, err)
 	}
-	if n <= 0 {
+	if n == 0 {
 		return 0, fmt.Errorf("argon2 parameter %q must be greater than zero", value)
 	}
-	return n, nil
+	return int(n), nil
 }

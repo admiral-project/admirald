@@ -828,9 +828,18 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	appDef, _ := h.db.GetAppDefinition(inst.AppDefinitionName)
+	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+	if err != nil || appDef == nil {
+		h.log.Error("Failed to get app definition for backup target", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to get app definition")
+		return
+	}
 	var payload admiral.AppDefinitionPayload
-	_ = yaml.Unmarshal([]byte(appDef.RawYAML), &payload)
+	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil {
+		h.log.Error("Failed to parse app definition YAML", err, map[string]interface{}{"app_name": inst.AppDefinitionName})
+		writeError(w, http.StatusInternalServerError, "Failed to parse app definition")
+		return
+	}
 
 	var action admiral.TaskAction
 	var contractType string

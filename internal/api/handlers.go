@@ -485,7 +485,7 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, apps)
 
 	case http.MethodPost:
-		yamlContent, err := readAppDefinitionBody(r)
+		yamlContent, err := readAppDefinitionBody(w, r)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -568,7 +568,9 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func readAppDefinitionBody(r *http.Request) (string, error) {
+func readAppDefinitionBody(w http.ResponseWriter, r *http.Request) (string, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	if strings.Contains(r.Header.Get("Content-Type"), "yaml") || strings.Contains(r.Header.Get("Content-Type"), "text") {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if cerr := r.Body.Close(); cerr != nil {

@@ -239,7 +239,10 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 	}
 
 	var payload admiral.AppDefinitionPayload
-	_ = yaml.Unmarshal([]byte(appDef.RawYAML), &payload)
+	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil {
+		s.log.Error("Failed to parse app definition YAML in scheduler", err, map[string]interface{}{"instance_id": instanceID, "app_name": inst.AppDefinitionName})
+		return
+	}
 
 	tiers, err := s.handlers.db.GetAppTiers(inst.AppDefinitionName)
 	if err != nil {
