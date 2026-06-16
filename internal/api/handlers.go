@@ -39,7 +39,7 @@ type APIHandlers struct {
 	secrets      *secrets.Manager
 	networking   *networking.Manager
 	hmacKey      string
-	loginLimiter *loginRateLimiter
+	loginLimiter *RateLimiter
 	knowHostPath string
 }
 
@@ -82,7 +82,7 @@ func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secret
 		secrets:      secretManager,
 		networking:   networkingManager,
 		hmacKey:      hmacKey,
-		loginLimiter: newLoginRateLimiter(),
+		loginLimiter: NewRateLimiter(),
 		knowHostPath: "/etc/admiral/know_host.yaml",
 	}
 }

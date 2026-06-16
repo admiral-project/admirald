@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -20,11 +19,6 @@ import (
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"gopkg.in/yaml.v2"
 )
-
-type loginRateLimiter struct {
-	mu       sync.Mutex
-	attempts map[string][]time.Time
-}
 
 const (
 	defaultPageSize = 20
@@ -58,37 +52,12 @@ func parsePagination(r *http.Request) (int, int) {
 	return page, pageSize
 }
 
-func newLoginRateLimiter() *loginRateLimiter {
-	return &loginRateLimiter{attempts: make(map[string][]time.Time)}
-}
-
 func clientIP(remoteAddr string) string {
 	ip := remoteAddr
 	if idx := strings.LastIndex(ip, ":"); idx >= 0 {
 		ip = ip[:idx]
 	}
 	return ip
-}
-
-func (l *loginRateLimiter) allow(key string, maxAttempts int, window time.Duration) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	cutoff := now.Add(-window)
-	entries := l.attempts[key]
-	var recent []time.Time
-	for _, t := range entries {
-		if t.After(cutoff) {
-			recent = append(recent, t)
-		}
-	}
-	if len(recent) >= maxAttempts {
-		l.attempts[key] = recent
-		return false
-	}
-	recent = append(recent, now)
-	l.attempts[key] = recent
-	return true
 }
 
 func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -157,7 +126,7 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r.RemoteAddr)
-	if !h.loginLimiter.allow("login:"+ip, 5, 1*time.Minute) {
+	if !h.loginLimiter.Allow("login:"+ip, 5, 1*time.Minute) {
 		h.log.Warn("Login rate limit exceeded", map[string]interface{}{"ip": ip})
 		writeError(w, http.StatusTooManyRequests, "Too many login attempts. Try again later.")
 		return
@@ -279,7 +248,7 @@ func (h *APIHandlers) HandleAdminChangePassword(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !h.loginLimiter.allow("change-password:"+username+":"+clientIP(r.RemoteAddr), 5, 1*time.Minute) {
+	if !h.loginLimiter.Allow("change-password:"+username+":"+clientIP(r.RemoteAddr), 5, 1*time.Minute) {
 		h.log.Warn("Change-password rate limit exceeded", map[string]interface{}{"username": username, "ip": clientIP(r.RemoteAddr)})
 		writeError(w, http.StatusTooManyRequests, "Too many password change attempts. Try again later.")
 		return
