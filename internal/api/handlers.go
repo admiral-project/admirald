@@ -193,7 +193,7 @@ func (h *APIHandlers) syncKnownHostInventory() error {
 		return fmt.Errorf("mkdir know_host path: %w", err)
 	}
 	tmpPath := h.knowHostPath + ".tmp"
-	if err := os.WriteFile(tmpPath, content, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, content, 0600); err != nil {
 		return fmt.Errorf("write know_host temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, h.knowHostPath); err != nil {
