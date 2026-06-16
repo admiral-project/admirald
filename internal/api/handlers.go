@@ -1666,7 +1666,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 
 func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) {
 	var payload admiral.AppDefinitionPayload
-	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
+	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil { //nolint:gosec // rawYAML from stored appDef.RawYAML (trusted DB data)
 		h.log.Error("Failed to parse app definition for task dispatch", err, map[string]interface{}{"operation_id": opID})
 		if uerr := h.db.UpdateOperation(opID, "failed", "invalid stored app definition"); uerr != nil {
 			h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
@@ -1794,7 +1794,7 @@ func (h *APIHandlers) enqueueRawTask(task *admiral.FleetTask) {
 
 func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, tier database.AppTier, bk *admiral.BackupRecord) {
 	var payload admiral.AppDefinitionPayload
-	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
+	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil { //nolint:gosec // rawYAML from stored appDef.RawYAML (trusted DB data)
 		h.log.Error("Failed to parse app definition for restore", err, map[string]interface{}{"operation_id": opID})
 		_ = h.db.UpdateOperation(opID, "failed", "invalid stored app definition")
 		return
