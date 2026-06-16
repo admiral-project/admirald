@@ -5,7 +5,7 @@ package queue
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // SHA1 used for UUIDv5 generation (non-crypto task IDs)
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -105,7 +105,7 @@ func newUUID() string {
 }
 
 func nameUUID(seed string) string {
-	sum := sha1.Sum([]byte(seed))
+	sum := sha1.Sum([]byte(seed)) //nolint:gosec // SHA1 for UUIDv5 task IDs (non-crypto)
 	b := sum[:16]
 	b[6] = (b[6] & 0x0f) | 0x50
 	b[8] = (b[8] & 0x3f) | 0x80
