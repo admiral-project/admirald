@@ -130,7 +130,7 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 		return false, fmt.Errorf("decode argon2 hash: %w", err)
 	}
 
-	computed := argon2.IDKey([]byte(password), salt, uint32(timeCost), uint32(memKB), uint8(threads), uint32(len(expectedHash)))
+	computed := argon2.IDKey([]byte(password), salt, uint32(timeCost), uint32(memKB), uint8(threads), uint32(len(expectedHash))) //nolint:gosec // validated by parseArgon2Param (ParseUint bitSize=32)
 	if subtle.ConstantTimeCompare(computed, expectedHash) != 1 {
 		return false, nil
 	}
