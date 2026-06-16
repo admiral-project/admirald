@@ -4,7 +4,6 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -2167,7 +2166,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			nextTechStatus = "running"
 			if h.networking != nil {
 				hostPorts := parseHostPortsFromMetadata(res.Metadata)
-				if err := h.networking.ActivateInstanceRoutes(context.Background(), op.InstanceID, hostPorts); err != nil {
+				if err := h.networking.ActivateInstanceRoutes(r.Context(), op.InstanceID, hostPorts); err != nil {
 					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
 				}
 			}
@@ -2201,7 +2200,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 				}
 			}
 			if h.networking != nil {
-				if err := h.networking.DeleteInstanceRoutes(context.Background(), op.InstanceID); err != nil {
+				if err := h.networking.DeleteInstanceRoutes(r.Context(), op.InstanceID); err != nil {
 					h.log.Error("Delete public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
 				}
 			}
@@ -2255,7 +2254,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 						}
 					}
 				}
-				if uerr := h.networking.Sync(context.Background()); uerr != nil {
+				if uerr := h.networking.Sync(r.Context()); uerr != nil {
 					h.log.Error("Failed to sync routes after failure", uerr, nil)
 				}
 			}
@@ -2382,7 +2381,7 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, routes)
 		case http.MethodPost:
-			if err := h.networking.Sync(context.Background()); err != nil {
+			if err := h.networking.Sync(r.Context()); err != nil {
 				writeError(w, http.StatusBadGateway, err.Error())
 				return
 			}
@@ -2428,7 +2427,7 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := h.networking.EnableRoute(context.Background(), hostname); err != nil {
+		if err := h.networking.EnableRoute(r.Context(), hostname); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
@@ -2438,7 +2437,7 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := h.networking.DisableRoute(context.Background(), hostname); err != nil {
+		if err := h.networking.DisableRoute(r.Context(), hostname); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
@@ -2448,7 +2447,7 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := h.networking.Sync(context.Background()); err != nil {
+		if err := h.networking.Sync(r.Context()); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
@@ -2458,7 +2457,7 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := h.networking.DeleteRoute(context.Background(), hostname); err != nil {
+		if err := h.networking.DeleteRoute(r.Context(), hostname); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}

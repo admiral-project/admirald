@@ -1368,7 +1368,7 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 	}
 
 	if len(report.HostPorts) > 0 && h.networking != nil {
-		if err := h.networking.ActivateInstanceRoutes(context.Background(), report.InstanceID, report.HostPorts); err != nil {
+		if err := h.networking.ActivateInstanceRoutes(r.Context(), report.InstanceID, report.HostPorts); err != nil {
 			h.log.Warn("Route reconciliation from health check failed", map[string]interface{}{
 				"instance_id": report.InstanceID,
 				"error":       err.Error(),
