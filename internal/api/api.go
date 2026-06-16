@@ -16,16 +16,20 @@ import (
 )
 
 type Server struct {
-	handlers *APIHandlers
-	log      *logging.Logger
-	token    string
+	handlers    *APIHandlers
+	log         *logging.Logger
+	token       string
+	fleetLimiter *RateLimiter
+	adminLimiter *RateLimiter
 }
 
 func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, token string, secretManager *secrets.Manager, networkingManager *networking.Manager) *Server {
 	return &Server{
-		handlers: NewHandlers(db, log, pub, secretManager, networkingManager, token),
-		log:      log,
-		token:    token,
+		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, token),
+		log:          log,
+		token:        token,
+		fleetLimiter: NewRateLimiter(),
+		adminLimiter: NewRateLimiter(),
 	}
 }
 
@@ -45,9 +49,9 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/customer-apps/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
 	mux.HandleFunc("/api/v1/customer-apps/action", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
 	mux.HandleFunc("/api/v1/operations", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleOperations)))
-	mux.HandleFunc("/api/v1/fleet/callback", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleFleetCallback)))
-	mux.HandleFunc("/api/v1/fleet/health", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback)))
-	mux.HandleFunc("/api/v1/fleet/storage", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleStorageReport)))
+	mux.HandleFunc("/api/v1/fleet/callback", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
+	mux.HandleFunc("/api/v1/fleet/health", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-health", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback))))
+	mux.HandleFunc("/api/v1/fleet/storage", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-storage", 30, time.Minute, MaxBody(jsonLimit, s.handlers.HandleStorageReport))))
 	mux.HandleFunc("/api/v1/routes", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
 	mux.HandleFunc("/api/v1/routes/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
 	mux.HandleFunc("/api/v1/instances", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 func AuthMiddleware(token string, next http.HandlerFunc) http.HandlerFunc {
@@ -53,5 +55,49 @@ func bodyLimitError(w http.ResponseWriter, err error) {
 			fmt.Fprintf(w, `{"error":"request body too large"}`)
 			return
 		}
+	}
+}
+
+type RateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string][]time.Time
+}
+
+func NewRateLimiter() *RateLimiter {
+	return &RateLimiter{buckets: make(map[string][]time.Time)}
+}
+
+func (rl *RateLimiter) Allow(key string, maxAttempts int, window time.Duration) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-window)
+	entries := rl.buckets[key]
+	var recent []time.Time
+	for _, t := range entries {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) >= maxAttempts {
+		rl.buckets[key] = recent
+		return false
+	}
+	recent = append(recent, now)
+	rl.buckets[key] = recent
+	return true
+}
+
+func RateLimit(limiter *RateLimiter, key string, maxAttempts int, window time.Duration, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r.RemoteAddr)
+		fullKey := key + ":" + ip
+		if !limiter.Allow(fullKey, maxAttempts, window) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":"rate limit exceeded"}`))
+			return
+		}
+		next(w, r)
 	}
 }
