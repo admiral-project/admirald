@@ -379,7 +379,7 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 	if err != nil {
 		return fmt.Errorf("start transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	queryApp := `
 		INSERT INTO app_definitions (name, display_name, description, raw_yaml, status)
@@ -542,7 +542,7 @@ func (d *DB) ReserveNodeCapacityAndCreateApp(id, customerID, appName, tierName, 
 	if err != nil {
 		return fmt.Errorf("begin reserve node capacity tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if err := reserveNodeCapacityTx(tx, nodeID, ramDelta, diskDelta); err != nil {
 		return err
@@ -569,7 +569,7 @@ func (d *DB) ReserveNodeCapacity(nodeID string, ramDelta, diskDelta int64) error
 	if err != nil {
 		return fmt.Errorf("begin reserve node capacity tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if err := reserveNodeCapacityTx(tx, nodeID, ramDelta, diskDelta); err != nil {
 		return err

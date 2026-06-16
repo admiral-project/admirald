@@ -83,12 +83,12 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 	for _, route := range routes {
 		seededKinds[route.RouteKind] = true
 		if route.Hostname != "" {
-			m.DB.DeletePublicRouteByKindAndNotHostname(route.RouteKind, route.Hostname)
+			_ = m.DB.DeletePublicRouteByKindAndNotHostname(route.RouteKind, route.Hostname)
 		}
 	}
 	for kind := range staticKinds {
 		if !seededKinds[kind] {
-			m.DB.DeletePublicRouteByKind(kind)
+			_ = m.DB.DeletePublicRouteByKind(kind)
 		}
 	}
 	for _, route := range routes {

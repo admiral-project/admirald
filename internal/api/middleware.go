@@ -5,7 +5,6 @@ package api
 
 import (
 	"crypto/subtle"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -25,7 +24,7 @@ func AuthMiddleware(token string, next http.HandlerFunc) http.HandlerFunc {
 		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(token)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
+			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
 			return
 		}
 
@@ -44,17 +43,6 @@ func MaxBody(maxBytes int64, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 		next(w, r)
-	}
-}
-
-func bodyLimitError(w http.ResponseWriter, err error) {
-	if err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-			fmt.Fprintf(w, `{"error":"request body too large"}`)
-			return
-		}
 	}
 }
 
@@ -95,7 +83,7 @@ func RateLimit(limiter *RateLimiter, key string, maxAttempts int, window time.Du
 		if !limiter.Allow(fullKey, maxAttempts, window) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte(`{"error":"rate limit exceeded"}`))
+			_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
 			return
 		}
 		next(w, r)

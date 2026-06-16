@@ -209,10 +209,8 @@ func ensureManagedServer(cfg map[string]interface{}) map[string]interface{} {
 		httpApps = map[string]interface{}{}
 		apps["http"] = httpApps
 	}
-	servers, ok := httpApps["servers"].(map[string]interface{})
-	if !ok {
-		servers = map[string]interface{}{}
-		httpApps["servers"] = servers
+	if _, ok := httpApps["servers"].(map[string]interface{}); !ok {
+		httpApps["servers"] = map[string]interface{}{}
 	}
 	return cfg
 }

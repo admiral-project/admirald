@@ -171,7 +171,7 @@ func TestSeedStaticRoutesCreatesAdminAndPortal(t *testing.T) {
 	}
 	mgr.Caddy = nil
 
-	if err := mgr.SeedStaticRoutes(nil); err != nil {
+	if err := mgr.SeedStaticRoutes(context.Background()); err != nil {
 		t.Fatalf("seed static routes: %v", err)
 	}
 

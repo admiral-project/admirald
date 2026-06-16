@@ -20,21 +20,6 @@ import (
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
 
-type mockPublisher struct {
-	published []*admiral.FleetTask
-	rejected  []*admiral.FleetTask
-}
-
-func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error {
-	m.published = append(m.published, task)
-	return nil
-}
-
-func (m *mockPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
-	m.rejected = append(m.rejected, task)
-	return nil
-}
-
 type migrationTestPublisher struct {
 	db         *database.DB
 	failAction admiral.TaskAction

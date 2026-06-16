@@ -234,9 +234,7 @@ func operatorFromRequest(r *http.Request) string {
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// writeJSON encoding error
-	}
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -271,7 +269,9 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "Failed to register node")
 			return
 		}
-		h.recomputeNodePolicy(req.NodeID)
+		if err := h.recomputeNodePolicy(req.NodeID); err != nil {
+			h.log.Error("Recompute node policy failed after register", err, map[string]interface{}{"node_id": req.NodeID})
+		}
 		if err := h.syncKnownHostInventory(); err != nil {
 			h.log.Error("Sync know_host inventory failed after register", err, map[string]interface{}{"node_id": req.NodeID})
 		}
@@ -326,7 +326,9 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 	}
 
 	// Evaluate and persist node health, capacity limits, and provisioning availability.
-	h.recomputeNodePolicy(req.NodeID)
+	if err := h.recomputeNodePolicy(req.NodeID); err != nil {
+		h.log.Error("Recompute node policy failed after heartbeat", err, map[string]interface{}{"node_id": req.NodeID})
+	}
 	if err := h.syncKnownHostInventory(); err != nil {
 		h.log.Error("Sync know_host inventory failed after heartbeat", err, map[string]interface{}{"node_id": req.NodeID})
 	}
