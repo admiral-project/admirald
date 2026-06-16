@@ -16,9 +16,9 @@ import (
 )
 
 type Server struct {
-	handlers    *APIHandlers
-	log         *logging.Logger
-	token       string
+	handlers     *APIHandlers
+	log          *logging.Logger
+	token        string
 	fleetLimiter *RateLimiter
 	adminLimiter *RateLimiter
 }
