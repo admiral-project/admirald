@@ -120,7 +120,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	}
 
 	// Graceful shutdown on context cancellation
-	go func() {
+	go func() { //nolint:gosec // intentional: shutdown goroutine uses background context for timeout
 		<-ctx.Done()
 		s.log.Info("Shutting down HTTP server...", nil)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
