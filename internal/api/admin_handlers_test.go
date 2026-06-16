@@ -907,3 +907,131 @@ func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 		t.Fatalf("expected SECRET_KEY=sk-123 in Secrets, got %v", svc.Secrets["SECRET_KEY"])
 	}
 }
+
+func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+
+	heartbeat := admiral.HeartbeatRequest{
+		NodeID: "node_001",
+		Status: "active",
+	}
+	body, _ := json.Marshal(heartbeat)
+
+	// Test 1: Request with mismatching IP (or no IP header) -> 403 Forbidden
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
+	rec1 := httptest.NewRecorder()
+	h.HandleNodeHeartbeat(rec1, req1)
+	if rec1.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden on mismatching IP, got %d", rec1.Code)
+	}
+
+	// Test 2: Request with matching WireGuard IP -> 200 OK
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
+	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	rec2 := httptest.NewRecorder()
+	h.HandleNodeHeartbeat(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on matching WireGuard IP, got %d (body=%s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestHandleFleetCallbackIPValidation(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "provisioning")
+	if err := h.db.CreateOperation("op_001", "inst_001", "node_001", "provision_app", "running", ""); err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+
+	callback := admiral.TaskResult{
+		TaskID:      "task_001",
+		OperationID: "op_001",
+		NodeID:      "node_001",
+		Success:     true,
+	}
+	body, _ := json.Marshal(callback)
+
+	// Test 1: Request with mismatching IP -> 403 Forbidden
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	rec1 := httptest.NewRecorder()
+	h.HandleFleetCallback(rec1, req1)
+	if rec1.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
+	}
+
+	// Test 2: Request with matching WireGuard IP -> 200 OK
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	rec2 := httptest.NewRecorder()
+	h.HandleFleetCallback(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node 1: %v", err)
+	}
+	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "10.99.0.3", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node 2: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+
+	report := admiral.HealthReport{
+		InstanceID:   "inst_001",
+		NodeID:       "node_001",
+		HealthStatus: admiral.HealthHealthy,
+		Message:      "all good",
+	}
+	body, _ := json.Marshal(report)
+
+	// Test 1: Mismatching IP -> 403 Forbidden
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
+	req1.Header.Set("X-Real-IP", "10.99.0.3") // IP of node_002 but reporting for node_001
+	rec1 := httptest.NewRecorder()
+	h.HandleAdminHealthCallback(rec1, req1)
+	if rec1.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
+	}
+
+	// Test 2: Valid IP and Node ID -> 200 OK
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
+	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	rec2 := httptest.NewRecorder()
+	h.HandleAdminHealthCallback(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
+	}
+
+	// Test 3: Valid IP of node_002 reporting instance that belongs to node_001 -> 403 Forbidden
+	report2 := admiral.HealthReport{
+		InstanceID:   "inst_001",
+		NodeID:       "node_002",
+		HealthStatus: admiral.HealthHealthy,
+		Message:      "all good",
+	}
+	body2, _ := json.Marshal(report2)
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body2))
+	req3.Header.Set("X-Real-IP", "10.99.0.3")
+	rec3 := httptest.NewRecorder()
+	h.HandleAdminHealthCallback(rec3, req3)
+	if rec3.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d", rec3.Code)
+	}
+}
+

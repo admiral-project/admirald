@@ -301,6 +301,12 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if err := h.validateRequestNodeIP(r, req.NodeID); err != nil {
+		h.log.Error("Node heartbeat blocked: IP validation failed", err, map[string]interface{}{"node_id": req.NodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	node, err := h.db.GetNode(req.NodeID)
 	if err != nil {
 		h.log.Error("Get node failed on heartbeat", err, map[string]interface{}{"node_id": req.NodeID})
@@ -2116,6 +2122,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if err := h.validateRequestNodeIP(r, res.NodeID); err != nil {
+		h.log.Error("Fleet callback blocked: IP validation failed", err, map[string]interface{}{"node_id": res.NodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	h.log.Info("Received fleet task callback", map[string]interface{}{
 		"operation_id": res.OperationID,
 		"task_id":      res.TaskID,
@@ -2734,3 +2746,33 @@ func (h *APIHandlers) HandleAppValidateProvisioning(w http.ResponseWriter, r *ht
 		Checksum: app.Checksum,
 	})
 }
+
+func (h *APIHandlers) validateRequestNodeIP(r *http.Request, nodeID string) error {
+	clientIPAddr := clientIP(r.RemoteAddr)
+	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
+		clientIPAddr = xRealIP
+	} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx >= 0 {
+			clientIPAddr = strings.TrimSpace(xff[:idx])
+		} else {
+			clientIPAddr = strings.TrimSpace(xff)
+		}
+	}
+	clientIPAddr = clientIP(clientIPAddr)
+
+	node, err := h.db.GetNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch node registration details: %w", err)
+	}
+	if node == nil {
+		return fmt.Errorf("node %s not registered", nodeID)
+	}
+
+	if node.WireguardIP != "" {
+		if clientIPAddr != node.WireguardIP {
+			return fmt.Errorf("node %s requests must originate from WireGuard IP %s, got %s", nodeID, node.WireguardIP, clientIPAddr)
+		}
+	}
+	return nil
+}
+

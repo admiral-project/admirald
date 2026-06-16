@@ -1360,6 +1360,32 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if err := h.validateRequestNodeIP(r, report.NodeID); err != nil {
+		h.log.Error("Health report blocked: IP validation failed", err, map[string]interface{}{"node_id": report.NodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	inst, err := h.db.GetCustomerApp(report.InstanceID)
+	if err != nil {
+		h.log.Error("Failed to fetch customer app for health report check", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to verify instance node ownership")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if inst.NodeID != nil && *inst.NodeID != "" && *inst.NodeID != report.NodeID {
+		h.log.Error("Health report instance node_id mismatch", nil, map[string]interface{}{
+			"instance_id":   report.InstanceID,
+			"expected_node": *inst.NodeID,
+			"received_node": report.NodeID,
+		})
+		writeError(w, http.StatusForbidden, "Instance does not belong to the reporting node")
+		return
+	}
+
 	techStatus := healthToTechStatus(report.HealthStatus)
 	if err := h.db.UpdateInstanceHealthAndTechStatus(report.InstanceID, string(report.HealthStatus), techStatus, report.Message); err != nil {
 		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
@@ -1394,11 +1420,33 @@ func (h *APIHandlers) HandleStorageReport(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	inst, _ := h.db.GetCustomerApp(report.InstanceID)
-	prevState := ""
-	if inst != nil {
-		prevState = inst.StorageState
+	if err := h.validateRequestNodeIP(r, report.NodeID); err != nil {
+		h.log.Error("Storage report blocked: IP validation failed", err, map[string]interface{}{"node_id": report.NodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	}
+
+	inst, err := h.db.GetCustomerApp(report.InstanceID)
+	if err != nil {
+		h.log.Error("Failed to fetch customer app for storage report check", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to verify instance node ownership")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if inst.NodeID != nil && *inst.NodeID != "" && *inst.NodeID != report.NodeID {
+		h.log.Error("Storage report instance node_id mismatch", nil, map[string]interface{}{
+			"instance_id":   report.InstanceID,
+			"expected_node": *inst.NodeID,
+			"received_node": report.NodeID,
+		})
+		writeError(w, http.StatusForbidden, "Instance does not belong to the reporting node")
+		return
+	}
+
+	prevState := inst.StorageState
 
 	exceeded := string(report.StorageState) == string(admiral.StorageOverQuota)
 	if err := h.db.UpdateInstanceStorage(
