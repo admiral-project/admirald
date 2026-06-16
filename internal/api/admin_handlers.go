@@ -555,7 +555,7 @@ func (h *APIHandlers) HandleAdminAppTiers(w http.ResponseWriter, r *http.Request
 		})
 
 		var payload admiral.AppDefinitionPayload
-		if err := yaml.Unmarshal([]byte(app.RawYAML), &payload); err != nil {
+		if err := yaml.Unmarshal([]byte(app.RawYAML), &payload); err != nil { //nolint:gosec // app.RawYAML from trusted DB data
 			writeError(w, http.StatusInternalServerError, "Stored application definition is invalid")
 			return
 		}
@@ -804,7 +804,7 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var payload admiral.AppDefinitionPayload
-	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil {
+	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil { //nolint:gosec // appDef.RawYAML from trusted DB data
 		h.log.Error("Failed to parse app definition YAML", err, map[string]interface{}{"app_name": inst.AppDefinitionName})
 		writeError(w, http.StatusInternalServerError, "Failed to parse app definition")
 		return
