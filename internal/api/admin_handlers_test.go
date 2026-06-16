@@ -271,6 +271,11 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 	if err := database.RunMigrations(db.DB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
+	if err := db.TruncateTables(); err != nil {
+		t.Fatalf("truncate tables: %v", err)
+	}
+
+	seedTestAppDefinition(t, db)
 
 	if seedAdmin {
 		hash, err := security.HashPassword("super-secret-password")
@@ -283,6 +288,13 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 	}
 
 	return NewHandlers(db, logging.New("test"), nil, nil, nil, "test-hmac-key")
+}
+
+func seedTestAppDefinition(t *testing.T, db *database.DB) {
+	t.Helper()
+	_ = db.SaveAppDefinition("testapp", "Test App", "App for testing", "name: testapp", nil)
+	_ = db.SaveAppDefinition("migrate-app", "Migrate App", "App for migration testing", "name: migrate-app", nil)
+	_ = db.SaveAppDefinition("status-app", "Status App", "App for status testing", "name: status-app", nil)
 }
 
 func TestHandleAdminInstancesList(t *testing.T) {
@@ -667,6 +679,12 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	}
 	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.UpdateNodeStatus("node_001", "active"); err != nil {
+		t.Fatalf("activate node_001: %v", err)
+	}
+	if err := h.db.UpdateNodeStatus("node_002", "active"); err != nil {
+		t.Fatalf("activate node_002: %v", err)
 	}
 	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", `{"name":"testapp","services":{"web":{"image":"nginx"}}}`, []database.AppTier{}); err != nil {
 		t.Fatalf("save app definition: %v", err)

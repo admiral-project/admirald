@@ -276,5 +276,8 @@ func openTestDB(t *testing.T) *database.DB {
 	if err := database.RunMigrations(db.DB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
+	if err := db.TruncateTables(); err != nil {
+		t.Fatalf("truncate tables: %v", err)
+	}
 	return db
 }

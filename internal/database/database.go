@@ -206,6 +206,30 @@ func Connect(dbURL string) (*DB, error) {
 	return nil, fmt.Errorf("ping %s db after retries: %w", driver, pingErr)
 }
 
+// TruncateTables removes data from all tables for test isolation.
+func (d *DB) TruncateTables() error {
+	tables := []string{
+		"public_routes",
+		"task_outbox",
+		"backup_records",
+		"backup_storage_configs",
+		"admin_sessions",
+		"admin_users",
+		"instance_secrets",
+		"operations",
+		"customer_apps",
+		"app_tiers",
+		"app_definitions",
+		"nodes",
+	}
+	for _, t := range tables {
+		if _, err := d.Exec(fmt.Sprintf("DELETE FROM %s", t)); err != nil {
+			return fmt.Errorf("truncate %s: %w", t, err)
+		}
+	}
+	return nil
+}
+
 // --- Nodes CRUD ---
 
 func (d *DB) RegisterNode(id, hostname, ip, wireguardIP, nodeRole, publicIP, os, podmanV string) error {
