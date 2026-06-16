@@ -4,6 +4,8 @@ Control plane for the Admiral PaaS platform.
 
 `admirald` is the central API service that manages platform state, validates operations, coordinates provisioning, dispatches tasks to worker nodes, and maintains auditability.
 
+The RPM installs the `admirald` binary and the `admirald.service` unit.
+
 ## Responsibilities
 
 - Expose the Admiral HTTP API
@@ -28,6 +30,8 @@ export ADMIRAL_QUEUE_DATABASE_URL=postgres://queue:password@localhost:5432/admir
 
 admirald
 ```
+
+`admirald` requires PostgreSQL for both the main platform database and the durable queue. SQLite is not supported, and the queue database should be a separate PostgreSQL database or schema from the main control-plane database.
 
 ## Architecture
 
