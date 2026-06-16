@@ -14,7 +14,6 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type OutboxEntry struct {
@@ -185,21 +184,15 @@ type InstanceSecret struct {
 
 func Connect(dbURL string) (*DB, error) {
 	driver := "postgres"
-	if strings.HasPrefix(dbURL, "sqlite://") {
-		driver = "sqlite3"
-		dbURL = strings.TrimPrefix(dbURL, "sqlite://")
-	}
 
 	db, err := sql.Open(driver, dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("open %s db: %w", driver, err)
 	}
 
-	if driver == "postgres" {
-		db.SetMaxOpenConns(25)
-		db.SetMaxIdleConns(5)
-		db.SetConnMaxLifetime(5 * time.Minute)
-	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	var pingErr error
 	for i := 0; i < 30; i++ {
