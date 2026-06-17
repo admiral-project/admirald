@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -79,8 +80,11 @@ func main() {
 		logger.Info("Initial administrative user created from environment configuration", map[string]interface{}{"username": cfg.FlagshipAdminUser})
 	}
 
-	// Initialize RabbitMQ Task Publisher
-	publisher := queue.NewPublisher(queueDB, logger)
+	seed, err := hex.DecodeString(cfg.SigningKey)
+	if err != nil {
+		logger.Fatal("invalid signing key (ADMIRAL_ED25519_PRIVATE_KEY must be 64 hex chars)", err, nil)
+	}
+	publisher := queue.NewPublisher(queueDB, logger, seed)
 	defer publisher.Close()
 
 	// Initialize API Server

@@ -121,5 +121,21 @@ func getMigrations() []Migration {
 				return err
 			},
 		},
+		{
+			Version: 2,
+			Name:    "add_task_signature",
+			Up: func(db *sql.DB) error {
+				queries := []string{
+					"ALTER TABLE fleet_commands ADD COLUMN IF NOT EXISTS task_signature TEXT",
+					"ALTER TABLE fleet_commands ADD COLUMN IF NOT EXISTS signed_at BIGINT DEFAULT 0",
+				}
+				for _, q := range queries {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration 2 failed: %w", err)
+					}
+				}
+				return nil
+			},
+		},
 	}
 }

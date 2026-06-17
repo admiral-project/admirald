@@ -1,9 +1,7 @@
-// SPDX-FileCopyrightText: William Moreno Reyes CP | MBA
-// SPDX-License-Identifier: Apache-2.0
-
 package queue
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // SHA1 used for UUIDv5 generation (non-crypto task IDs)
 	"encoding/hex"
@@ -23,23 +21,46 @@ const (
 )
 
 type Publisher struct {
-	db  *queuedb.DB
-	log *logging.Logger
+	db         *queuedb.DB
+	log        *logging.Logger
+	privateKey ed25519.PrivateKey
 }
 
-func NewPublisher(db *queuedb.DB, log *logging.Logger) *Publisher {
-	return &Publisher{db: db, log: log}
+func NewPublisher(db *queuedb.DB, log *logging.Logger, seed []byte) *Publisher {
+	var priv ed25519.PrivateKey
+	if len(seed) == 32 {
+		priv = ed25519.NewKeyFromSeed(seed)
+	}
+	return &Publisher{db: db, log: log, privateKey: priv}
 }
 
 func (p *Publisher) PublishTask(task *admiral.FleetTask) error {
-	return p.persistTask(task, admiral.CommandPending, defaultMaxAttempts, "", "")
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("serialize task payload: %w", err)
+	}
+	signedAt := time.Now().Unix()
+	sig := p.signPayload(payload, signedAt)
+	return p.persistTask(task, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
 }
 
 func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
-	return p.persistTask(task, admiral.CommandFailed, 0, reason, result)
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("serialize task payload: %w", err)
+	}
+	signedAt := time.Now().Unix()
+	sig := p.signPayload(payload, signedAt)
+	return p.persistTask(task, admiral.CommandFailed, 0, reason, result, sig, signedAt)
 }
 
-func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCommandStatus, maxAttempts int, lastError, result string) error {
+func (p *Publisher) signPayload(payload []byte, timestamp int64) string {
+	msg := append(payload, []byte(fmt.Sprintf("%d", timestamp))...)
+	sig := ed25519.Sign(p.privateKey, msg)
+	return hex.EncodeToString(sig)
+}
+
+func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCommandStatus, maxAttempts int, lastError, result, sig string, signedAt int64) error {
 	payload, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("serialize task payload: %w", err)
@@ -59,6 +80,14 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCom
 	if strings.TrimSpace(lastError) != "" {
 		lastErrorValue = lastError
 	}
+	var sigValue interface{}
+	if sig != "" {
+		sigValue = sig
+	}
+	var signedAtValue interface{}
+	if signedAt > 0 {
+		signedAtValue = signedAt
+	}
 	_, err = p.db.Exec(`
 		INSERT INTO fleet_commands (
 			id,
@@ -77,11 +106,13 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCom
 			idempotency_key,
 			completed_at,
 			last_error,
-			result
+			result,
+			task_signature,
+			signed_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, 0, $12, $13, $14, $15, NULLIF($16, '')::jsonb
+			$1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, 0, $12, $13, $14, $15, NULLIF($16, '')::jsonb, $17, $18
 		)
-	`, commandID, operationUUID, task.OperationID, task.TaskID, task.InstanceID, task.NodeID, string(task.Action), string(payload), string(status), defaultPriority, availableAt, maxAttempts, idempotencyKey, completedAt, lastErrorValue, result)
+	`, commandID, operationUUID, task.OperationID, task.TaskID, task.InstanceID, task.NodeID, string(task.Action), string(payload), string(status), defaultPriority, availableAt, maxAttempts, idempotencyKey, completedAt, lastErrorValue, result, sigValue, signedAtValue)
 	if err != nil {
 		return fmt.Errorf("insert fleet command: %w", err)
 	}
