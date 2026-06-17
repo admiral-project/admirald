@@ -17,7 +17,7 @@ import (
 type contextKey string
 
 const (
-	contextKeyNodeID   contextKey = "node_id"
+	contextKeyNodeID    contextKey = "node_id"
 	contextKeyTokenType contextKey = "token_type"
 )
 

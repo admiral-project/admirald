@@ -185,9 +185,9 @@ func getMigrations() []Migration {
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_status TEXT NOT NULL DEFAULT 'pending'",
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_identifier TEXT",
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_hash TEXT",
-				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
-				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claim_id UUID",
-				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_value_encrypted TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claim_id UUID",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_value_encrypted TEXT NOT NULL DEFAULT ''",
 				}
 				for _, q := range queries {
 					if _, err := db.Exec(q); err != nil {

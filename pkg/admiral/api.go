@@ -12,13 +12,13 @@ type RegisterNodeRequest struct {
 	PublicIP    string `json:"public_ip,omitempty"`
 	OS          string `json:"os"`
 	PodmanV     string `json:"podman_version"`
-	Token       string `json:"token,omitempty"`       // pre-generated for single-node
-	TokenType   string `json:"token_type,omitempty"`  // worker | portal
+	Token       string `json:"token,omitempty"`      // pre-generated for single-node
+	TokenType   string `json:"token_type,omitempty"` // worker | portal
 }
 
 type RegisterNodeResponse struct {
 	Success bool   `json:"success"`
-	Token   string `json:"token,omitempty"`   // server-generated token (multi-node)
+	Token   string `json:"token,omitempty"`    // server-generated token (multi-node)
 	ClaimID string `json:"claim_id,omitempty"` // claim ID for one-time retrieval
 }
 
