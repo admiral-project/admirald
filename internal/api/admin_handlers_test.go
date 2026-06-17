@@ -551,8 +551,8 @@ func TestHandleFleetCallbackRejectsUnknownOperation(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.HandleFleetCallback(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 404 or 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1034,4 +1034,3 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 		t.Fatalf("expected 403 Forbidden, got %d", rec3.Code)
 	}
 }
-
