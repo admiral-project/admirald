@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func TestLoadRequiresSharedToken(t *testing.T) {
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "")
+func TestLoadRequiresAdminToken(t *testing.T) {
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
 	setEnv(t, "ADMIRAL_ENV", "development") // Use dev to avoid failing on SecretsKey first
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
@@ -30,7 +30,8 @@ func TestLoadRequiresSecretsKeyInProduction(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "production")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
@@ -49,7 +50,8 @@ func TestLoadAllowsEphemeralSecretsKeyInDevelopment(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "development")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
@@ -71,7 +73,8 @@ func TestLoadAllowsMissingFlagshipAdminCredentials(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "development")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
@@ -98,7 +101,8 @@ func TestLoadAcceptsQueueDatabaseURL(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "development")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
@@ -118,7 +122,8 @@ func TestLoadDerivesNetworkingHostsFromBaseDomain(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "development")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_USER", "")
 	setEnv(t, "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
@@ -160,7 +165,8 @@ func TestLoadRejectsSameLogicalDatabase(t *testing.T) {
 	keyFile := writeTempFile(t, tempDir, "server.key")
 
 	setEnv(t, "ADMIRAL_ENV", "development")
-	setEnv(t, "ADMIRAL_SHARED_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
 	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
 	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)

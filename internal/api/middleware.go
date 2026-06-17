@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func AuthMiddleware(token string, next http.HandlerFunc) http.HandlerFunc {
+func AdminAuthMiddleware(adminToken string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("X-Admiral-Token")
 		if reqToken == "" {
@@ -21,10 +21,10 @@ func AuthMiddleware(token string, next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
-		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(adminToken)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
+			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid admin token"}`))
 			return
 		}
 

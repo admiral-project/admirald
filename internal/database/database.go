@@ -68,6 +68,13 @@ type Node struct {
 	CommittedRAM             int64      `json:"committed_ram_bytes"`
 	CommittedDisk            int64      `json:"committed_disk_bytes"`
 	LastMetricsAt            *time.Time `json:"last_metrics_at,omitempty"`
+	TokenType                string     `json:"-"`
+	TokenStatus              string     `json:"-"`
+	TokenIdentifier          string     `json:"-"`
+	TokenHash                string     `json:"-"`
+	TokenExpiresAt           *time.Time `json:"-"`
+	ClaimID                  string     `json:"-"`
+	TokenValueEncrypted      string     `json:"-"`
 }
 
 type AppDefinition struct {
@@ -263,10 +270,10 @@ func (d *DB) DeleteExpiredAdminSessions() error {
 	return nil
 }
 
-var nodeColumns = "id, hostname, ip, COALESCE(wireguard_ip, ''), COALESCE(node_role, 'worker'), COALESCE(public_ip, ''), os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at"
+var nodeColumns = "id, hostname, ip, COALESCE(wireguard_ip, ''), COALESCE(node_role, 'worker'), COALESCE(public_ip, ''), os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at, COALESCE(token_type, 'worker'), COALESCE(token_status, 'pending'), COALESCE(token_identifier, ''), COALESCE(token_hash, ''), token_expires_at, COALESCE(claim_id::text, ''), COALESCE(token_value_encrypted, '')"
 
 func scanNode(scanner interface{ Scan(...interface{}) error }, n *Node) error {
-	return scanner.Scan(&n.ID, &n.Hostname, &n.IP, &n.WireguardIP, &n.NodeRole, &n.PublicIP, &n.OS, &n.PodmanVersion, &n.FleetVersion, &n.Status, &n.LastHeartbeat, &n.DiskTotal, &n.DiskUsed, &n.PodsActive, &n.PodsPaused, &n.PodsFailed, &n.StorageState, &n.StorageMsg, &n.ManualDisabled, &n.HealthStatus, &n.HealthReasonCodes, &n.AvailableForProvisioning, &n.UnavailableReasonCodes, &n.RAMTotal, &n.RAMUsed, &n.RAMCommitLimit, &n.DiskCommitLimit, &n.CommittedRAM, &n.CommittedDisk, &n.LastMetricsAt)
+	return scanner.Scan(&n.ID, &n.Hostname, &n.IP, &n.WireguardIP, &n.NodeRole, &n.PublicIP, &n.OS, &n.PodmanVersion, &n.FleetVersion, &n.Status, &n.LastHeartbeat, &n.DiskTotal, &n.DiskUsed, &n.PodsActive, &n.PodsPaused, &n.PodsFailed, &n.StorageState, &n.StorageMsg, &n.ManualDisabled, &n.HealthStatus, &n.HealthReasonCodes, &n.AvailableForProvisioning, &n.UnavailableReasonCodes, &n.RAMTotal, &n.RAMUsed, &n.RAMCommitLimit, &n.DiskCommitLimit, &n.CommittedRAM, &n.CommittedDisk, &n.LastMetricsAt, &n.TokenType, &n.TokenStatus, &n.TokenIdentifier, &n.TokenHash, &n.TokenExpiresAt, &n.ClaimID, &n.TokenValueEncrypted)
 }
 
 func (d *DB) GetNodes() ([]Node, error) {
@@ -369,6 +376,107 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 		req.PodsActive, req.PodsPaused, req.PodsFailed)
 	if err != nil {
 		return fmt.Errorf("update node heartbeat: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpsertNodeToken(nodeID, tokenIdentifier, tokenHash, tokenType, tokenStatus, tokenValueEncrypted string, expiresAt *time.Time, claimID string) error {
+	query := `
+		UPDATE nodes SET
+			token_type = COALESCE(NULLIF($2, ''), token_type),
+			token_status = $3,
+			token_identifier = $4,
+			token_hash = $5,
+			token_expires_at = $6,
+			claim_id = $7::uuid,
+			token_value_encrypted = $8
+		WHERE id = $1
+	`
+	claimIDVal := interface{}(nil)
+	if claimID != "" {
+		claimIDVal = claimID
+	}
+	_, err := d.Exec(query, nodeID, tokenType, tokenStatus, tokenIdentifier, tokenHash, expiresAt, claimIDVal, tokenValueEncrypted)
+	if err != nil {
+		return fmt.Errorf("upsert node token: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetNodeByTokenIdentifier(identifier string) (*Node, error) {
+	query := "SELECT " + nodeColumns + " FROM nodes WHERE token_identifier = $1"
+	var n Node
+	err := scanNode(d.QueryRow(query, identifier), &n)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("query node by token identifier: %w", err)
+	}
+	return &n, nil
+}
+
+func (d *DB) ClaimNodeToken(claimID, nodeID string) (string, error) {
+	var tokenValueEncrypted string
+	err := d.QueryRow(`
+		UPDATE nodes SET
+			token_status = 'consumed',
+			token_expires_at = NULL
+		WHERE claim_id = $1::uuid
+		  AND id = $2
+		  AND token_status = 'available'
+		  AND (token_expires_at IS NULL OR token_expires_at > NOW())
+		RETURNING token_value_encrypted
+	`, claimID, nodeID).Scan(&tokenValueEncrypted)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("claim not found or expired")
+	} else if err != nil {
+		return "", fmt.Errorf("claim node token: %w", err)
+	}
+	return tokenValueEncrypted, nil
+}
+
+func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
+	rows, err := d.Query(`
+		DELETE FROM nodes
+		WHERE token_status IN ('available', 'pending')
+		  AND token_expires_at < NOW()
+		RETURNING id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("delete expired pending nodes: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan expired node id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func (d *DB) ReapExpiredNodeTokens() (int64, error) {
+	res, err := d.Exec(`
+		DELETE FROM nodes
+		WHERE token_status = 'available'
+		  AND token_expires_at < NOW()
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("reap expired node tokens: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap expired node tokens: count rows: %w", err)
+	}
+	return count, nil
+}
+
+func (d *DB) UpdateNodeTokenStatus(nodeID, status string) error {
+	_, err := d.Exec("UPDATE nodes SET token_status = $1 WHERE id = $2", status, nodeID)
+	if err != nil {
+		return fmt.Errorf("update node token status: %w", err)
 	}
 	return nil
 }

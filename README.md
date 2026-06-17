@@ -22,7 +22,8 @@ The RPM installs the `admirald` binary and the `admirald.service` unit.
 
 ```bash
 export ADMIRAL_DATABASE_URL=postgres://admiral:password@localhost:5432/admiral?sslmode=disable
-export ADMIRAL_SHARED_TOKEN=dev-token
+export ADMIRAL_ADMIN_TOKEN=dev-token
+export ADMIRAL_TOKEN_PEPPER=change-me-in-production
 export ADMIRAL_SECRETS_KEY=change-me-in-production
 export ADMIRAL_TLS_CERT_FILE=/etc/admiral/tls/admirald.pem
 export ADMIRAL_TLS_KEY_FILE=/etc/admiral/tls/admirald-key.pem

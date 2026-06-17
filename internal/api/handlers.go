@@ -4,7 +4,10 @@
 package api
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +26,7 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/networking"
 	"github.com/admiral-project/admiral/admirald/internal/secrets"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v2"
 )
 
@@ -38,6 +42,8 @@ type APIHandlers struct {
 	secrets      *secrets.Manager
 	networking   *networking.Manager
 	hmacKey      string
+	tokenPepper  string
+	configTokenTTL int
 	loginLimiter *RateLimiter
 	knowHostPath string
 }
@@ -73,16 +79,18 @@ type blockedProvisioningAuditDetail struct {
 	NodeEvaluations        []admiral.NodeProvisioningEvaluation `json:"node_evaluations,omitempty"`
 }
 
-func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey string) *APIHandlers {
+func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey, tokenPepper string, tokenTTL int) *APIHandlers {
 	return &APIHandlers{
-		db:           db,
-		log:          log,
-		publisher:    pub,
-		secrets:      secretManager,
-		networking:   networkingManager,
-		hmacKey:      hmacKey,
-		loginLimiter: NewRateLimiter(),
-		knowHostPath: "/etc/admiral/know_host.yaml",
+		db:             db,
+		log:            log,
+		publisher:      pub,
+		secrets:        secretManager,
+		networking:     networkingManager,
+		hmacKey:        hmacKey,
+		tokenPepper:    tokenPepper,
+		configTokenTTL: tokenTTL,
+		loginLimiter:   NewRateLimiter(),
+		knowHostPath:   "/etc/admiral/know_host.yaml",
 	}
 }
 
@@ -241,6 +249,123 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+func encryptTokenValue(rawToken, pepper string) (string, error) {
+	key := sha256Key(pepper)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("create cipher: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("create gcm: %w", err)
+	}
+	nonce := make([]byte, aesGCM.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("generate nonce: %w", err)
+	}
+	ciphertext := aesGCM.Seal(nonce, nonce, []byte(rawToken), nil)
+	return hex.EncodeToString(ciphertext), nil
+}
+
+func decryptTokenValue(encryptedHex, pepper string) (string, error) {
+	key := sha256Key(pepper)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("create cipher: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("create gcm: %w", err)
+	}
+	data, err := hex.DecodeString(encryptedHex)
+	if err != nil {
+		return "", fmt.Errorf("decode encrypted: %w", err)
+	}
+	nonceSize := aesGCM.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("decrypt token: %w", err)
+	}
+	return string(plaintext), nil
+}
+
+func sha256Key(pepper string) []byte {
+	h := sha256.Sum256([]byte(pepper))
+	return h[:]
+}
+
+func generateNodeToken(pepper string, ttlMinutes int) (rawToken, identifier, hash, encryptedValue, claimID string, expiresAt time.Time, err error) {
+	b := make([]byte, 32)
+	if _, e := rand.Read(b); e != nil {
+		err = fmt.Errorf("generate random token: %w", e)
+		return
+	}
+	rawToken = hex.EncodeToString(b)
+	identifier = nodeTokenIdentifier(rawToken, pepper)
+	hash, err = bcryptHash(rawToken)
+	if err != nil {
+		return
+	}
+	encryptedValue, err = encryptTokenValue(rawToken, pepper)
+	if err != nil {
+		return
+	}
+	claimID = generateID("claim")
+	expiresAt = time.Now().UTC().Add(time.Duration(ttlMinutes) * time.Minute)
+	return
+}
+
+func bcryptHash(raw string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(raw), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("bcrypt hash: %w", err)
+	}
+	return string(b), nil
+}
+
+func (h *APIHandlers) HandleClaimToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req admiral.ClaimTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if req.ClaimID == "" || req.NodeID == "" {
+		writeError(w, http.StatusBadRequest, "claim_id and node_id are required")
+		return
+	}
+
+	if err := h.validateRequestNodeIP(r, req.NodeID); err != nil {
+		h.log.Error("Claim token blocked: IP validation failed", err, map[string]interface{}{"node_id": req.NodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	encryptedValue, err := h.db.ClaimNodeToken(req.ClaimID, req.NodeID)
+	if err != nil {
+		h.log.Error("Claim token failed", err, map[string]interface{}{"node_id": req.NodeID, "claim_id": req.ClaimID})
+		writeError(w, http.StatusGone, "Claim token expired or invalid")
+		return
+	}
+
+	rawToken, err := decryptTokenValue(encryptedValue, h.tokenPepper)
+	if err != nil {
+		h.log.Error("Failed to decrypt claimed token", err, map[string]interface{}{"node_id": req.NodeID})
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, admiral.ClaimTokenResponse{Success: true, Token: rawToken})
+}
+
 func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -269,6 +394,54 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "Failed to register node")
 			return
 		}
+
+		resp := admiral.RegisterNodeResponse{Success: true}
+
+		if req.Token != "" {
+			// Single-node mode: pre-generated token
+			identifier := nodeTokenIdentifier(req.Token, h.tokenPepper)
+			hash, err := bcryptHash(req.Token)
+			if err != nil {
+				h.log.Error("Failed to hash pre-generated token", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed to process node token")
+				return
+			}
+			encryptedValue, err := encryptTokenValue(req.Token, h.tokenPepper)
+			if err != nil {
+				h.log.Error("Failed to encrypt pre-generated token", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed to process node token")
+				return
+			}
+			tokenType := req.TokenType
+			if tokenType == "" {
+				tokenType = "worker"
+			}
+			if err := h.db.UpsertNodeToken(req.NodeID, identifier, hash, tokenType, "active", encryptedValue, nil, ""); err != nil {
+				h.log.Error("Failed to store node token", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed to store node token")
+				return
+			}
+		} else {
+			// Multi-node mode: server-generated token
+			tokenType := req.TokenType
+			if tokenType == "" {
+				tokenType = "worker"
+			}
+			rawToken, identifier, hash, encryptedValue, claimID, expiresAt, err := generateNodeToken(h.tokenPepper, h.configTokenTTL)
+			if err != nil {
+				h.log.Error("Failed to generate node token", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed to generate node token")
+				return
+			}
+			if err := h.db.UpsertNodeToken(req.NodeID, identifier, hash, tokenType, "available", encryptedValue, &expiresAt, claimID); err != nil {
+				h.log.Error("Failed to store generated node token", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed to store node token")
+				return
+			}
+			resp.Token = rawToken
+			resp.ClaimID = claimID
+		}
+
 		if err := h.recomputeNodePolicy(req.NodeID); err != nil {
 			h.log.Error("Recompute node policy failed after register", err, map[string]interface{}{"node_id": req.NodeID})
 		}
@@ -277,7 +450,7 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.log.Info("Node registered successfully", map[string]interface{}{"node_id": req.NodeID, "hostname": req.Hostname})
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		writeJSON(w, http.StatusOK, resp)
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

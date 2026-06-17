@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func TestAuthMiddleware(t *testing.T) {
+func TestAdminAuthMiddleware(t *testing.T) {
 	token := "secret-token"
-	handler := AuthMiddleware(token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(token, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 

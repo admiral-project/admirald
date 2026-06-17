@@ -84,7 +84,7 @@ func main() {
 	defer publisher.Close()
 
 	// Initialize API Server
-	server := api.NewServer(db, logger, publisher, cfg.SharedToken, secretManager, networkingManager)
+	server := api.NewServer(db, logger, publisher, cfg.AdminToken, cfg.TokenPepper, cfg.TokenTTLMinutes, secretManager, networkingManager)
 
 	// Start server
 	if err := server.Listen(ctx, cfg.ListenAddress, cfg.Port, cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {

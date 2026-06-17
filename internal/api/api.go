@@ -18,16 +18,18 @@ import (
 type Server struct {
 	handlers     *APIHandlers
 	log          *logging.Logger
-	token        string
+	adminToken   string
+	tokenPepper  string
 	fleetLimiter *RateLimiter
 	adminLimiter *RateLimiter
 }
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, token string, secretManager *secrets.Manager, networkingManager *networking.Manager) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, secretManager *secrets.Manager, networkingManager *networking.Manager) *Server {
 	return &Server{
-		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, token),
+		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, adminToken, tokenPepper, tokenTTL),
 		log:          log,
-		token:        token,
+		adminToken:   adminToken,
+		tokenPepper:  tokenPepper,
 		fleetLimiter: NewRateLimiter(),
 		adminLimiter: NewRateLimiter(),
 	}
@@ -40,28 +42,36 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	const jsonLimit = 1 << 20 // 1 MiB for JSON payloads
 	const yamlLimit = 5 << 20 // 5 MiB for YAML app definitions
 
-	mux.HandleFunc("/api/v1/nodes", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleNodes)))
-	mux.HandleFunc("/api/v1/nodes/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleNodeByID)))
-	mux.HandleFunc("/api/v1/nodes/heartbeat", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))
-	mux.HandleFunc("/api/v1/apps", AuthMiddleware(s.token, MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/apps/", AuthMiddleware(s.token, MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/customer-apps", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
-	mux.HandleFunc("/api/v1/customer-apps/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
-	mux.HandleFunc("/api/v1/customer-apps/action", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
-	mux.HandleFunc("/api/v1/operations", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleOperations)))
-	mux.HandleFunc("/api/v1/fleet/callback", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
-	mux.HandleFunc("/api/v1/fleet/health", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-health", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback))))
-	mux.HandleFunc("/api/v1/fleet/storage", AuthMiddleware(s.token, RateLimit(s.fleetLimiter, "fleet-storage", 30, time.Minute, MaxBody(jsonLimit, s.handlers.HandleStorageReport))))
-	mux.HandleFunc("/api/v1/routes", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
-	mux.HandleFunc("/api/v1/routes/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
-	mux.HandleFunc("/api/v1/instances", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))
-	mux.HandleFunc("/api/v1/instances/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))
-	mux.HandleFunc("/api/v1/backups", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
-	mux.HandleFunc("/api/v1/backups/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
-	mux.HandleFunc("/api/v1/backups/restore", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleAdminRestoreBackup)))
-	mux.HandleFunc("/api/v1/networking/certificate", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleCertificate)))
+	// Admin-only routes (use AdminAuthMiddleware)
+	mux.HandleFunc("/api/v1/nodes", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleNodes)))
+	mux.HandleFunc("/api/v1/nodes/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleNodeByID)))
+	mux.HandleFunc("/api/v1/apps", AdminAuthMiddleware(s.adminToken, MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/apps/", AdminAuthMiddleware(s.adminToken, MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/customer-apps", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
+	mux.HandleFunc("/api/v1/customer-apps/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
+	mux.HandleFunc("/api/v1/customer-apps/action", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
+	mux.HandleFunc("/api/v1/operations", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleOperations)))
+	mux.HandleFunc("/api/v1/routes", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
+	mux.HandleFunc("/api/v1/routes/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
+	mux.HandleFunc("/api/v1/instances", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))
+	mux.HandleFunc("/api/v1/instances/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))
+	mux.HandleFunc("/api/v1/backups", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
+	mux.HandleFunc("/api/v1/backups/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
+	mux.HandleFunc("/api/v1/backups/restore", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleAdminRestoreBackup)))
+	mux.HandleFunc("/api/v1/networking/certificate", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleCertificate)))
+	mux.HandleFunc("/api/v1/operations/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleOperationByID)))
+	mux.HandleFunc("/api/v1/status", AdminAuthMiddleware(s.adminToken, s.handlers.HandleStatus))
 
-	// Administrative endpoints
+	// Node-authenticated routes (heartbeat and claim use node auth middleware)
+	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))
+	mux.HandleFunc("/api/v1/nodes/claim", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "", MaxBody(jsonLimit, s.handlers.HandleClaimToken)))
+
+	// Fleet worker routes (worker token required)
+	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
+	mux.HandleFunc("/api/v1/fleet/health", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", RateLimit(s.fleetLimiter, "fleet-health", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback))))
+	mux.HandleFunc("/api/v1/fleet/storage", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", RateLimit(s.fleetLimiter, "fleet-storage", 30, time.Minute, MaxBody(jsonLimit, s.handlers.HandleStorageReport))))
+
+	// Administrative endpoints (admin session)
 	mux.HandleFunc("/api/admin/auth/login", MaxBody(jsonLimit, s.handlers.HandleAdminLogin))
 	mux.HandleFunc("/api/admin/auth/logout", MaxBody(jsonLimit, s.handlers.HandleAdminLogout))
 	mux.HandleFunc("/api/admin/auth/me", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminMe)))
@@ -81,7 +91,6 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/admin/tasks/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminTasks)))
 	mux.HandleFunc("/api/admin/users", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminUsers)))
 	mux.HandleFunc("/api/admin/users/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminUsers)))
-	mux.HandleFunc("/api/v1/operations/", AuthMiddleware(s.token, MaxBody(jsonLimit, s.handlers.HandleOperationByID)))
 
 	// Unauthenticated health and status endpoints
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +100,6 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	}
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/health", healthHandler)
-	mux.HandleFunc("/api/v1/status", AuthMiddleware(s.token, s.handlers.HandleStatus))
 
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{
@@ -111,6 +119,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	go s.StartBackupScheduler(ctx)
 	go s.StartSessionCleaner(ctx)
 	go s.StartNodeHealthMonitor(ctx)
+	go s.StartTokenGarbageCollector(ctx)
 	if s.handlers.networking != nil {
 		if err := s.handlers.networking.SeedStaticRoutes(ctx); err != nil {
 			s.log.Error("Failed to seed public routes", err, nil)
@@ -147,6 +156,28 @@ func (s *Server) StartSessionCleaner(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.cleanExpiredSessions()
+		}
+	}
+}
+
+func (s *Server) StartTokenGarbageCollector(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+	s.log.Info("Token garbage collector started", nil)
+	for {
+		select {
+		case <-ctx.Done():
+			s.log.Info("Token garbage collector stopped", nil)
+			return
+		case <-ticker.C:
+			count, err := s.handlers.db.ReapExpiredNodeTokens()
+			if err != nil {
+				s.log.Error("Token garbage collector failed", err, nil)
+				continue
+			}
+			if count > 0 {
+				s.log.Info("Reaped expired node tokens", map[string]interface{}{"count": count})
+			}
 		}
 	}
 }

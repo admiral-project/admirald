@@ -176,6 +176,37 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 9,
+			Name:    "add_node_token_columns",
+			Up: func(db *sql.DB) error {
+				queries := []string{
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_type TEXT NOT NULL DEFAULT 'worker'",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_status TEXT NOT NULL DEFAULT 'pending'",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_identifier TEXT",
+					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_hash TEXT",
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claim_id UUID",
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_value_encrypted TEXT NOT NULL DEFAULT ''",
+				}
+				for _, q := range queries {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration 9 failed: %w", err)
+					}
+				}
+				// Add unique constraints where applicable
+				constraints := []string{
+					"CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_token_identifier ON nodes (token_identifier) WHERE token_identifier IS NOT NULL",
+					"CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_claim_id ON nodes (claim_id) WHERE claim_id IS NOT NULL",
+				}
+				for _, q := range constraints {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration 9 index failed: %w", err)
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -19,7 +20,9 @@ type Config struct {
 	ListenAddress            string
 	DatabaseURL              string
 	QueueDatabaseURL         string
-	SharedToken              string
+	AdminToken               string
+	TokenPepper              string
+	TokenTTLMinutes          int
 	SecretsKey               string
 	FlagshipAdminUser        string
 	FlagshipAdminPassword    string
@@ -53,7 +56,9 @@ func load(path string) (*Config, error) {
 		"listen_address":             "127.0.0.1",
 		"database_url":               "",
 		"queue_database_url":         "",
-		"shared_token":               "",
+		"admin_token":                "",
+		"token_pepper":               "",
+		"token_ttl_minutes":          "5",
 		"secrets_key":                "",
 		"flagship_admin_user":        "",
 		"flagship_admin_pswd":        "",
@@ -84,7 +89,8 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "database_url", "DATABASE_URL")
 	applyEnv(values, "database_url", "ADMIRAL_DATABASE_URL")
 	applyEnv(values, "queue_database_url", "ADMIRAL_QUEUE_DATABASE_URL")
-	applyEnv(values, "shared_token", "ADMIRAL_SHARED_TOKEN")
+	applyEnv(values, "admin_token", "ADMIRAL_ADMIN_TOKEN")
+	applyEnv(values, "token_pepper", "ADMIRAL_TOKEN_PEPPER")
 	applyEnv(values, "secrets_key", "ADMIRAL_SECRETS_KEY")
 	applyEnv(values, "flagship_admin_user", "ADMIRAL_FLAGSHIP_ADMIN_USER")
 	applyEnv(values, "flagship_admin_pswd", "ADMIRAL_FLAGSHIP_ADMIN_PSWD")
@@ -107,8 +113,11 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "networking_cockpit_target", "ADMIRAL_NETWORKING_COCKPIT_TARGET")
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 
-	if values["shared_token"] == "" {
-		return nil, fmt.Errorf("shared_token is required via %s or ADMIRAL_SHARED_TOKEN", path)
+	if values["admin_token"] == "" {
+		return nil, fmt.Errorf("admin_token is required via %s or ADMIRAL_ADMIN_TOKEN", path)
+	}
+	if values["token_pepper"] == "" {
+		return nil, fmt.Errorf("token_pepper is required via %s or ADMIRAL_TOKEN_PEPPER", path)
 	}
 	if values["database_url"] == "" {
 		return nil, fmt.Errorf("database_url is required via %s, DATABASE_URL or ADMIRAL_DATABASE_URL", path)
@@ -152,6 +161,15 @@ func load(path string) (*Config, error) {
 		values["caddy_admin_url"] = "http://127.0.0.1:2019"
 	}
 
+	ttl := 5
+	if v := values["token_ttl_minutes"]; v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("token_ttl_minutes must be a number, got %q", v)
+		}
+		ttl = parsed
+	}
+
 	if values["secrets_key"] == "" {
 		if os.Getenv("ADMIRAL_ENV") == "development" {
 			values["secrets_key"] = "dev-ephemeral-key-change-me"
@@ -167,7 +185,9 @@ func load(path string) (*Config, error) {
 		ListenAddress:            values["listen_address"],
 		DatabaseURL:              values["database_url"],
 		QueueDatabaseURL:         values["queue_database_url"],
-		SharedToken:              values["shared_token"],
+		AdminToken:               values["admin_token"],
+		TokenPepper:              values["token_pepper"],
+		TokenTTLMinutes:          ttl,
 		SecretsKey:               values["secrets_key"],
 		FlagshipAdminUser:        values["flagship_admin_user"],
 		FlagshipAdminPassword:    values["flagship_admin_pswd"],
