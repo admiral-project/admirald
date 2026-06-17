@@ -2949,7 +2949,7 @@ func (h *APIHandlers) validateRequestNodeIP(r *http.Request, nodeID string) erro
 	}
 
 	if node.WireguardIP != "" {
-		if clientIPAddr != node.WireguardIP {
+		if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
 			return fmt.Errorf("node %s requests must originate from WireGuard IP %s, got %s", nodeID, node.WireguardIP, clientIPAddr)
 		}
 	}
