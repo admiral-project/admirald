@@ -595,6 +595,24 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 
 	switch r.Method {
 	case http.MethodGet:
+		if instanceID != "" && len(parts) >= 5 && parts[4] == "inspect" {
+			inst, _ := h.db.GetCustomerApp(instanceID)
+			if inst == nil {
+				writeError(w, http.StatusNotFound, "Instance not found")
+				return
+			}
+			if inst.InspectData == "" {
+				writeError(w, http.StatusNotFound, "No inspect data available for this instance")
+				return
+			}
+			var inspectResult interface{}
+			if err := json.Unmarshal([]byte(inst.InspectData), &inspectResult); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to parse stored inspect data")
+				return
+			}
+			writeJSON(w, http.StatusOK, inspectResult)
+			return
+		}
 		if instanceID != "" {
 			inst, _ := h.db.GetCustomerApp(instanceID)
 			if inst == nil {

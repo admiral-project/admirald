@@ -2220,6 +2220,13 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			}
 		case string(admiral.ActionRestoreBackup):
 			nextTechStatus = "running"
+		case string(admiral.ActionInspectApp):
+			nextTechStatus = ""
+			if res.Metadata != "" {
+				if ierr := h.db.UpdateCustomerAppInspectData(op.InstanceID, res.Metadata); ierr != nil {
+					h.log.Error("Failed to persist inspect data", ierr, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			}
 		case string(admiral.ActionBackupDatabase), "backup_volumes":
 			nextTechStatus = "running"
 			handleBackupCallback(h, op, res, true)

@@ -119,6 +119,7 @@ type CustomerApp struct {
 	EmergencyLimitBytes int64      `json:"emergency_limit_bytes"`
 	Hostname            string     `json:"hostname"`
 	LogicalInstanceID   string     `json:"logical_instance_id"`
+	InspectData         string     `json:"inspect_data,omitempty"`
 }
 
 type OperationMetadata struct {
@@ -625,6 +626,14 @@ func (d *DB) UpdateCustomerAppStatus(id, commStatus, techStatus string) error {
 	_, err := d.Exec(query, commStatus, techStatus, id)
 	if err != nil {
 		return fmt.Errorf("update customer app status: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpdateCustomerAppInspectData(id, inspectData string) error {
+	_, err := d.Exec("UPDATE customer_apps SET inspect_data = $1 WHERE id = $2", inspectData, id)
+	if err != nil {
+		return fmt.Errorf("update customer app inspect data: %w", err)
 	}
 	return nil
 }
