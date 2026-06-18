@@ -6,7 +6,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -511,154 +509,6 @@ func (h *APIHandlers) HandleAdminBackups(w http.ResponseWriter, r *http.Request)
 }
 
 // POST /api/admin/instances/{instance_id}/backups/database or volumes
-func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request, instanceID, backupType string) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	inst, _ := h.db.GetCustomerApp(instanceID)
-	if inst == nil {
-		writeError(w, http.StatusNotFound, "Instance not found")
-		return
-	}
-	if inst.NodeID == nil || *inst.NodeID == "" {
-		writeError(w, http.StatusServiceUnavailable, "Node offline")
-		return
-	}
-
-	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
-	if err != nil || appDef == nil {
-		h.log.Error("Failed to get app definition for backup target", err, map[string]interface{}{"instance_id": instanceID})
-		writeError(w, http.StatusInternalServerError, "Failed to get app definition")
-		return
-	}
-	var payload admiral.AppDefinitionPayload
-	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil { //nolint:gosec // appDef.RawYAML from trusted DB data
-		h.log.Error("Failed to parse app definition YAML", err, map[string]interface{}{"app_name": inst.AppDefinitionName})
-		writeError(w, http.StatusInternalServerError, "Failed to parse app definition")
-		return
-	}
-
-	var action admiral.TaskAction
-	var contractType string
-	if backupType == "database" {
-		action = admiral.ActionBackupDatabase
-		contractType = "database"
-	} else if backupType == "volumes" {
-		action = admiral.TaskAction("backup_volumes")
-		contractType = "volume"
-	} else {
-		writeError(w, http.StatusBadRequest, "Invalid backup type")
-		return
-	}
-	targets := backupTargetsByType(payload, contractType)
-	if len(targets) == 0 {
-		writeError(w, http.StatusConflict, fmt.Sprintf("No services declare backup type %s", contractType))
-		return
-	}
-	if len(targets) > 1 {
-		writeError(w, http.StatusConflict, fmt.Sprintf("Multiple services declare backup type %s; use a service-specific backup action", contractType))
-		return
-	}
-	target := targets[0]
-
-	opID := generateID("op")
-	_ = h.db.UpdateCustomerAppStatus(instanceID, "", "backup_running")
-	_ = h.db.CreateOperation(opID, instanceID, *inst.NodeID, string(action), "pending_dispatch", operatorFromRequest(r))
-
-	// Get active storage config
-	storageCfg, _ := h.db.GetActiveBackupStorageConfig()
-	var backend, key string
-	if storageCfg != nil {
-		backend = storageCfg.Backend
-		key = fmt.Sprintf("%s/%s/%s/%s-%s-%s", storageCfg.Prefix, *inst.NodeID, instanceID, target.ServiceName, backupType, opID)
-	} else {
-		backend = "local"
-		key = fmt.Sprintf("/var/lib/admiral/backups/%s/%s-%s", instanceID, target.ServiceName, opID)
-	}
-
-	// Register BackupRecord in PENDING state before dispatching
-	bkRec := &admiral.BackupRecord{
-		ID:                          generateID("bk"),
-		InstanceID:                  instanceID,
-		AppID:                       inst.AppDefinitionName,
-		TierID:                      inst.TierName,
-		NodeID:                      *inst.NodeID,
-		BackupType:                  contractType,
-		DatabaseType:                "none",
-		Status:                      "pending",
-		StorageBackend:              backend,
-		StorageKey:                  key,
-		TriggeredBy:                 "manual",
-		TierSnapshotJSON:            inst.TierSnapshotJSON,
-		RetentionPolicySnapshotJSON: `{"count":7,"days":30}`,
-	}
-	if action == admiral.ActionBackupDatabase {
-		bkRec.DatabaseType = target.Backup.Engine
-	}
-	_ = h.db.CreateBackupRecord(bkRec)
-
-	tiers, _ := h.db.GetAppTiers(inst.AppDefinitionName)
-	var matchedTier database.AppTier
-	for _, t := range tiers {
-		if t.Name == inst.TierName {
-			matchedTier = t
-			break
-		}
-	}
-
-	// Build and enqueue task synchronously so it's persisted before response
-	allSecretValues, _ := h.decryptedSecretMap(instanceID)
-	secretValues := scopeTaskSecrets(action, payload, allSecretValues, target.ServiceName)
-
-	services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
-
-	task := &admiral.FleetTask{
-		TaskID:      generateID("task"),
-		OperationID: opID,
-		NodeID:      *inst.NodeID,
-		Action:      action,
-		InstanceID:  instanceID,
-		App: admiral.AppInfo{
-			Name:    payload.Name,
-			Version: "latest",
-		},
-		Tier: admiral.TierInfo{
-			Name:        matchedTier.Name,
-			CPU:         matchedTier.CPU,
-			Memory:      matchedTier.Memory,
-			Storage:     matchedTier.Storage,
-			Environment: matchedTier.Environment,
-		},
-		Services: services,
-	}
-	task.Backup = buildTaskBackupInfo(target)
-
-	task.Storage = &admiral.StorageConfig{
-		Backend: backend,
-		Key:     key,
-	}
-	if storageCfg != nil {
-		task.Storage.Endpoint = storageCfg.Endpoint
-		task.Storage.Region = storageCfg.Region
-		task.Storage.Bucket = storageCfg.Bucket
-		task.Storage.Prefix = storageCfg.Prefix
-		task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
-		task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
-		task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
-		task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
-	}
-	task.Storage.BackupID = bkRec.ID
-
-	h.enqueueRawTask(task)
-
-	writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
-		OperationID: opID,
-		Status:      "queued",
-	})
-}
-
 // POST /api/admin/backups/prune
 // GET & PUT & POST /api/admin/settings/backup-storage
 // POST /api/admin/backups/restore
