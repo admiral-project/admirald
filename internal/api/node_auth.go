@@ -68,6 +68,19 @@ func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string
 			return
 		}
 
+		// Fleet se comunica con admirald únicamente a través de la VPN WireGuard.
+		// Verificamos que la IP origen coincida con la WireGuard IP registrada del nodo.
+		// Peticiones desde 127.0.0.1/::1 (mismo host) se confían siempre.
+		if node.WireguardIP != "" {
+			clientIPAddr := clientIP(r.RemoteAddr)
+			if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":"forbidden: request IP does not match registered node WireGuard IP"}`))
+				return
+			}
+		}
+
 		ctx := context.WithValue(r.Context(), contextKeyNodeID, node.ID)
 		ctx = context.WithValue(ctx, contextKeyTokenType, node.TokenType)
 		next(w, r.WithContext(ctx))
