@@ -120,3 +120,57 @@ func (h *APIHandlers) HandleStorageReport(w http.ResponseWriter, r *http.Request
 // healthToTechStatus maps instance health status to technical status for
 // automatic reconciliation after node recovery.
 // POST /api/admin/instances/{id}/migrate
+
+func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var report admiral.HealthReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if report.InstanceID == "" || report.NodeID == "" || report.HealthStatus == "" {
+		writeError(w, http.StatusBadRequest, "instance_id, node_id, and health_status are required")
+		return
+	}
+
+	inst, err := h.db.GetCustomerApp(report.InstanceID)
+	if err != nil {
+		h.log.Error("Failed to fetch customer app for health report check", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to verify instance node ownership")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if inst.NodeID != nil && *inst.NodeID != "" && *inst.NodeID != report.NodeID {
+		h.log.Error("Health report instance node_id mismatch", nil, map[string]interface{}{
+			"instance_id":   report.InstanceID,
+			"expected_node": *inst.NodeID,
+			"received_node": report.NodeID,
+		})
+		writeError(w, http.StatusForbidden, "Instance does not belong to the reporting node")
+		return
+	}
+
+	techStatus := healthToTechStatus(report.HealthStatus)
+	if err := h.db.UpdateInstanceHealthAndTechStatus(report.InstanceID, string(report.HealthStatus), techStatus, report.Message); err != nil {
+		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
+		writeError(w, http.StatusInternalServerError, "Failed to update health")
+		return
+	}
+
+	if len(report.HostPorts) > 0 && h.networking != nil {
+		if err := h.networking.ActivateInstanceRoutes(r.Context(), report.InstanceID, report.HostPorts); err != nil {
+			h.log.Warn("Route reconciliation from health check failed", map[string]interface{}{
+				"instance_id": report.InstanceID,
+				"error":       err.Error(),
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
