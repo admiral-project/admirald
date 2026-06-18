@@ -172,6 +172,129 @@ func TestValidateAppDefinitionRejectsInvalidAppName(t *testing.T) {
 	}
 }
 
+func TestValidateAppDefinitionRejectsInvalidImage(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "badimg",
+		DisplayName: "Bad Image",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:  "image; rm -rf /",
+				Backup: &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected invalid image with shell chars to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsImageWithNewline(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "nl",
+		DisplayName: "Newline",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:  "docker.io/library/nginx\nAdminAuth=foo",
+				Backup: &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected image with newline to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsCommandWithShellChars(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "badcmd",
+		DisplayName: "Bad Command",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:   "docker.io/library/nginx:1",
+				Command: "/bin/sh -c 'id; rm -rf /'",
+				Backup:  &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected command with shell metacharacters to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsCommandWithBacktick(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "btick",
+		DisplayName: "Backtick",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:   "docker.io/library/nginx:1",
+				Command: "echo `whoami`",
+				Backup:  &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected command with backtick to fail")
+	}
+}
+
+func TestValidateAppDefinitionAllowsValidImage(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "goodimg",
+		DisplayName: "Good Image",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:  "docker.io/library/wordpress:6",
+				Backup: &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err != nil {
+		t.Fatalf("expected valid image to pass: %v", err)
+	}
+}
+
+func TestValidateAppDefinitionAllowsValidCommand(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "goodcmd",
+		DisplayName: "Good Command",
+		Services: map[string]YAMLService{
+			"web": {
+				Image:   "docker.io/library/nginx:1",
+				Command: "/usr/sbin/nginx -g daemon off",
+				Backup:  &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err != nil {
+		t.Fatalf("expected valid command to pass: %v", err)
+	}
+}
+
 func TestValidateAppDefinitionRejectsInvalidTierEnvironmentName(t *testing.T) {
 	payload := AppDefinitionPayload{
 		Name:        "sample",

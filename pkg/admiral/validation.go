@@ -13,6 +13,16 @@ import (
 var appNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 var serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var imagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_\-\.:\/@]*$`)
+
+var runArgsRe = regexp.MustCompile(`[;&\` + "`" + `$()|]`)
+
+func ValidateRunArgs(args string) error {
+	if runArgsRe.MatchString(args) {
+		return fmt.Errorf("command contains unsafe shell metacharacters")
+	}
+	return nil
+}
 
 func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	if payload.Name == "" {
@@ -55,6 +65,14 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		}
 		if svc.Image == "" {
 			return fmt.Errorf("service %q image is required", name)
+		}
+		if !imagePattern.MatchString(svc.Image) {
+			return fmt.Errorf("service %q image %q contains invalid characters", name, svc.Image)
+		}
+		if svc.Command != "" {
+			if err := ValidateRunArgs(svc.Command); err != nil {
+				return fmt.Errorf("service %q command: %w", name, err)
+			}
 		}
 		if svc.Backup == nil {
 			return fmt.Errorf("service %q backup is required and must declare database, volume, or none", name)
