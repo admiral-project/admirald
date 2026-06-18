@@ -384,3 +384,108 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		Status:      "queued",
 	})
 }
+
+func (h *APIHandlers) HandleAdminBackups(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var backupID string
+	if len(parts) >= 4 {
+		backupID = parts[3]
+	}
+
+	// Nested instances route: /api/admin/instances/{instance_id}/backups/database or volumes
+	if len(parts) >= 6 && parts[1] == "admin" && parts[2] == "instances" {
+		instanceID := parts[3]
+		backupType := parts[5] // database or volumes
+		h.HandleTriggerBackup(w, r, instanceID, backupType)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if backupID != "" {
+			rec, _ := h.db.GetBackupRecord(backupID)
+			if rec == nil {
+				writeError(w, http.StatusNotFound, "Backup record not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, rec)
+			return
+		}
+
+		instanceID := r.URL.Query().Get("instance_id")
+		page, pageSize := parsePagination(r)
+		recs, total, err := h.db.GetBackupRecordsPage(instanceID, pageSize, (page-1)*pageSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, pagedResponse{
+			Items:    recs,
+			Page:     page,
+			PageSize: pageSize,
+			Total:    total,
+		})
+
+	case http.MethodPost:
+		if backupID == "prune" {
+			h.HandleAdminPrune(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+
+	case http.MethodDelete:
+		if backupID != "" {
+			rec, _ := h.db.GetBackupRecord(backupID)
+			if rec == nil {
+				writeError(w, http.StatusNotFound, "Backup record not found")
+				return
+			}
+			// Create operational delete_backup task
+			opID := generateID("op")
+			_ = h.db.CreateOperation(opID, rec.InstanceID, rec.NodeID, "delete_backup", "pending_dispatch", operatorFromRequest(r))
+
+			// Mark backup record as deleted
+			rec.Status = "deleted"
+			_ = h.db.UpdateBackupRecord(rec)
+
+			task := &admiral.FleetTask{
+				TaskID:      generateID("task"),
+				OperationID: opID,
+				NodeID:      rec.NodeID,
+				Action:      admiral.TaskAction("delete_backup"),
+				InstanceID:  rec.InstanceID,
+				Storage: &admiral.StorageConfig{
+					Backend:  rec.StorageBackend,
+					Key:      rec.StorageKey,
+					BackupID: rec.ID,
+				},
+			}
+			storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+			if storageCfg != nil {
+				task.Storage.Endpoint = storageCfg.Endpoint
+				task.Storage.Region = storageCfg.Region
+				task.Storage.Bucket = storageCfg.Bucket
+				task.Storage.Prefix = storageCfg.Prefix
+				task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+				task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+				task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+				task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+			}
+			h.enqueueRawTask(task)
+
+			writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
+				OperationID: opID,
+				Status:      "queued",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// POST /api/admin/instances/{instance_id}/backups/database or volumes
+// POST /api/admin/backups/prune
+// GET & PUT & POST /api/admin/settings/backup-storage
+// POST /api/admin/backups/restore
