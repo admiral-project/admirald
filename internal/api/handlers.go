@@ -36,16 +36,17 @@ type TaskPublisher interface {
 }
 
 type APIHandlers struct {
-	db             *database.DB
-	log            *logging.Logger
-	publisher      TaskPublisher
-	secrets        *secrets.Manager
-	networking     *networking.Manager
-	hmacKey        string
-	tokenPepper    string
-	configTokenTTL int
-	loginLimiter   *RateLimiter
-	knowHostPath   string
+	db                *database.DB
+	log               *logging.Logger
+	publisher         TaskPublisher
+	secrets           *secrets.Manager
+	networking        *networking.Manager
+	hmacKey           string
+	tokenPepper       string
+	configTokenTTL    int
+	loginLimiter      *RateLimiter
+	knowHostPath      string
+	taskEncryptionKey string // shared AES-256-GCM key served to authenticated worker nodes
 }
 
 func (h *APIHandlers) auditEvent(eventType string, fields map[string]interface{}) {
@@ -79,18 +80,19 @@ type blockedProvisioningAuditDetail struct {
 	NodeEvaluations        []admiral.NodeProvisioningEvaluation `json:"node_evaluations,omitempty"`
 }
 
-func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey, tokenPepper string, tokenTTL int) *APIHandlers {
+func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey, tokenPepper string, tokenTTL int, taskEncryptionKey string) *APIHandlers {
 	return &APIHandlers{
-		db:             db,
-		log:            log,
-		publisher:      pub,
-		secrets:        secretManager,
-		networking:     networkingManager,
-		hmacKey:        hmacKey,
-		tokenPepper:    tokenPepper,
-		configTokenTTL: tokenTTL,
-		loginLimiter:   NewRateLimiter(),
-		knowHostPath:   "/etc/admiral/know_host.yaml",
+		db:                db,
+		log:               log,
+		publisher:         pub,
+		secrets:           secretManager,
+		networking:        networkingManager,
+		hmacKey:           hmacKey,
+		tokenPepper:       tokenPepper,
+		configTokenTTL:    tokenTTL,
+		loginLimiter:      NewRateLimiter(),
+		knowHostPath:      "/etc/admiral/know_host.yaml",
+		taskEncryptionKey: taskEncryptionKey,
 	}
 }
 
@@ -455,6 +457,28 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// HandleTaskEncryptionKey serves the shared AES-256-GCM task encryption key
+// to authenticated worker nodes. The key is used to decrypt task payloads
+// from the queue. Only nodes authenticated via per-node token and matching
+// their registered WireGuard IP may retrieve it.
+func (h *APIHandlers) HandleTaskEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	nodeID, ok := NodeIDFromContext(r.Context())
+	if !ok || nodeID == "" {
+		writeError(w, http.StatusUnauthorized, "node authentication required")
+		return
+	}
+	if err := h.validateRequestNodeIP(r, nodeID); err != nil {
+		h.log.Error("task-encryption-key blocked: IP validation failed", err, map[string]interface{}{"node_id": nodeID})
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"task_encryption_key": h.taskEncryptionKey})
 }
 
 func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {

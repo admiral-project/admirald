@@ -24,9 +24,9 @@ type Server struct {
 	adminLimiter *RateLimiter
 }
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, secretManager *secrets.Manager, networkingManager *networking.Manager) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string) *Server {
 	return &Server{
-		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, adminToken, tokenPepper, tokenTTL),
+		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, adminToken, tokenPepper, tokenTTL, taskEncryptionKey),
 		log:          log,
 		adminToken:   adminToken,
 		tokenPepper:  tokenPepper,
@@ -65,6 +65,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	// Node-authenticated routes (heartbeat and claim use node auth middleware)
 	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))
 	mux.HandleFunc("/api/v1/nodes/claim", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "", MaxBody(jsonLimit, s.handlers.HandleClaimToken)))
+	mux.HandleFunc("/api/v1/nodes/task-encryption-key", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", MaxBody(jsonLimit, s.handlers.HandleTaskEncryptionKey)))
 
 	// Fleet worker routes (worker token required)
 	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))

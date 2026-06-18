@@ -25,10 +25,10 @@ const (
 )
 
 type Publisher struct {
-	db             *queuedb.DB
-	log            *logging.Logger
-	privateKey     ed25519.PrivateKey
-	encryptionKey  []byte
+	db            *queuedb.DB
+	log           *logging.Logger
+	privateKey    ed25519.PrivateKey
+	encryptionKey []byte
 }
 
 func NewPublisher(db *queuedb.DB, log *logging.Logger, seed []byte, encryptionKey []byte) *Publisher {
@@ -50,7 +50,7 @@ func (p *Publisher) PublishTask(task *admiral.FleetTask) error {
 	}
 	signedAt := time.Now().Unix()
 	sig := p.signPayload(storePayload, signedAt)
-	return p.persistTask(storePayload, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
+	return p.persistTask(task, storePayload, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
 }
 
 func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
@@ -64,7 +64,7 @@ func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result 
 	}
 	signedAt := time.Now().Unix()
 	sig := p.signPayload(storePayload, signedAt)
-	return p.persistTask(storePayload, admiral.CommandFailed, 0, reason, result, sig, signedAt)
+	return p.persistTask(task, storePayload, admiral.CommandFailed, 0, reason, result, sig, signedAt)
 }
 
 func (p *Publisher) signPayload(payload []byte, timestamp int64) string {
