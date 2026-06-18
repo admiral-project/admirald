@@ -8,6 +8,7 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"gopkg.in/yaml.v2"
 )
 
 func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Request) {
@@ -277,4 +278,246 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		OperationID: operationID,
 		Status:      "queued",
 	})
+}
+
+func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		customerID := r.URL.Query().Get("customer_id")
+		apps, err := h.db.GetCustomerApps(customerID)
+		if err != nil {
+			h.log.Error("Get customer apps failed", err, nil)
+			writeError(w, http.StatusInternalServerError, "Failed to fetch customer applications")
+			return
+		}
+		writeJSON(w, http.StatusOK, apps)
+
+	case http.MethodPost:
+		var req admiral.ProvisionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+			return
+		}
+
+		if req.AppDefinitionName == "" || req.TierName == "" || req.CustomerID == "" {
+			writeError(w, http.StatusBadRequest, "app_definition_name, tier_name, and customer_id are required")
+			return
+		}
+
+		appDef, err := h.db.GetAppDefinition(req.AppDefinitionName)
+		if err != nil {
+			h.log.Error("Get app definition failed on provision", err, map[string]interface{}{"app_name": req.AppDefinitionName})
+			writeError(w, http.StatusInternalServerError, "Database error validating app")
+			return
+		}
+		if appDef == nil {
+			writeError(w, http.StatusNotFound, "App definition not found")
+			return
+		}
+		if strings.ToLower(strings.TrimSpace(appDef.Status)) != "active" {
+			writeError(w, http.StatusConflict, "App definition is inactive and cannot be provisioned")
+			return
+		}
+
+		var payload admiral.AppDefinitionPayload
+		if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil {
+			writeError(w, http.StatusInternalServerError, "Stored application definition is invalid")
+			return
+		}
+
+		tiers, err := h.db.GetAppTiers(req.AppDefinitionName)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Database error validating tiers")
+			return
+		}
+		var matchedTier *database.AppTier
+		for _, t := range tiers {
+			if t.Name == req.TierName {
+				tierCopy := t
+				matchedTier = &tierCopy
+				break
+			}
+		}
+		if matchedTier == nil {
+			writeError(w, http.StatusNotFound, "Tier not found for this app definition")
+			return
+		}
+		if req.NodeID != "" {
+			node, err := h.db.GetNode(req.NodeID)
+			if err != nil {
+				h.log.Error("Get requested node failed on provision", err, map[string]interface{}{"node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Database error validating requested node")
+				return
+			}
+			if node == nil {
+				writeError(w, http.StatusNotFound, "Requested node not found")
+				return
+			}
+		}
+
+		selection, err := h.selectNodeForTier(*matchedTier, req.NodeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Database error selecting node")
+			return
+		}
+		if selection.NodeID == "" {
+			if err := h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, req.NodeID, *matchedTier, selection.Evaluations); err != nil {
+				h.log.Error("Record blocked provisioning attempt failed", err, map[string]interface{}{"app_name": req.AppDefinitionName, "tier_name": req.TierName, "requested_node_id": req.NodeID})
+				writeError(w, http.StatusInternalServerError, "Failed recording blocked provisioning attempt")
+			}
+			return
+		}
+
+		instanceID := generateID("inst")
+		operationID := generateID("op")
+		nodeID := selection.NodeID
+
+		tierBytes, err := json.Marshal(matchedTier)
+		if err != nil {
+			h.log.Error("Failed to marshal tier snapshot", err, map[string]interface{}{"tier": req.TierName})
+		}
+		tierSnapshotJSON := string(tierBytes)
+
+		lid := req.LogicalInstanceID
+		ramBytes := database.ParseSizeBytes(matchedTier.Memory)
+		diskBytes := database.ParseSizeBytes(matchedTier.Storage)
+		if err := h.db.ReserveNodeCapacityAndCreateApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON, lid, ramBytes, diskBytes); err != nil {
+			if err == database.ErrNodeCapacityPolicyBlocked {
+				evaluations := h.refreshNodeEvaluationsForTier(*matchedTier, nodeID)
+				if recErr := h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, nodeID, *matchedTier, evaluations); recErr != nil {
+					h.log.Error("Record blocked provisioning attempt after reserve race failed", recErr, map[string]interface{}{"app_name": req.AppDefinitionName, "tier_name": req.TierName, "requested_node_id": nodeID})
+					writeError(w, http.StatusInternalServerError, "Failed recording blocked provisioning attempt")
+				}
+				return
+			}
+			h.log.Error("Create customer app with capacity reservation failed", err, map[string]interface{}{"node_id": nodeID, "instance_id": instanceID})
+			writeError(w, http.StatusInternalServerError, "Failed to create app record")
+			return
+		}
+		h.auditCapacityEvent("node_capacity_reserved", nodeID, instanceID, operationID, admiral.ActionProvisionApp, ramBytes, diskBytes)
+		if err := h.recomputeNodePolicy(nodeID); err != nil {
+			h.log.Error("Failed to recompute node policy after reservation", err, map[string]interface{}{"node_id": nodeID, "instance_id": instanceID})
+		}
+
+		releaseCapacity := func() {
+			if ramBytes > 0 && diskBytes > 0 {
+				if uerr := h.db.ReleaseNodeCommitment(nodeID, ramBytes, diskBytes); uerr != nil {
+					h.log.Error("Failed to release capacity after rollback", uerr, map[string]interface{}{"node_id": nodeID, "instance_id": instanceID})
+				} else if uerr := h.recomputeNodePolicy(nodeID); uerr != nil {
+					h.log.Error("Failed to recompute node policy after rollback", uerr, map[string]interface{}{"node_id": nodeID, "instance_id": instanceID})
+				} else {
+					h.auditCapacityEvent("node_capacity_released", nodeID, instanceID, operationID, admiral.ActionProvisionApp, ramBytes, diskBytes)
+				}
+			}
+		}
+
+		credentials, err := h.createInstanceSecrets(instanceID, payload)
+		if err != nil {
+			h.log.Error("Create instance secrets failed", err, map[string]interface{}{"instance_id": instanceID})
+			if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
+				h.log.Error("Failed to mark instance as failed after secrets error", uerr, map[string]interface{}{"instance_id": instanceID})
+			}
+			releaseCapacity()
+			writeError(w, http.StatusInternalServerError, "Failed to create instance secrets")
+			return
+		}
+
+		if err := h.db.CreateOperation(operationID, instanceID, nodeID, string(admiral.ActionProvisionApp), "pending_dispatch", operatorFromRequest(r)); err != nil {
+			h.log.Error("Create operation record failed", err, nil)
+			releaseCapacity()
+			writeError(w, http.StatusInternalServerError, "Failed to create operation record")
+			return
+		}
+
+		var hostname string
+		var routes []database.PublicRoute
+		if h.networking != nil {
+			routes, err = h.networking.CreateInstanceRoutes(instanceID, payload, nodeID)
+			if err != nil {
+				h.log.Error("Create public routes failed", err, map[string]interface{}{"instance_id": instanceID})
+				if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
+					h.log.Error("Failed to mark instance as failed after routes error", uerr, map[string]interface{}{"instance_id": instanceID})
+				}
+				if uerr := h.db.UpdateOperation(operationID, "failed", err.Error()); uerr != nil {
+					h.log.Error("Failed to mark operation as failed after routes error", uerr, map[string]interface{}{"operation_id": operationID})
+				}
+				releaseCapacity()
+				writeError(w, http.StatusInternalServerError, "Failed to create public routes")
+				return
+			}
+		}
+
+		if len(routes) > 0 {
+			hostname = routes[0].Hostname
+		}
+
+		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
+
+		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
+			OperationID: operationID,
+			Status:      "queued",
+			Hostname:    hostname,
+			Credentials: credentials,
+		})
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		writeError(w, http.StatusBadRequest, "instance_id is required")
+		return
+	}
+	instanceID := parts[3]
+
+	// /api/v1/customer-apps/{id}/credentials
+	if len(parts) >= 5 && parts[4] == "credentials" {
+		h.handleCredentials(w, r, instanceID)
+		return
+	}
+
+	inst, err := h.db.GetCustomerApp(instanceID)
+	if err != nil {
+		h.log.Error("Get customer app failed", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, inst)
+}
+
+func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, instanceID string) {
+	secrets, err := h.db.GetExposedInstanceSecrets(instanceID)
+	if err != nil {
+		h.log.Error("Get exposed secrets failed", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	credentials := make([]admiral.Credential, 0, len(secrets))
+	for _, s := range secrets {
+		plain, err := h.secrets.Decrypt(s.EncryptedValue)
+		if err != nil {
+			h.log.Error("Decrypt secret failed", err, nil)
+			continue
+		}
+		credentials = append(credentials, admiral.Credential{
+			Service: s.ServiceName,
+			Name:    s.EnvName,
+			Value:   plain,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, credentials)
 }
