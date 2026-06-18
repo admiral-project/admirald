@@ -74,7 +74,7 @@ func TestEnsureInitialAdminRequiresCredentialsWhenMissing(t *testing.T) {
 	if created {
 		t.Fatal("expected no admin to be created")
 	}
-	want := "No administrative user exists. Set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin."
+	want := "no administrative user exists; set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin"
 	if err.Error() != want {
 		t.Fatalf("unexpected error message: got %q want %q", err.Error(), want)
 	}

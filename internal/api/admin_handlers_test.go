@@ -18,6 +18,7 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type migrationTestPublisher struct {
@@ -908,12 +909,31 @@ func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 	}
 }
 
+func nodeAuthWrapped(h *APIHandlers, token string, next http.HandlerFunc) http.HandlerFunc {
+	return NodeAuthMiddleware(h.db, "test-pepper", "worker", next)
+}
+
+func setupNodeWithToken(t *testing.T, h *APIHandlers, nodeID, hostname, ip, wgIP, nodeRole, os, podmanV, token string) {
+	t.Helper()
+	if err := h.db.RegisterNode(nodeID, hostname, ip, wgIP, nodeRole, "", os, podmanV); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	identifier := nodeTokenIdentifier(token, "test-pepper")
+	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash token: %v", err)
+	}
+	if err := h.db.UpsertNodeToken(nodeID, identifier, string(hash), "worker", "active", "", nil, ""); err != nil {
+		t.Fatalf("upsert token: %v", err)
+	}
+}
+
 func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
-		t.Fatalf("register node: %v", err)
-	}
+	token := "test-token-heartbeat"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token)
+	wrapped := nodeAuthWrapped(h, token, h.HandleNodeHeartbeat)
 
 	heartbeat := admiral.HeartbeatRequest{
 		NodeID: "node_001",
@@ -921,19 +941,21 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 	}
 	body, _ := json.Marshal(heartbeat)
 
-	// Test 1: Request with mismatching IP (or no IP header) -> 403 Forbidden
+	// Test 1: Request with mismatching IP -> 403 Forbidden
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
+	req1.Header.Set("X-Admiral-Token", token)
 	rec1 := httptest.NewRecorder()
-	h.HandleNodeHeartbeat(rec1, req1)
+	wrapped(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden on mismatching IP, got %d", rec1.Code)
 	}
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
+	req2.Header.Set("X-Admiral-Token", token)
 	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
-	h.HandleNodeHeartbeat(rec2, req2)
+	wrapped(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK on matching WireGuard IP, got %d (body=%s)", rec2.Code, rec2.Body.String())
 	}
@@ -942,9 +964,10 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 func TestHandleFleetCallbackIPValidation(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
-		t.Fatalf("register node: %v", err)
-	}
+	token := "test-token-callback"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token)
+	wrapped := nodeAuthWrapped(h, token, h.HandleFleetCallback)
+
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
@@ -963,17 +986,19 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 
 	// Test 1: Request with mismatching IP -> 403 Forbidden
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	req1.Header.Set("X-Admiral-Token", token)
 	rec1 := httptest.NewRecorder()
-	h.HandleFleetCallback(rec1, req1)
+	wrapped(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
 	}
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	req2.Header.Set("X-Admiral-Token", token)
 	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
-	h.HandleFleetCallback(rec2, req2)
+	wrapped(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
 	}
@@ -982,12 +1007,14 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	h := newTestHandler(t, false)
 
-	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "", "fedora", "5.0"); err != nil {
-		t.Fatalf("register node 1: %v", err)
-	}
-	if err := h.db.RegisterNode("node_002", "worker-2", "10.0.0.2", "10.99.0.3", "worker", "", "fedora", "5.0"); err != nil {
-		t.Fatalf("register node 2: %v", err)
-	}
+	token1 := "test-token-health-1"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token1)
+	wrapped1 := nodeAuthWrapped(h, token1, h.HandleAdminHealthCallback)
+
+	token2 := "test-token-health-2"
+	setupNodeWithToken(t, h, "node_002", "worker-2", "10.0.0.2", "10.99.0.3", "worker", "fedora", "5.0", token2)
+	wrapped2 := nodeAuthWrapped(h, token2, h.HandleAdminHealthCallback)
+
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
@@ -1002,23 +1029,24 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 
 	// Test 1: Mismatching IP -> 403 Forbidden
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
-	req1.RemoteAddr = "10.99.0.3:51820" // IP of node_002 but reporting for node_001
+	req1.Header.Set("X-Admiral-Token", token1)
 	rec1 := httptest.NewRecorder()
-	h.HandleAdminHealthCallback(rec1, req1)
+	wrapped1(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
 	}
 
 	// Test 2: Valid IP and Node ID -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
+	req2.Header.Set("X-Admiral-Token", token1)
 	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
-	h.HandleAdminHealthCallback(rec2, req2)
+	wrapped1(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
 	}
 
-	// Test 3: Valid IP of node_002 reporting instance that belongs to node_001 -> 403 Forbidden
+	// Test 3: node_002 token with instance that belongs to node_001 -> handler denies
 	report2 := admiral.HealthReport{
 		InstanceID:   "inst_001",
 		NodeID:       "node_002",
@@ -1027,9 +1055,10 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	}
 	body2, _ := json.Marshal(report2)
 	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body2))
+	req3.Header.Set("X-Admiral-Token", token2)
 	req3.RemoteAddr = "10.99.0.3:51820"
 	rec3 := httptest.NewRecorder()
-	h.HandleAdminHealthCallback(rec3, req3)
+	wrapped2(rec3, req3)
 	if rec3.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden, got %d", rec3.Code)
 	}
