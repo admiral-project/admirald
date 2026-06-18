@@ -137,5 +137,16 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 3,
+			Name:    "change_payload_to_text",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec(`
+					ALTER TABLE fleet_commands
+					ALTER COLUMN payload TYPE TEXT
+				`)
+				return err
+			},
+		},
 	}
 }
