@@ -2688,7 +2688,8 @@ func handleBackupCallback(h *APIHandlers, op *database.Operation, res admiral.Ta
 					rec.StorageBackend = cbData.Backup.StorageBackend
 				}
 				if cbData.Backup.StorageKey != "" && cbData.Backup.StorageBackend == "local" {
-					if strings.Contains(cbData.Backup.StorageKey, "..") {
+					cleaned := filepath.Clean(cbData.Backup.StorageKey)
+					if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") {
 						h.log.Error("Rejected local backup storage_key with path traversal", nil, map[string]interface{}{
 							"operation_id": res.OperationID,
 							"storage_key":  cbData.Backup.StorageKey,
