@@ -9,18 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
 	_ "github.com/lib/pq"
 )
-
-
 
 type DB struct {
 	*sql.DB
 }
 
 var ErrNodeCapacityPolicyBlocked = errors.New("node cannot receive new workload under current policy")
-
-
 
 func Connect(dbURL string) (*DB, error) {
 	driver := "postgres"
@@ -70,35 +67,9 @@ func (d *DB) TruncateTables() error {
 	return nil
 }
 
-// --- Nodes CRUD ---
-
-
-
 func scanNode(scanner interface{ Scan(...interface{}) error }, n *Node) error {
 	return scanner.Scan(&n.ID, &n.Hostname, &n.IP, &n.WireguardIP, &n.NodeRole, &n.PublicIP, &n.OS, &n.PodmanVersion, &n.FleetVersion, &n.Status, &n.LastHeartbeat, &n.DiskTotal, &n.DiskUsed, &n.PodsActive, &n.PodsPaused, &n.PodsFailed, &n.StorageState, &n.StorageMsg, &n.ManualDisabled, &n.HealthStatus, &n.HealthReasonCodes, &n.AvailableForProvisioning, &n.UnavailableReasonCodes, &n.RAMTotal, &n.RAMUsed, &n.RAMCommitLimit, &n.DiskCommitLimit, &n.CommittedRAM, &n.CommittedDisk, &n.LastMetricsAt, &n.TokenType, &n.TokenStatus, &n.TokenIdentifier, &n.TokenHash, &n.TokenExpiresAt, &n.ClaimID, &n.TokenValueEncrypted)
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 func reserveNodeCapacityTx(tx *sql.Tx, nodeID string, ramDelta, diskDelta int64) error {
 	res, err := tx.Exec(`
@@ -127,40 +98,12 @@ func reserveNodeCapacityTx(tx *sql.Tx, nodeID string, ramDelta, diskDelta int64)
 	return nil
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 func instanceIDArg(instanceID string) interface{} {
 	if instanceID == "" {
 		return nil
 	}
 	return instanceID
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 func scanOperationRow(rows *sql.Rows) (*Operation, error) {
 	var o Operation
@@ -195,40 +138,3 @@ func scanOperationRowSingle(row *sql.Row) (*Operation, error) {
 	}
 	return &o, nil
 }
-
-// --- Instance Secrets CRUD ---
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
