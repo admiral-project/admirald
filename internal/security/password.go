@@ -17,7 +17,7 @@ import (
 const (
 	minInitialAdminPasswordLen = 12
 	passwordSaltSize           = 16
-	passwordArgon2Time         = 1
+	passwordArgon2Time         = 3
 	passwordArgon2MemoryKB     = 64 * 1024
 	passwordArgon2Threads      = 4
 	passwordArgon2KeyLen       = 32
