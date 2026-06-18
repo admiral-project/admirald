@@ -4,15 +4,12 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
@@ -296,115 +293,3 @@ func (h *APIHandlers) HandleAdminChangePassword(w http.ResponseWriter, r *http.R
 }
 
 // GET /api/admin/instances & actions
-func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	var instanceID string
-	if len(parts) >= 4 {
-		instanceID = parts[3]
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		if instanceID != "" && len(parts) >= 5 && parts[4] == "inspect" {
-			inst, _ := h.db.GetCustomerApp(instanceID)
-			if inst == nil {
-				writeError(w, http.StatusNotFound, "Instance not found")
-				return
-			}
-			if inst.InspectData == "" {
-				writeError(w, http.StatusNotFound, "No inspect data available for this instance")
-				return
-			}
-			var inspectResult interface{}
-			if err := json.Unmarshal([]byte(inst.InspectData), &inspectResult); err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to parse stored inspect data")
-				return
-			}
-			writeJSON(w, http.StatusOK, inspectResult)
-			return
-		}
-		if instanceID != "" {
-			inst, _ := h.db.GetCustomerApp(instanceID)
-			if inst == nil {
-				writeError(w, http.StatusNotFound, "Instance not found")
-				return
-			}
-			writeJSON(w, http.StatusOK, inst)
-			return
-		}
-
-		page, pageSize := parsePagination(r)
-		apps, total, err := h.db.GetCustomerAppsPage(pageSize, (page-1)*pageSize, "")
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, pagedResponse{
-			Items:    apps,
-			Page:     page,
-			PageSize: pageSize,
-			Total:    total,
-		})
-
-	case http.MethodPost:
-		if instanceID != "" && len(parts) >= 5 {
-			action := parts[4]
-			// Delegate all backup sub-paths to HandleAdminBackups
-			if action == "backups" {
-				h.HandleAdminBackups(w, r)
-				return
-			}
-			if action == "inspect" {
-				inst, _ := h.db.GetCustomerApp(instanceID)
-				if inst == nil {
-					writeError(w, http.StatusNotFound, "Instance not found")
-					return
-				}
-				if inst.NodeID == nil || *inst.NodeID == "" {
-					writeError(w, http.StatusServiceUnavailable, "App not scheduled")
-					return
-				}
-				// Create operational inspect app task
-				opID := generateID("op")
-				_ = h.db.CreateOperation(opID, instanceID, *inst.NodeID, "inspect_app", "pending_dispatch", operatorFromRequest(r))
-				appDef, _ := h.db.GetAppDefinition(inst.AppDefinitionName)
-				tiers, _ := h.db.GetAppTiers(inst.AppDefinitionName)
-				var matchedTier database.AppTier
-				for _, t := range tiers {
-					if t.Name == inst.TierName {
-						matchedTier = t
-						break
-					}
-				}
-				h.dispatchTask(opID, instanceID, *inst.NodeID, inst.CustomerID, appDef.RawYAML, matchedTier, admiral.TaskAction("inspect_app"))
-
-				writeJSON(w, http.StatusAccepted, admiral.OperationResponse{
-					OperationID: opID,
-					Status:      "queued",
-				})
-				return
-			}
-
-			if action == "migrate" {
-				h.HandleMigrateInstance(w, r)
-				return
-			}
-
-			// Reuse HandleCustomerAppAction, passing tier query param if present
-			tierParam := r.URL.Query().Get("tier")
-			bodyMap := map[string]string{"instance_id": instanceID, "action": action}
-			if tierParam != "" {
-				bodyMap["tier"] = tierParam
-			}
-			jsonBody, _ := json.Marshal(bodyMap)
-			r.Body = io.NopCloser(bytes.NewReader(jsonBody))
-			h.HandleCustomerAppAction(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusBadRequest)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// GET & POST & DELETE /api/admin/backups
