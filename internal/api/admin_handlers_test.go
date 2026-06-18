@@ -272,7 +272,7 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 		}
 	}
 
-	return NewHandlers(db, logging.New("test"), nil, nil, nil, "test-hmac-key", "test-pepper", 60)
+	return NewHandlers(db, logging.New("test"), nil, nil, nil, "test-hmac-key", "test-pepper", 60, "")
 }
 
 func seedTestAppDefinition(t *testing.T, db *database.DB) {
