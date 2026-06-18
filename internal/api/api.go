@@ -89,6 +89,12 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 
 	// Administrative endpoints (admin session)
 	mux.HandleFunc("/api/admin/auth/login", MaxBody(jsonLimit, s.handlers.HandleAdminLogin))
+	// logout is intentionally unauthenticated. Adding AdminAuthMiddleware would require
+	// a valid session token to log out, but the handler already derives the token hash
+	// from the request header and silently ignores invalid/missing tokens. An attacker
+	// who can guess a valid 128-bit session token could invalidate it via this endpoint,
+	// but the same token would give them full access anyway. The marginal denial-of-session
+	// risk is accepted. See admirald#7 (wontfix).
 	mux.HandleFunc("/api/admin/auth/logout", MaxBody(jsonLimit, s.handlers.HandleAdminLogout))
 	mux.HandleFunc("/api/admin/auth/me", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminMe)))
 	mux.HandleFunc("/api/admin/auth/change-password", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminChangePassword)))
