@@ -415,26 +415,6 @@ func (d *DB) GetNodeByTokenIdentifier(identifier string) (*Node, error) {
 	return &n, nil
 }
 
-func (d *DB) ClaimNodeToken(claimID, nodeID string) (string, error) {
-	var tokenValueEncrypted string
-	err := d.QueryRow(`
-		UPDATE nodes SET
-			token_status = 'consumed',
-			token_expires_at = NULL
-		WHERE claim_id = $1::uuid
-		  AND id = $2
-		  AND token_status = 'available'
-		  AND (token_expires_at IS NULL OR token_expires_at > NOW())
-		RETURNING token_value_encrypted
-	`, claimID, nodeID).Scan(&tokenValueEncrypted)
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("claim not found or expired")
-	} else if err != nil {
-		return "", fmt.Errorf("claim node token: %w", err)
-	}
-	return tokenValueEncrypted, nil
-}
-
 func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
 	rows, err := d.Query(`
 		DELETE FROM nodes

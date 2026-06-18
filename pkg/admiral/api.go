@@ -22,16 +22,6 @@ type RegisterNodeResponse struct {
 	ClaimID string `json:"claim_id,omitempty"` // claim ID for one-time retrieval
 }
 
-type ClaimTokenRequest struct {
-	ClaimID string `json:"claim_id"`
-	NodeID  string `json:"node_id"`
-}
-
-type ClaimTokenResponse struct {
-	Success bool   `json:"success"`
-	Token   string `json:"token"`
-}
-
 type HeartbeatRequest struct {
 	NodeID        string `json:"node_id"`
 	Hostname      string `json:"hostname,omitempty"`

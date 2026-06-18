@@ -269,32 +269,6 @@ func encryptTokenValue(rawToken, pepper string) (string, error) {
 	return hex.EncodeToString(ciphertext), nil
 }
 
-func decryptTokenValue(encryptedHex, pepper string) (string, error) {
-	key := sha256Key(pepper)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("create cipher: %w", err)
-	}
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("create gcm: %w", err)
-	}
-	data, err := hex.DecodeString(encryptedHex)
-	if err != nil {
-		return "", fmt.Errorf("decode encrypted: %w", err)
-	}
-	nonceSize := aesGCM.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("decrypt token: %w", err)
-	}
-	return string(plaintext), nil
-}
-
 func sha256Key(pepper string) []byte {
 	h := sha256.Sum256([]byte(pepper))
 	return h[:]
@@ -327,45 +301,6 @@ func bcryptHash(raw string) (string, error) {
 		return "", fmt.Errorf("bcrypt hash: %w", err)
 	}
 	return string(b), nil
-}
-
-func (h *APIHandlers) HandleClaimToken(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req admiral.ClaimTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-	if req.ClaimID == "" || req.NodeID == "" {
-		writeError(w, http.StatusBadRequest, "claim_id and node_id are required")
-		return
-	}
-
-	if err := h.validateRequestNodeIP(r, req.NodeID); err != nil {
-		h.log.Error("Claim token blocked: IP validation failed", err, map[string]interface{}{"node_id": req.NodeID})
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-
-	encryptedValue, err := h.db.ClaimNodeToken(req.ClaimID, req.NodeID)
-	if err != nil {
-		h.log.Error("Claim token failed", err, map[string]interface{}{"node_id": req.NodeID, "claim_id": req.ClaimID})
-		writeError(w, http.StatusGone, "Claim token expired or invalid")
-		return
-	}
-
-	rawToken, err := decryptTokenValue(encryptedValue, h.tokenPepper)
-	if err != nil {
-		h.log.Error("Failed to decrypt claimed token", err, map[string]interface{}{"node_id": req.NodeID})
-		writeError(w, http.StatusInternalServerError, "Failed to retrieve token")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, admiral.ClaimTokenResponse{Success: true, Token: rawToken})
 }
 
 func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
