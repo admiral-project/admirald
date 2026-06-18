@@ -77,6 +77,8 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/networking/certificate", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleCertificate)))
 	mux.HandleFunc("/api/v1/operations/", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleOperationByID)))
 	mux.HandleFunc("/api/v1/status", AdminAuthMiddleware(s.adminToken, s.handlers.HandleStatus))
+	mux.HandleFunc("/api/v1/rate-limit/check", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleRateLimitCheck)))
+	mux.HandleFunc("/api/v1/rate-limit/reset", AdminAuthMiddleware(s.adminToken, MaxBody(jsonLimit, s.handlers.HandleRateLimitReset)))
 
 	// Node-authenticated routes (heartbeat and claim use node auth middleware)
 	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.handlers.db, s.tokenPepper, "worker", MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))

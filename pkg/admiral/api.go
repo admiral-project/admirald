@@ -409,3 +409,18 @@ type ValidateProvisioningResponse struct {
 	Revision int    `json:"revision,omitempty"`
 	Checksum string `json:"checksum,omitempty"`
 }
+
+type RateLimitCheckRequest struct {
+	Identifier    string `json:"identifier"`
+	MaxAttempts   int    `json:"max_attempts"`
+	WindowSeconds int    `json:"window_seconds"`
+}
+
+type RateLimitCheckResponse struct {
+	Allowed   bool `json:"allowed"`
+	Remaining int  `json:"remaining"`
+}
+
+type RateLimitResetRequest struct {
+	Identifier string `json:"identifier"`
+}

@@ -207,6 +207,20 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 10,
+			Name:    "add_rate_limits_table",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec(`
+					CREATE TABLE IF NOT EXISTS rate_limits (
+						identifier TEXT PRIMARY KEY,
+						window_start DOUBLE PRECISION NOT NULL,
+						attempts INTEGER NOT NULL DEFAULT 0
+					)
+				`)
+				return err
+			},
+		},
 	}
 }
 
