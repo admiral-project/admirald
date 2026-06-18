@@ -25,6 +25,7 @@ type Config struct {
 	TokenTTLMinutes          int
 	SecretsKey               string
 	SigningKey               string
+	TaskEncryptionKey        string
 	FlagshipAdminUser        string
 	FlagshipAdminPassword    string
 	TLSCertFile              string
@@ -62,6 +63,7 @@ func load(path string) (*Config, error) {
 		"token_ttl_minutes":          "5",
 		"secrets_key":                "",
 		"signing_key":                "",
+		"task_encryption_key":        "",
 		"flagship_admin_user":        "",
 		"flagship_admin_pswd":        "",
 		"tls_cert_file":              "",
@@ -95,6 +97,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "token_pepper", "ADMIRAL_TOKEN_PEPPER")
 	applyEnv(values, "secrets_key", "ADMIRAL_SECRETS_KEY")
 	applyEnv(values, "signing_key", "ADMIRAL_ED25519_PRIVATE_KEY")
+	applyEnv(values, "task_encryption_key", "ADMIRAL_TASK_ENCRYPTION_KEY")
 	applyEnv(values, "flagship_admin_user", "ADMIRAL_FLAGSHIP_ADMIN_USER")
 	applyEnv(values, "flagship_admin_pswd", "ADMIRAL_FLAGSHIP_ADMIN_PSWD")
 	applyEnv(values, "tls_cert_file", "ADMIRAL_TLS_CERT_FILE")
@@ -193,6 +196,7 @@ func load(path string) (*Config, error) {
 		TokenTTLMinutes:          ttl,
 		SecretsKey:               values["secrets_key"],
 		SigningKey:               values["signing_key"],
+		TaskEncryptionKey:        values["task_encryption_key"],
 		FlagshipAdminUser:        values["flagship_admin_user"],
 		FlagshipAdminPassword:    values["flagship_admin_pswd"],
 		TLSCertFile:              values["tls_cert_file"],

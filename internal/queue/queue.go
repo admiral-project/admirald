@@ -1,12 +1,16 @@
 package queue
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // SHA1 used for UUIDv5 generation (non-crypto task IDs)
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -21,17 +25,18 @@ const (
 )
 
 type Publisher struct {
-	db         *queuedb.DB
-	log        *logging.Logger
-	privateKey ed25519.PrivateKey
+	db             *queuedb.DB
+	log            *logging.Logger
+	privateKey     ed25519.PrivateKey
+	encryptionKey  []byte
 }
 
-func NewPublisher(db *queuedb.DB, log *logging.Logger, seed []byte) *Publisher {
+func NewPublisher(db *queuedb.DB, log *logging.Logger, seed []byte, encryptionKey []byte) *Publisher {
 	var priv ed25519.PrivateKey
 	if len(seed) == 32 {
 		priv = ed25519.NewKeyFromSeed(seed)
 	}
-	return &Publisher{db: db, log: log, privateKey: priv}
+	return &Publisher{db: db, log: log, privateKey: priv, encryptionKey: encryptionKey}
 }
 
 func (p *Publisher) PublishTask(task *admiral.FleetTask) error {
@@ -39,9 +44,13 @@ func (p *Publisher) PublishTask(task *admiral.FleetTask) error {
 	if err != nil {
 		return fmt.Errorf("serialize task payload: %w", err)
 	}
+	storePayload, err := p.sealPayload(payload)
+	if err != nil {
+		return fmt.Errorf("encrypt task payload: %w", err)
+	}
 	signedAt := time.Now().Unix()
-	sig := p.signPayload(payload, signedAt)
-	return p.persistTask(task, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
+	sig := p.signPayload(storePayload, signedAt)
+	return p.persistTask(storePayload, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
 }
 
 func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
@@ -49,9 +58,13 @@ func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result 
 	if err != nil {
 		return fmt.Errorf("serialize task payload: %w", err)
 	}
+	storePayload, err := p.sealPayload(payload)
+	if err != nil {
+		return fmt.Errorf("encrypt task payload: %w", err)
+	}
 	signedAt := time.Now().Unix()
-	sig := p.signPayload(payload, signedAt)
-	return p.persistTask(task, admiral.CommandFailed, 0, reason, result, sig, signedAt)
+	sig := p.signPayload(storePayload, signedAt)
+	return p.persistTask(storePayload, admiral.CommandFailed, 0, reason, result, sig, signedAt)
 }
 
 func (p *Publisher) signPayload(payload []byte, timestamp int64) string {
@@ -60,12 +73,28 @@ func (p *Publisher) signPayload(payload []byte, timestamp int64) string {
 	return hex.EncodeToString(sig)
 }
 
-func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCommandStatus, maxAttempts int, lastError, result, sig string, signedAt int64) error {
-	payload, err := json.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("serialize task payload: %w", err)
+func (p *Publisher) sealPayload(plaintext []byte) ([]byte, error) {
+	if len(p.encryptionKey) == 0 {
+		return plaintext, nil
 	}
+	block, err := aes.NewCipher(p.encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("create cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generate nonce: %w", err)
+	}
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+	wrapper, _ := json.Marshal(map[string]string{"ct": base64.StdEncoding.EncodeToString(ciphertext)})
+	return wrapper, nil
+}
 
+func (p *Publisher) persistTask(task *admiral.FleetTask, storePayload []byte, status admiral.FleetCommandStatus, maxAttempts int, lastError, result, sig string, signedAt int64) error {
 	commandID := newUUID()
 	operationUUID := nameUUID(task.OperationID)
 	idempotencyKey := task.TaskID
@@ -88,7 +117,7 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCom
 	if signedAt > 0 {
 		signedAtValue = signedAt
 	}
-	_, err = p.db.Exec(`
+	_, err := p.db.Exec(`
 		INSERT INTO fleet_commands (
 			id,
 			operation_id,
@@ -112,7 +141,7 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, status admiral.FleetCom
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, 0, $12, $13, $14, $15, NULLIF($16, '')::jsonb, $17, $18
 		)
-	`, commandID, operationUUID, task.OperationID, task.TaskID, task.InstanceID, task.NodeID, string(task.Action), string(payload), string(status), defaultPriority, availableAt, maxAttempts, idempotencyKey, completedAt, lastErrorValue, result, sigValue, signedAtValue)
+	`, commandID, operationUUID, task.OperationID, task.TaskID, task.InstanceID, task.NodeID, string(task.Action), string(storePayload), string(status), defaultPriority, availableAt, maxAttempts, idempotencyKey, completedAt, lastErrorValue, result, sigValue, signedAtValue)
 	if err != nil {
 		return fmt.Errorf("insert fleet command: %w", err)
 	}

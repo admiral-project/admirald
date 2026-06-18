@@ -84,7 +84,14 @@ func main() {
 	if err != nil {
 		logger.Fatal("invalid signing key (ADMIRAL_ED25519_PRIVATE_KEY must be 64 hex chars)", err, nil)
 	}
-	publisher := queue.NewPublisher(queueDB, logger, seed)
+	var encKey []byte
+	if cfg.TaskEncryptionKey != "" {
+		encKey, err = hex.DecodeString(cfg.TaskEncryptionKey)
+		if err != nil || len(encKey) != 32 {
+			logger.Fatal("invalid task encryption key (ADMIRAL_TASK_ENCRYPTION_KEY must be 64 hex chars = 32 bytes)", err, nil)
+		}
+	}
+	publisher := queue.NewPublisher(queueDB, logger, seed, encKey)
 	defer publisher.Close()
 
 	// Initialize API Server
