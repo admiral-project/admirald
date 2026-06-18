@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"time"
 
@@ -24,9 +26,23 @@ type Server struct {
 	adminLimiter *RateLimiter
 }
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string) *Server {
+	// session_hmac_key is intentionally optional. When empty, a volatile
+	// ephemeral key is generated in memory. This means a server restart
+	// invalidates all active admin web sessions (flagship/harbor must
+	// re-authenticate). Production deployments may set a persistent key
+	// via ADMIRAL_SESSION_HMAC_KEY or session_hmac_key in admirald.ini
+	// to avoid this, but the ephemeral default is a deliberate choice.
+	if sessionHMACKey == "" {
+		var key [32]byte
+		if _, err := rand.Read(key[:]); err != nil { //nolint:gosec // ephemeral key for session HMAC, not cryptographic auth
+			log.Fatal("failed to generate ephemeral session HMAC key", nil, nil)
+		}
+		sessionHMACKey = hex.EncodeToString(key[:])
+		log.Info("Using volatile ephemeral session HMAC key. Admin sessions will not survive a restart.", nil)
+	}
 	return &Server{
-		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, adminToken, tokenPepper, tokenTTL, taskEncryptionKey),
+		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL, taskEncryptionKey),
 		log:          log,
 		adminToken:   adminToken,
 		tokenPepper:  tokenPepper,
