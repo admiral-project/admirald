@@ -91,7 +91,7 @@ func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secret
 		tokenPepper:       tokenPepper,
 		configTokenTTL:    tokenTTL,
 		loginLimiter:      NewRateLimiter(),
-		knowHostPath:      "/etc/admiral/know_host.yaml",
+		knowHostPath:      "/var/lib/admiral/know_host.yaml",
 		taskEncryptionKey: taskEncryptionKey,
 	}
 }
