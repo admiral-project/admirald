@@ -408,11 +408,6 @@ func (h *APIHandlers) HandleTaskEncryptionKey(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "node authentication required")
 		return
 	}
-	if err := h.validateRequestNodeIP(r, nodeID); err != nil {
-		h.log.Error("task-encryption-key blocked: IP validation failed", err, map[string]interface{}{"node_id": nodeID})
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]string{"task_encryption_key": h.taskEncryptionKey})
 }
 
@@ -430,12 +425,6 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 
 	if req.NodeID == "" {
 		writeError(w, http.StatusBadRequest, "node_id is required")
-		return
-	}
-
-	if err := h.validateRequestNodeIP(r, req.NodeID); err != nil {
-		h.log.Error("Node heartbeat blocked: IP validation failed", err, map[string]interface{}{"node_id": req.NodeID})
-		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -2254,12 +2243,6 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.validateRequestNodeIP(r, res.NodeID); err != nil {
-		h.log.Error("Fleet callback blocked: IP validation failed", err, map[string]interface{}{"node_id": res.NodeID})
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-
 	h.log.Info("Received fleet task callback", map[string]interface{}{
 		"operation_id": res.OperationID,
 		"task_id":      res.TaskID,
@@ -2973,23 +2956,4 @@ func (h *APIHandlers) HandleRateLimitReset(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{}`))
-}
-
-func (h *APIHandlers) validateRequestNodeIP(r *http.Request, nodeID string) error {
-	clientIPAddr := clientIP(r.RemoteAddr)
-
-	node, err := h.db.GetNode(nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch node registration details: %w", err)
-	}
-	if node == nil {
-		return fmt.Errorf("node %s not registered", nodeID)
-	}
-
-	if node.WireguardIP != "" {
-		if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
-			return fmt.Errorf("node %s requests must originate from WireGuard IP %s, got %s", nodeID, node.WireguardIP, clientIPAddr)
-		}
-	}
-	return nil
 }

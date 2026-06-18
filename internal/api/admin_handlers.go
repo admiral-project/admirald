@@ -1378,12 +1378,6 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := h.validateRequestNodeIP(r, report.NodeID); err != nil {
-		h.log.Error("Health report blocked: IP validation failed", err, map[string]interface{}{"node_id": report.NodeID})
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-
 	inst, err := h.db.GetCustomerApp(report.InstanceID)
 	if err != nil {
 		h.log.Error("Failed to fetch customer app for health report check", err, map[string]interface{}{"instance_id": report.InstanceID})
@@ -1435,12 +1429,6 @@ func (h *APIHandlers) HandleStorageReport(w http.ResponseWriter, r *http.Request
 	}
 	if report.InstanceID == "" || report.NodeID == "" || report.StorageState == "" {
 		writeError(w, http.StatusBadRequest, "instance_id, node_id, and storage_state are required")
-		return
-	}
-
-	if err := h.validateRequestNodeIP(r, report.NodeID); err != nil {
-		h.log.Error("Storage report blocked: IP validation failed", err, map[string]interface{}{"node_id": report.NodeID})
-		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
