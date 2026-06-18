@@ -187,7 +187,7 @@ func load(path string) (*Config, error) {
 			fmt.Println("WARNING: ADMIRAL_SECRETS_KEY is missing. Using ephemeral key for development.")
 			fmt.Println("WARNING: Encrypted secrets will not survive a restart if this key changes.")
 		} else {
-			return nil, fmt.Errorf("ADMIRAL_SECRETS_KEY is required in production. Please set it to a 32-character random string.")
+			return nil, fmt.Errorf("ADMIRAL_SECRETS_KEY is required in production; please set it to a 32-character random string")
 		}
 	}
 

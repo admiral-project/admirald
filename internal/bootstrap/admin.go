@@ -24,10 +24,10 @@ func EnsureInitialAdmin(db *database.DB, cfg *config.Config) (bool, error) {
 	username := strings.TrimSpace(cfg.FlagshipAdminUser)
 	password := strings.TrimSpace(cfg.FlagshipAdminPassword)
 	if username == "" {
-		return false, fmt.Errorf("No administrative user exists. Set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin.")
+		return false, fmt.Errorf("no administrative user exists; set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin")
 	}
 	if password == "" {
-		return false, fmt.Errorf("No administrative user exists. Set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin.")
+		return false, fmt.Errorf("no administrative user exists; set ADMIRAL_FLAGSHIP_ADMIN_USER and ADMIRAL_FLAGSHIP_ADMIN_PSWD to bootstrap the first admin")
 	}
 	if err := security.ValidateInitialAdminPassword(username, password); err != nil {
 		return false, err

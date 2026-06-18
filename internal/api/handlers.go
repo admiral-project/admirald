@@ -717,7 +717,7 @@ func readAppDefinitionBody(w http.ResponseWriter, r *http.Request) (string, erro
 		YAML string `json:"yaml"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return "", fmt.Errorf("Invalid JSON payload (must include 'yaml' field or be application/x-yaml)")
+		return "", fmt.Errorf("invalid JSON payload (must include 'yaml' field or be application/x-yaml)")
 	}
 	if req.YAML == "" {
 		return "", fmt.Errorf("YAML content is empty")
