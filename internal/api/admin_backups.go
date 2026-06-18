@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -165,4 +166,73 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	h.enqueueRawTask(task)
 
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
+}
+
+func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {
+	recs, _ := h.db.GetBackupRecords("")
+	// Group backups by instance and type
+	grouped := make(map[string][]admiral.BackupRecord)
+	for _, rec := range recs {
+		if rec.Status == "succeeded" {
+			k := fmt.Sprintf("%s-%s", rec.InstanceID, rec.BackupType)
+			grouped[k] = append(grouped[k], rec)
+		}
+	}
+
+	prunedCount := 0
+	for _, backups := range grouped {
+		if len(backups) <= 1 {
+			continue
+		}
+		// Read retention policy from the first backup record's snapshot
+		retCount := 7 // default fallback
+		if len(backups) > 0 {
+			var policy struct {
+				Count int `json:"count"`
+				Days  int `json:"days"`
+			}
+			if err := json.Unmarshal([]byte(backups[0].RetentionPolicySnapshotJSON), &policy); err == nil && policy.Count > 0 {
+				retCount = policy.Count
+			}
+		}
+		// Keep the first N succeeded backups (based on retention policy), prune others
+		for i, rec := range backups {
+			if i >= retCount {
+				// Create prune task
+				opID := generateID("op")
+				_ = h.db.CreateOperation(opID, rec.InstanceID, rec.NodeID, "delete_backup", "pending_dispatch", operatorFromRequest(r))
+
+				rec.Status = "deleted"
+				_ = h.db.UpdateBackupRecord(&rec)
+
+				task := &admiral.FleetTask{
+					TaskID:      generateID("task"),
+					OperationID: opID,
+					NodeID:      rec.NodeID,
+					Action:      admiral.TaskAction("delete_backup"),
+					InstanceID:  rec.InstanceID,
+					Storage: &admiral.StorageConfig{
+						Backend:  rec.StorageBackend,
+						Key:      rec.StorageKey,
+						BackupID: rec.ID,
+					},
+				}
+				storageCfg, _ := h.db.GetActiveBackupStorageConfig()
+				if storageCfg != nil {
+					task.Storage.Endpoint = storageCfg.Endpoint
+					task.Storage.Region = storageCfg.Region
+					task.Storage.Bucket = storageCfg.Bucket
+					task.Storage.Prefix = storageCfg.Prefix
+					task.Storage.ForcePathStyle = storageCfg.ForcePathStyle
+					task.Storage.AccessKeyEnv = storageCfg.AccessKeyEnv
+					task.Storage.SecretKeyEnv = storageCfg.SecretKeyEnv
+					task.Storage.SessionTokenEnv = storageCfg.SessionTokenEnv
+				}
+				h.enqueueRawTask(task)
+				prunedCount++
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "pruned_backups_count": prunedCount})
 }
