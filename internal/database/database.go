@@ -218,13 +218,7 @@ func (d *DB) RegisterNode(id, hostname, ip, wireguardIP, nodeRole, publicIP, os,
 	return nil
 }
 
-func (d *DB) DeleteExpiredAdminSessions() error {
-	_, err := d.Exec("DELETE FROM admin_sessions WHERE expires_at < CURRENT_TIMESTAMP OR last_activity_at < $1", time.Now().Add(-30*time.Minute))
-	if err != nil {
-		return fmt.Errorf("delete expired admin sessions: %w", err)
-	}
-	return nil
-}
+
 
 var nodeColumns = "id, hostname, ip, COALESCE(wireguard_ip, ''), COALESCE(node_role, 'worker'), COALESCE(public_ip, ''), os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at, COALESCE(token_type, 'worker'), COALESCE(token_status, 'pending'), COALESCE(token_identifier, ''), COALESCE(token_hash, ''), token_expires_at, COALESCE(claim_id::text, ''), COALESCE(token_value_encrypted, '')"
 
@@ -1077,48 +1071,7 @@ func (d *DB) HasAnyAdminUser() (bool, error) {
 
 // --- Admin Sessions CRUD ---
 
-func (d *DB) CreateAdminSession(tokenHash, username string, expiresAt, lastActivityAt time.Time) error {
-	query := `
-		INSERT INTO admin_sessions (token_hash, username, expires_at, last_activity_at)
-		VALUES ($1, $2, $3, $4)
-	`
-	_, err := d.Exec(query, tokenHash, username, expiresAt, lastActivityAt)
-	if err != nil {
-		return fmt.Errorf("create admin session: %w", err)
-	}
-	return nil
-}
 
-func (d *DB) GetAdminSession(tokenHash string) (string, time.Time, time.Time, error) {
-	var username string
-	var expiresAt, lastActivityAt time.Time
-	query := "SELECT username, expires_at, last_activity_at FROM admin_sessions WHERE token_hash = $1"
-	err := d.QueryRow(query, tokenHash).Scan(&username, &expiresAt, &lastActivityAt)
-	if err == sql.ErrNoRows {
-		return "", time.Time{}, time.Time{}, nil
-	} else if err != nil {
-		return "", time.Time{}, time.Time{}, fmt.Errorf("get admin session: %w", err)
-	}
-	return username, expiresAt, lastActivityAt, nil
-}
-
-func (d *DB) UpdateAdminSessionActivity(tokenHash string, lastActivity time.Time) error {
-	_, err := d.Exec("UPDATE admin_sessions SET last_activity_at = $1 WHERE token_hash = $2", lastActivity, tokenHash)
-	if err != nil {
-		return fmt.Errorf("update admin session activity: %w", err)
-	}
-	return nil
-}
-
-func (d *DB) DeleteAdminSession(tokenHash string) error {
-	_, err := d.Exec("DELETE FROM admin_sessions WHERE token_hash = $1", tokenHash)
-	if err != nil {
-		return fmt.Errorf("delete admin session: %w", err)
-	}
-	return nil
-}
-
-// --- Backup Storage Config CRUD ---
 
 
 
