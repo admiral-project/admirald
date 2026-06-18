@@ -2888,16 +2888,6 @@ func (h *APIHandlers) HandleAppValidateProvisioning(w http.ResponseWriter, r *ht
 
 func (h *APIHandlers) validateRequestNodeIP(r *http.Request, nodeID string) error {
 	clientIPAddr := clientIP(r.RemoteAddr)
-	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		clientIPAddr = xRealIP
-	} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx >= 0 {
-			clientIPAddr = strings.TrimSpace(xff[:idx])
-		} else {
-			clientIPAddr = strings.TrimSpace(xff)
-		}
-	}
-	clientIPAddr = clientIP(clientIPAddr)
 
 	node, err := h.db.GetNode(nodeID)
 	if err != nil {

@@ -931,7 +931,7 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
-	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
 	h.HandleNodeHeartbeat(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -971,7 +971,7 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
-	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
 	h.HandleFleetCallback(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -1002,7 +1002,7 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 
 	// Test 1: Mismatching IP -> 403 Forbidden
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
-	req1.Header.Set("X-Real-IP", "10.99.0.3") // IP of node_002 but reporting for node_001
+	req1.RemoteAddr = "10.99.0.3:51820" // IP of node_002 but reporting for node_001
 	rec1 := httptest.NewRecorder()
 	h.HandleAdminHealthCallback(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
@@ -1011,7 +1011,7 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 
 	// Test 2: Valid IP and Node ID -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
-	req2.Header.Set("X-Real-IP", "10.99.0.2")
+	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
 	h.HandleAdminHealthCallback(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -1027,7 +1027,7 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	}
 	body2, _ := json.Marshal(report2)
 	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body2))
-	req3.Header.Set("X-Real-IP", "10.99.0.3")
+	req3.RemoteAddr = "10.99.0.3:51820"
 	rec3 := httptest.NewRecorder()
 	h.HandleAdminHealthCallback(rec3, req3)
 	if rec3.Code != http.StatusForbidden {
