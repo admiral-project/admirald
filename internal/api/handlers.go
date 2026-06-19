@@ -110,9 +110,12 @@ type knownHostNodeSpec struct {
 }
 
 func generateID(prefix string) string {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return fmt.Sprintf("%s_%x", prefix, b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%s_%08x-%04x-%04x-%04x-%012x", prefix,
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func generateSecretValue(kind string) string {
