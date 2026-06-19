@@ -213,7 +213,7 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			}
 			tokenType := req.TokenType
 			if tokenType == "" {
-				tokenType = "worker"
+				tokenType = req.NodeRole
 			}
 			if err := h.db.UpsertNodeToken(req.NodeID, identifier, hash, tokenType, "active", encryptedValue, nil, ""); err != nil {
 				h.log.Error("Failed to store node token", err, map[string]interface{}{"node_id": req.NodeID})
@@ -224,7 +224,7 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 			// Multi-node mode: server-generated token
 			tokenType := req.TokenType
 			if tokenType == "" {
-				tokenType = "worker"
+				tokenType = req.NodeRole
 			}
 			rawToken, identifier, hash, encryptedValue, claimID, expiresAt, err := generateNodeToken(h.tokenPepper, h.configTokenTTL)
 			if err != nil {
