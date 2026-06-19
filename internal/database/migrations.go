@@ -221,6 +221,46 @@ func getMigrations() []Migration {
 				return err
 			},
 		},
+		{
+			Version: 11,
+			Name:    "add_node_tokens_table",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec(`
+					CREATE TABLE IF NOT EXISTS node_tokens (
+						node_id TEXT NOT NULL,
+						token_type TEXT NOT NULL,
+						token_identifier TEXT UNIQUE NOT NULL,
+						token_hash TEXT NOT NULL,
+						token_status TEXT NOT NULL DEFAULT 'pending',
+						token_value_encrypted TEXT NOT NULL DEFAULT '',
+						token_expires_at TIMESTAMPTZ,
+						claim_id UUID,
+						created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						PRIMARY KEY (node_id, token_type)
+					)
+				`)
+				if err != nil {
+					return fmt.Errorf("create node_tokens table: %w", err)
+				}
+				_, err = db.Exec(`
+					INSERT INTO node_tokens (node_id, token_type, token_identifier, token_hash, token_status, token_value_encrypted, token_expires_at, claim_id)
+					SELECT id, COALESCE(NULLIF(token_type, ''), 'worker'), token_identifier, token_hash, token_status, token_value_encrypted, token_expires_at, claim_id
+					FROM nodes
+					WHERE token_identifier IS NOT NULL AND token_identifier != ''
+					ON CONFLICT (node_id, token_type) DO UPDATE SET
+						token_identifier = EXCLUDED.token_identifier,
+						token_hash = EXCLUDED.token_hash,
+						token_status = EXCLUDED.token_status,
+						token_value_encrypted = EXCLUDED.token_value_encrypted,
+						token_expires_at = EXCLUDED.token_expires_at,
+						claim_id = EXCLUDED.claim_id
+				`)
+				if err != nil {
+					return fmt.Errorf("migrate existing tokens to node_tokens: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

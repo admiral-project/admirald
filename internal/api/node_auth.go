@@ -38,30 +38,30 @@ func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string
 		}
 
 		identifier := nodeTokenIdentifier(reqToken, pepper)
-		node, err := db.GetNodeByTokenIdentifier(identifier)
+		node, nodeToken, err := db.GetNodeTokenByIdentifier(identifier)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Authentication error")
 			return
 		}
-		if node == nil {
+		if node == nil || nodeToken == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
 			return
 		}
-		if node.TokenStatus != "active" && node.TokenStatus != "consumed" {
+		if nodeToken.TokenStatus != "active" && nodeToken.TokenStatus != "consumed" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unauthorized: token not active"}`))
 			return
 		}
-		if expectedTokenType != "" && node.TokenType != expectedTokenType {
+		if expectedTokenType != "" && nodeToken.TokenType != expectedTokenType {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"error":"forbidden: token type mismatch"}`))
 			return
 		}
-		if err := bcrypt.CompareHashAndPassword([]byte(node.TokenHash), []byte(reqToken)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(nodeToken.TokenHash), []byte(reqToken)); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
@@ -82,7 +82,7 @@ func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string
 		}
 
 		ctx := context.WithValue(r.Context(), contextKeyNodeID, node.ID)
-		ctx = context.WithValue(ctx, contextKeyTokenType, node.TokenType)
+		ctx = context.WithValue(ctx, contextKeyTokenType, nodeToken.TokenType)
 		next(w, r.WithContext(ctx))
 	}
 }

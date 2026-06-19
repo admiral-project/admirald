@@ -180,25 +180,64 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 
 func (d *DB) UpsertNodeToken(nodeID, tokenIdentifier, tokenHash, tokenType, tokenStatus, tokenValueEncrypted string, expiresAt *time.Time, claimID string) error {
 	query := `
-		UPDATE nodes SET
-			token_type = COALESCE(NULLIF($2, ''), token_type),
-			token_status = $3,
-			token_identifier = $4,
-			token_hash = $5,
-			token_expires_at = $6,
-			claim_id = $7::uuid,
-			token_value_encrypted = $8
-		WHERE id = $1
+		INSERT INTO node_tokens (node_id, token_type, token_identifier, token_hash, token_status, token_value_encrypted, token_expires_at, claim_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid)
+		ON CONFLICT (node_id, token_type) DO UPDATE SET
+			token_identifier = EXCLUDED.token_identifier,
+			token_hash = EXCLUDED.token_hash,
+			token_status = EXCLUDED.token_status,
+			token_value_encrypted = EXCLUDED.token_value_encrypted,
+			token_expires_at = EXCLUDED.token_expires_at,
+			claim_id = EXCLUDED.claim_id
 	`
 	claimIDVal := interface{}(nil)
 	if claimID != "" {
 		claimIDVal = claimID
 	}
-	_, err := d.Exec(query, nodeID, tokenType, tokenStatus, tokenIdentifier, tokenHash, expiresAt, claimIDVal, tokenValueEncrypted)
+	_, err := d.Exec(query, nodeID, tokenType, tokenIdentifier, tokenHash, tokenStatus, tokenValueEncrypted, expiresAt, claimIDVal)
 	if err != nil {
 		return fmt.Errorf("upsert node token: %w", err)
 	}
 	return nil
+}
+
+type NodeToken struct {
+	NodeID              string     `json:"node_id"`
+	TokenType           string     `json:"token_type"`
+	TokenIdentifier     string     `json:"token_identifier"`
+	TokenHash           string     `json:"-"`
+	TokenStatus         string     `json:"token_status"`
+	TokenValueEncrypted string     `json:"-"`
+	TokenExpiresAt      *time.Time `json:"token_expires_at,omitempty"`
+	ClaimID             string     `json:"claim_id,omitempty"`
+}
+
+func (d *DB) GetNodeTokenByIdentifier(identifier string) (*Node, *NodeToken, error) {
+	query := `
+		SELECT n.id, n.hostname, n.ip, COALESCE(n.wireguard_ip, ''), COALESCE(n.node_role, 'worker'), COALESCE(n.public_ip, ''), n.os, n.podman_version,
+			COALESCE(n.fleet_version, ''), n.status, n.last_heartbeat, COALESCE(n.disk_total_bytes, 0), COALESCE(n.disk_used_bytes, 0),
+			COALESCE(n.pods_active, 0), COALESCE(n.pods_paused, 0), COALESCE(n.pods_failed, 0), COALESCE(n.storage_state, ''), COALESCE(n.storage_message, ''),
+			COALESCE(n.manual_disabled, FALSE), COALESCE(n.health_status, ''), COALESCE(n.health_reason_codes, ''), COALESCE(n.available_for_provisioning, TRUE),
+			COALESCE(n.unavailable_reason_codes, ''), COALESCE(n.ram_total_bytes, 0), COALESCE(n.ram_used_bytes, 0), COALESCE(n.ram_commit_limit_bytes, 0),
+			COALESCE(n.disk_commit_limit_bytes, 0), COALESCE(n.committed_ram_bytes, 0), COALESCE(n.committed_disk_bytes, 0), n.last_metrics_at,
+			COALESCE(n.token_type, 'worker'), COALESCE(n.token_status, 'pending'), COALESCE(n.token_identifier, ''), COALESCE(n.token_hash, ''),
+			n.token_expires_at, COALESCE(n.claim_id::text, ''), COALESCE(n.token_value_encrypted, ''),
+			t.token_type, t.token_identifier, t.token_hash, t.token_status, t.token_value_encrypted, t.token_expires_at, COALESCE(t.claim_id::text, '')
+		FROM nodes n
+		JOIN node_tokens t ON n.id = t.node_id
+		WHERE t.token_identifier = $1
+	`
+	var n Node
+	var tk NodeToken
+	row := d.QueryRow(query, identifier)
+	err := scanNodeWithToken(row, &n, &tk)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("query node token by identifier: %w", err)
+	}
+	return &n, &tk, nil
 }
 
 func (d *DB) GetNodeByTokenIdentifier(identifier string) (*Node, error) {
@@ -235,7 +274,7 @@ func (d *DB) RemoveNode(id string, force bool) error {
 	if err != nil {
 		return fmt.Errorf("remove node %q: delete public_routes: %w", id, err)
 	}
-	_, err = tx.Exec("DELETE FROM backups WHERE node_id = $1", id)
+	_, err = tx.Exec("DELETE FROM node_tokens WHERE node_id = $1", id)
 	if err != nil {
 		return fmt.Errorf("remove node %q: delete backups: %w", id, err)
 	}
@@ -278,7 +317,7 @@ func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
 
 func (d *DB) ReapExpiredNodeTokens() (int64, error) {
 	res, err := d.Exec(`
-		DELETE FROM nodes
+		DELETE FROM node_tokens
 		WHERE token_status = 'available'
 		  AND token_expires_at < NOW()
 	`)
