@@ -353,6 +353,31 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 4 {
+		if r.Method == http.MethodDelete {
+			force := r.URL.Query().Get("force") == "true"
+			if err := h.db.RemoveNode(nodeID, force); err != nil {
+				if strings.Contains(err.Error(), "has active instance") {
+					writeError(w, http.StatusConflict, err.Error())
+				} else if strings.Contains(err.Error(), "node not found") {
+					writeError(w, http.StatusNotFound, "Node not found")
+				} else {
+					h.log.Error("Remove node failed", err, map[string]interface{}{"node_id": nodeID})
+					writeError(w, http.StatusInternalServerError, "Failed to remove node")
+				}
+				return
+			}
+			if err := h.syncKnownHostInventory(); err != nil {
+				h.log.Error("Sync know_host inventory failed after remove", err, map[string]interface{}{"node_id": nodeID})
+			}
+			h.auditEvent("node_removed", map[string]interface{}{
+				"node_id":    nodeID,
+				"force":      force,
+				"actor_type": "operator",
+				"actor_id":   operatorFromRequest(r),
+			})
+			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+			return
+		}
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return

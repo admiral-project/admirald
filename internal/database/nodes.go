@@ -213,6 +213,47 @@ func (d *DB) GetNodeByTokenIdentifier(identifier string) (*Node, error) {
 	return &n, nil
 }
 
+func (d *DB) RemoveNode(id string, force bool) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("remove node %q: begin tx: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	if !force {
+		var count int
+		err := tx.QueryRow("SELECT COUNT(*) FROM customer_apps WHERE node_id = $1", id).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("remove node %q: check instances: %w", id, err)
+		}
+		if count > 0 {
+			return fmt.Errorf("remove node %q: node has %d active instance(s); use --force to override", id, count)
+		}
+	}
+
+	_, err = tx.Exec("DELETE FROM public_routes WHERE node_id = $1", id)
+	if err != nil {
+		return fmt.Errorf("remove node %q: delete public_routes: %w", id, err)
+	}
+	_, err = tx.Exec("DELETE FROM backups WHERE node_id = $1", id)
+	if err != nil {
+		return fmt.Errorf("remove node %q: delete backups: %w", id, err)
+	}
+	_, err = tx.Exec("DELETE FROM customer_apps WHERE node_id = $1", id)
+	if err != nil {
+		return fmt.Errorf("remove node %q: delete customer_apps: %w", id, err)
+	}
+	result, err := tx.Exec("DELETE FROM nodes WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("remove node %q: delete node: %w", id, err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("remove node %q: node not found", id)
+	}
+	return tx.Commit()
+}
+
 func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
 	rows, err := d.Query(`
 		DELETE FROM nodes
