@@ -110,7 +110,7 @@ type knownHostNodeSpec struct {
 }
 
 func generateID(prefix string) string {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s_%x", prefix, b)
 }

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,9 +43,13 @@ func parsePagination(r *http.Request) (int, int) {
 }
 
 func clientIP(remoteAddr string) string {
-	ip := remoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx >= 0 {
-		ip = ip[:idx]
+	if !strings.Contains(remoteAddr, ":") {
+		return remoteAddr
 	}
-	return ip
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		// Fallback for malformed addresses
+		return remoteAddr
+	}
+	return host
 }
