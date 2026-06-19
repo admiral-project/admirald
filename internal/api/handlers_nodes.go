@@ -152,7 +152,7 @@ func generateNodeToken(pepper string, ttlMinutes int) (rawToken, identifier, has
 	if err != nil {
 		return
 	}
-	claimID = generateID("claim")
+	claimID = generateUUID()
 	expiresAt = time.Now().UTC().Add(time.Duration(ttlMinutes) * time.Minute)
 	return
 }
