@@ -222,7 +222,7 @@ func (d *DB) RemoveNode(id string, force bool) error {
 
 	if !force {
 		var count int
-		err := tx.QueryRow("SELECT COUNT(*) FROM customer_apps WHERE node_id = $1", id).Scan(&count)
+		err := tx.QueryRow("SELECT COUNT(*) FROM customer_apps WHERE node_id = $1 AND commercial_status != 'cancelled'", id).Scan(&count)
 		if err != nil {
 			return fmt.Errorf("remove node %q: check instances: %w", id, err)
 		}
