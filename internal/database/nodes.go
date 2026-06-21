@@ -122,6 +122,7 @@ func (d *DB) MarkNodesOffline(timeout time.Duration) ([]string, error) {
 			unavailable_reason_codes = 'heartbeat_timeout'
 		WHERE status NOT IN ('offline', 'disabled')
 		  AND last_heartbeat < CURRENT_TIMESTAMP - $1::interval
+		  AND COALESCE(node_role, 'worker') = 'worker'
 		RETURNING id
 	`, fmt.Sprintf("%d microseconds", timeout.Microseconds()))
 	if err != nil {
@@ -174,6 +175,40 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 		req.PodsActive, req.PodsPaused, req.PodsFailed)
 	if err != nil {
 		return fmt.Errorf("update node heartbeat: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) GetPortalNodes() ([]Node, error) {
+	query := "SELECT " + nodeColumns + " FROM nodes WHERE node_role = 'portal' ORDER BY created_at ASC"
+	rows, err := d.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("query portal nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		if err := scanNode(rows, &n); err != nil {
+			return nil, fmt.Errorf("scan portal node row: %w", err)
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
+func (d *DB) UpdatePortalHeartbeat(id, ip string) error {
+	_, err := d.Exec(`
+		UPDATE nodes SET
+			last_heartbeat = CURRENT_TIMESTAMP,
+			last_metrics_at = CURRENT_TIMESTAMP,
+			status = 'active',
+			ip = COALESCE(NULLIF($2, ''), ip)
+		WHERE id = $1
+	`, id, ip)
+	if err != nil {
+		return fmt.Errorf("update portal heartbeat: %w", err)
 	}
 	return nil
 }

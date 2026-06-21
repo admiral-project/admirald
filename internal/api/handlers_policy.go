@@ -75,6 +75,10 @@ func (h *APIHandlers) recomputeNodePolicy(nodeID string) error {
 		return fmt.Errorf("node %q not found for policy recompute", nodeID)
 	}
 
+	if node.NodeRole == "portal" {
+		return h.recomputePortalNodePolicy(node)
+	}
+
 	ramCommitLimit := database.CalculateRAMCommitLimit(node.RAMTotal)
 	diskCommitLimit := database.CalculateDiskCommitLimit(node.DiskTotal)
 	if err := h.db.UpdateNodeCommitLimits(nodeID, ramCommitLimit, diskCommitLimit); err != nil {
@@ -364,5 +368,56 @@ func (h *APIHandlers) recordBlockedWorkloadAttempt(w http.ResponseWriter, r *htt
 		RequestedNodeID: requestedNodeID,
 		NodeEvaluations: evaluations,
 	})
+	return nil
+}
+
+func (h *APIHandlers) recomputePortalNodePolicy(node *database.Node) error {
+	healthReasons := []string{}
+	availabilityReasons := []string{}
+
+	if node.Status != "active" {
+		healthReasons = appendUniqueReason(healthReasons, "portal_offline")
+		availabilityReasons = appendUniqueReason(availabilityReasons, "portal_offline")
+	}
+	if node.ManualDisabled {
+		healthReasons = appendUniqueReason(healthReasons, "manual_disabled")
+		availabilityReasons = appendUniqueReason(availabilityReasons, "manual_disabled")
+	}
+	if node.HealthStatus == "unhealthy" {
+		healthReasons = appendUniqueReason(healthReasons, node.HealthReasonCodes)
+		availabilityReasons = appendUniqueReason(availabilityReasons, node.HealthReasonCodes)
+	}
+
+	healthStatus := "healthy"
+	if len(healthReasons) > 0 {
+		healthStatus = "unhealthy"
+	}
+	available := len(availabilityReasons) == 0
+
+	if err := h.db.UpdateNodeHealth(node.ID, healthStatus, joinReasons(healthReasons), available, joinReasons(availabilityReasons)); err != nil {
+		return fmt.Errorf("update portal node %q health: %w", node.ID, err)
+	}
+	newHealthReasons := joinReasons(healthReasons)
+	newAvailabilityReasons := joinReasons(availabilityReasons)
+	if node.HealthStatus != healthStatus || node.HealthReasonCodes != newHealthReasons {
+		h.auditEvent("node_health_changed", map[string]interface{}{
+			"node_id":        node.ID,
+			"actor_type":     "system",
+			"actor_id":       "admirald",
+			"previous_value": node.HealthStatus,
+			"new_value":      healthStatus,
+			"reason_codes":   newHealthReasons,
+		})
+	}
+	if node.AvailableForProvisioning != available || node.UnavailableReasonCodes != newAvailabilityReasons {
+		h.auditEvent("node_provisioning_availability_changed", map[string]interface{}{
+			"node_id":        node.ID,
+			"actor_type":     "system",
+			"actor_id":       "admirald",
+			"previous_value": node.AvailableForProvisioning,
+			"new_value":      available,
+			"reason_codes":   newAvailabilityReasons,
+		})
+	}
 	return nil
 }
