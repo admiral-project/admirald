@@ -287,7 +287,7 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 			healthURL := fmt.Sprintf("https://%s:5001/health", addr)
 			resp, err := client.Get(healthURL)
 			if err != nil {
-				s.log.Debug("Portal node health check attempt failed", map[string]interface{}{"node_id": portal.ID, "addr": addr, "error": err.Error()})
+				s.log.Info("Portal node health check attempt failed", map[string]interface{}{"node_id": portal.ID, "addr": addr, "error": err.Error()})
 				continue
 			}
 			resp.Body.Close()
@@ -302,7 +302,7 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 				}
 				break
 			}
-			s.log.Debug("Portal node health check returned non-OK", map[string]interface{}{"node_id": portal.ID, "addr": addr, "status_code": resp.StatusCode})
+			s.log.Info("Portal node health check returned non-OK", map[string]interface{}{"node_id": portal.ID, "addr": addr, "status_code": resp.StatusCode})
 		}
 		if !ok {
 			s.log.Warn("Portal node health check failed on all addresses", map[string]interface{}{"node_id": portal.ID})
