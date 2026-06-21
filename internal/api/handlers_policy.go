@@ -382,9 +382,6 @@ func (h *APIHandlers) recomputePortalNodePolicy(node *database.Node) error {
 		healthReasons = appendUniqueReason(healthReasons, "manual_disabled")
 		availabilityReasons = appendUniqueReason(availabilityReasons, "manual_disabled")
 	}
-	if node.HealthStatus == "unhealthy" {
-		healthReasons = appendUniqueReason(healthReasons, node.HealthReasonCodes)
-	}
 
 	healthStatus := "healthy"
 	if len(healthReasons) > 0 {
