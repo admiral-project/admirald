@@ -377,7 +377,6 @@ func (h *APIHandlers) recomputePortalNodePolicy(node *database.Node) error {
 
 	if node.Status != "active" {
 		healthReasons = appendUniqueReason(healthReasons, "portal_offline")
-		availabilityReasons = appendUniqueReason(availabilityReasons, "portal_offline")
 	}
 	if node.ManualDisabled {
 		healthReasons = appendUniqueReason(healthReasons, "manual_disabled")
@@ -385,7 +384,6 @@ func (h *APIHandlers) recomputePortalNodePolicy(node *database.Node) error {
 	}
 	if node.HealthStatus == "unhealthy" {
 		healthReasons = appendUniqueReason(healthReasons, node.HealthReasonCodes)
-		availabilityReasons = appendUniqueReason(availabilityReasons, node.HealthReasonCodes)
 	}
 
 	healthStatus := "healthy"

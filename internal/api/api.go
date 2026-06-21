@@ -278,37 +278,35 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 		if portal.Status == "disabled" {
 			continue
 		}
-		addr := portal.WireguardIP
-		if addr == "" {
-			addr = portal.PublicIP
-		}
-		if addr == "" {
-			addr = portal.IP
-		}
-		if addr == "" {
-			continue
-		}
-		healthURL := fmt.Sprintf("https://%s:5001/health", addr)
-		resp, err := client.Get(healthURL)
-		if err != nil {
-			s.log.Warn("Portal node health check failed", map[string]interface{}{"node_id": portal.ID, "error": err.Error()})
-			if err := s.handlers.db.UpdateNodeHealth(portal.ID, "unhealthy", "service_unreachable", false, "service_unreachable"); err != nil {
-				s.log.Error("Failed to update portal node health", err, map[string]interface{}{"node_id": portal.ID})
+		candidates := []string{portal.PublicIP, portal.IP, portal.WireguardIP}
+		var ok bool
+		for _, addr := range candidates {
+			if addr == "" {
+				continue
 			}
-			continue
-		}
-		resp.Body.Close()
+			healthURL := fmt.Sprintf("https://%s:5001/health", addr)
+			resp, err := client.Get(healthURL)
+			if err != nil {
+				s.log.Debug("Portal node health check attempt failed", map[string]interface{}{"node_id": portal.ID, "addr": addr, "error": err.Error()})
+				continue
+			}
+			resp.Body.Close()
 
-		if resp.StatusCode == http.StatusOK {
-			if err := s.handlers.db.UpdatePortalHeartbeat(portal.ID, addr); err != nil {
-				s.log.Error("Failed to update portal heartbeat", err, map[string]interface{}{"node_id": portal.ID})
+			if resp.StatusCode == http.StatusOK {
+				ok = true
+				if err := s.handlers.db.UpdatePortalHeartbeat(portal.ID, addr); err != nil {
+					s.log.Error("Failed to update portal heartbeat", err, map[string]interface{}{"node_id": portal.ID})
+				}
+				if err := s.handlers.recomputeNodePolicy(portal.ID); err != nil {
+					s.log.Error("Failed to recompute portal node policy", err, map[string]interface{}{"node_id": portal.ID})
+				}
+				break
 			}
-			if err := s.handlers.recomputeNodePolicy(portal.ID); err != nil {
-				s.log.Error("Failed to recompute portal node policy", err, map[string]interface{}{"node_id": portal.ID})
-			}
-		} else {
-			s.log.Warn("Portal node health check returned non-OK", map[string]interface{}{"node_id": portal.ID, "status_code": resp.StatusCode})
-			if err := s.handlers.db.UpdateNodeHealth(portal.ID, "unhealthy", "service_unexpected_status", false, "service_unexpected_status"); err != nil {
+			s.log.Debug("Portal node health check returned non-OK", map[string]interface{}{"node_id": portal.ID, "addr": addr, "status_code": resp.StatusCode})
+		}
+		if !ok {
+			s.log.Warn("Portal node health check failed on all addresses", map[string]interface{}{"node_id": portal.ID})
+			if err := s.handlers.db.UpdateNodeHealth(portal.ID, "unhealthy", "service_unreachable", false, "service_unreachable"); err != nil {
 				s.log.Error("Failed to update portal node health", err, map[string]interface{}{"node_id": portal.ID})
 			}
 		}
