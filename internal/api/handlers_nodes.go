@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -352,6 +353,15 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) >= 5 && parts[4] == "ready" {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		h.handleNodeReady(w, nodeID)
+		return
+	}
+
 	if len(parts) == 4 {
 		if r.Method == http.MethodDelete {
 			force := r.URL.Query().Get("force") == "true"
@@ -452,6 +462,77 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"node":    updatedNode,
+	})
+}
+
+func (h *APIHandlers) handleNodeReady(w http.ResponseWriter, nodeID string) {
+	node, err := h.db.GetNode(nodeID)
+	if err != nil {
+		h.log.Error("Get node failed for ready check", err, map[string]interface{}{"node_id": nodeID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if node == nil {
+		writeError(w, http.StatusNotFound, "Node not found")
+		return
+	}
+
+	addr := node.PublicIP
+	if addr == "" {
+		addr = node.IP
+	}
+	if addr == "" {
+		addr = node.WireguardIP
+	}
+	if addr == "" {
+		writeError(w, http.StatusBadRequest, "Node has no reachable address")
+		return
+	}
+
+	var readyURL string
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	switch node.NodeRole {
+	case "worker":
+		readyURL = fmt.Sprintf("http://%s:9099/ready", addr)
+	case "portal":
+		readyURL = fmt.Sprintf("https://%s:5001/ready", addr)
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported node role: %s", node.NodeRole))
+		return
+	}
+
+	resp, err := client.Get(readyURL)
+	if err != nil {
+		h.log.Warn("Node ready check failed", map[string]interface{}{"node_id": nodeID, "url": readyURL, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"node_id": nodeID,
+			"role":    node.NodeRole,
+			"status":  "unreachable",
+			"error":   err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	var result json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeJSON(w, resp.StatusCode, map[string]interface{}{
+			"node_id": nodeID,
+			"role":    node.NodeRole,
+			"status":  "error",
+			"error":   "invalid response from node",
+		})
+		return
+	}
+
+	writeJSON(w, resp.StatusCode, map[string]interface{}{
+		"node_id": nodeID,
+		"role":    node.NodeRole,
+		"detail":  result,
 	})
 }
 
