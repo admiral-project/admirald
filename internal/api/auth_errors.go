@@ -5,6 +5,8 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
@@ -39,4 +41,40 @@ func logAuthFailure(log *logging.Logger, level, authKind, reason string, status 
 	default:
 		log.Info("authentication failed", fields)
 	}
+}
+
+func (s *Server) authFailureKey(r *http.Request, authKind string) string {
+	return authKind + ":" + clientIP(r.RemoteAddr)
+}
+
+func (s *Server) blockAuthAttempt(w http.ResponseWriter, r *http.Request, authKind string) bool {
+	if s == nil || s.adminLimiter == nil {
+		return false
+	}
+	blocked, retryAfter := s.adminLimiter.IsBlocked(s.authFailureKey(r, authKind), authFailureLimit, authFailureWindow)
+	if !blocked {
+		return false
+	}
+	seconds := int(retryAfter / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	logAuthFailure(s.log, "WARN", authKind, "ip_temporarily_blocked", http.StatusTooManyRequests, r, nil)
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication failures"})
+	return true
+}
+
+func (s *Server) recordAuthFailure(r *http.Request, authKind string) {
+	if s == nil || s.adminLimiter == nil {
+		return
+	}
+	s.adminLimiter.Allow(s.authFailureKey(r, authKind), authFailureLimit, authFailureWindow)
+}
+
+func (s *Server) resetAuthFailures(r *http.Request, authKind string) {
+	if s == nil || s.adminLimiter == nil {
+		return
+	}
+	s.adminLimiter.Reset(s.authFailureKey(r, authKind))
 }

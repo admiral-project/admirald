@@ -28,6 +28,7 @@ type APIHandlers struct {
 	publisher         TaskPublisher
 	secrets           *secrets.Manager
 	networking        *networking.Manager
+	server            *Server
 	hmacKey           string
 	tokenPepper       string
 	configTokenTTL    int

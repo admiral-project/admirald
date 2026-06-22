@@ -28,6 +28,11 @@ type Server struct {
 	adminLimiter *RateLimiter
 }
 
+const (
+	authFailureLimit  = 10
+	authFailureWindow = 5 * time.Minute
+)
+
 func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
@@ -43,14 +48,17 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		sessionHMACKey = hex.EncodeToString(key[:])
 		log.Info("Using volatile ephemeral session HMAC key. Admin sessions will not survive a restart.", nil)
 	}
-	return &Server{
-		handlers:     NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL, taskEncryptionKey),
+	handlers := NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL, taskEncryptionKey)
+	server := &Server{
+		handlers:     handlers,
 		log:          log,
 		adminToken:   adminToken,
 		tokenPepper:  tokenPepper,
 		fleetLimiter: NewRateLimiter(),
 		adminLimiter: NewRateLimiter(),
 	}
+	handlers.server = server
+	return server
 }
 
 func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile string) error {
@@ -93,13 +101,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 
 	// Administrative endpoints (admin session)
 	mux.HandleFunc("/api/admin/auth/login", MaxBody(jsonLimit, s.handlers.HandleAdminLogin))
-	// logout is intentionally unauthenticated. Adding AdminAuthMiddleware would require
-	// a valid session token to log out, but the handler already derives the token hash
-	// from the request header and silently ignores invalid/missing tokens. An attacker
-	// who can guess a valid 128-bit session token could invalidate it via this endpoint,
-	// but the same token would give them full access anyway. The marginal denial-of-session
-	// risk is accepted. See admirald#7 (wontfix).
-	mux.HandleFunc("/api/admin/auth/logout", MaxBody(jsonLimit, s.handlers.HandleAdminLogout))
+	mux.HandleFunc("/api/admin/auth/logout", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminLogout)))
 	mux.HandleFunc("/api/admin/auth/me", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminMe)))
 	mux.HandleFunc("/api/admin/auth/change-password", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminChangePassword)))
 	mux.HandleFunc("/api/admin/apps", s.AdminAuthMiddleware(MaxBody(yamlLimit, s.handlers.HandleAdminApps)))

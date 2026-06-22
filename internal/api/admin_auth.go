@@ -24,6 +24,10 @@ func (h *APIHandlers) hashToken(input string) string {
 
 func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.blockAuthAttempt(w, r, "admin_session") {
+			return
+		}
+
 		token := r.Header.Get("X-Admiral-Admin-Token")
 		if token == "" {
 			authHeader := r.Header.Get("Authorization")
@@ -33,6 +37,7 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if token == "" {
+			s.recordAuthFailure(r, "admin_session")
 			logAuthFailure(s.log, "WARN", "admin_session", "missing_token", http.StatusUnauthorized, r, nil)
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
@@ -41,12 +46,14 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		tokenHash := s.handlers.hashToken(token)
 		username, expiresAt, lastActivity, err := s.handlers.db.GetAdminSession(tokenHash)
 		if err != nil {
+			s.recordAuthFailure(r, "admin_session")
 			logAuthFailure(s.log, "ERROR", "admin_session", "auth_db_error", http.StatusUnauthorized, r, err)
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
 		if username == "" {
+			s.recordAuthFailure(r, "admin_session")
 			logAuthFailure(s.log, "WARN", "admin_session", "invalid_token", http.StatusUnauthorized, r, nil)
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
@@ -56,6 +63,7 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Check global expiration
 		if now.After(expiresAt) {
 			_ = s.handlers.db.DeleteAdminSession(tokenHash)
+			s.recordAuthFailure(r, "admin_session")
 			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
@@ -64,6 +72,7 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Check inactivity (max 30 minutes)
 		if now.Sub(lastActivity) > 30*time.Minute {
 			_ = s.handlers.db.DeleteAdminSession(tokenHash)
+			s.recordAuthFailure(r, "admin_session")
 			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
@@ -71,6 +80,7 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		// Update activity
 		_ = s.handlers.db.UpdateAdminSessionActivity(tokenHash, now)
+		s.resetAuthFailures(r, "admin_session")
 
 		// Pass username in headers for downstream
 		r.Header.Set("X-Admiral-Admin-User", username)
@@ -92,6 +102,9 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r.RemoteAddr)
+	if h.server != nil && h.server.blockAuthAttempt(w, r, "admin_login") {
+		return
+	}
 	if !h.loginLimiter.Allow("login:"+ip, 5, 1*time.Minute) {
 		h.log.Warn("Login rate limit exceeded", map[string]interface{}{"ip": ip})
 		writeError(w, http.StatusTooManyRequests, "Too many login attempts. Try again later.")
@@ -100,11 +113,17 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	storedHash, mustChange, err := h.db.GetAdminUser(req.Username)
 	if err != nil {
+		if h.server != nil {
+			h.server.recordAuthFailure(r, "admin_login")
+		}
 		h.log.Error("Failed to fetch admin user", err, map[string]interface{}{"username": req.Username})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if storedHash == "" {
+		if h.server != nil {
+			h.server.recordAuthFailure(r, "admin_login")
+		}
 		h.log.Warn("authentication failed", map[string]interface{}{
 			"auth_kind": "admin_login",
 			"reason":    "invalid_credentials",
@@ -120,11 +139,17 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := security.VerifyPassword(req.Password, storedHash)
 	if err != nil {
+		if h.server != nil {
+			h.server.recordAuthFailure(r, "admin_login")
+		}
 		h.log.Error("Failed to verify admin password hash", err, map[string]interface{}{"username": req.Username})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if !ok {
+		if h.server != nil {
+			h.server.recordAuthFailure(r, "admin_login")
+		}
 		h.log.Warn("authentication failed", map[string]interface{}{
 			"auth_kind": "admin_login",
 			"reason":    "invalid_credentials",
@@ -149,6 +174,9 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("Failed to create admin session", err, map[string]interface{}{"username": req.Username})
 		writeError(w, http.StatusInternalServerError, "Failed to create session")
 		return
+	}
+	if h.server != nil {
+		h.server.resetAuthFailures(r, "admin_login")
 	}
 
 	writeJSON(w, http.StatusOK, admiral.AdminLoginResponse{

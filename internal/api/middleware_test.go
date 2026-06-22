@@ -92,3 +92,70 @@ func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
 		t.Fatalf("expected generic unauthorized body, got %q", rr.Body.String())
 	}
 }
+
+func TestAdminAuthMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
+	token := "secret-token"
+	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for i := 0; i < authFailureLimit; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+		req.RemoteAddr = "198.51.100.10:1234"
+		req.Header.Set("X-Admiral-Token", "wrong-token")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d: expected 401, got %d body=%s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "198.51.100.10:1234"
+	req.Header.Set("X-Admiral-Token", "wrong-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after repeated failures, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("expected Retry-After header for temporary block")
+	}
+}
+
+func TestAdminAuthMiddlewareResetsFailureCounterAfterSuccess(t *testing.T) {
+	token := "secret-token"
+	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for i := 0; i < authFailureLimit-1; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+		req.RemoteAddr = "198.51.100.11:1234"
+		req.Header.Set("X-Admiral-Token", "wrong-token")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d: expected 401, got %d body=%s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+
+	successReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	successReq.RemoteAddr = "198.51.100.11:1234"
+	successReq.Header.Set("X-Admiral-Token", token)
+	successRec := httptest.NewRecorder()
+	handler.ServeHTTP(successRec, successReq)
+	if successRec.Code != http.StatusOK {
+		t.Fatalf("expected success to reset failures, got %d body=%s", successRec.Code, successRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "198.51.100.11:1234"
+	req.Header.Set("X-Admiral-Token", "wrong-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected counter reset after success, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}

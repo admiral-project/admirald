@@ -207,6 +207,38 @@ func TestHandleAdminLogoutRequiresToken(t *testing.T) {
 	}
 }
 
+func TestAdminSessionMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
+	h := newAdminLoginTestHandler(t)
+	server := &Server{
+		handlers:     h,
+		log:          logging.New("test"),
+		adminLimiter: NewRateLimiter(),
+	}
+	h.server = server
+
+	handler := server.AdminAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for i := 0; i < authFailureLimit; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/auth/me", nil)
+		req.RemoteAddr = "198.51.100.20:1234"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d: expected 401, got %d body=%s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/auth/me", nil)
+	req.RemoteAddr = "198.51.100.20:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after repeated failures, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestHandleAdminUsersCreateAndList(t *testing.T) {
 	h := newTestHandler(t, false)
 
