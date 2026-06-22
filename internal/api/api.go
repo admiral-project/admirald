@@ -118,14 +118,14 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/admin/users", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminUsers)))
 	mux.HandleFunc("/api/admin/users/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminUsers)))
 
-	// Unauthenticated health and status endpoints
+	// Admin-authenticated health and status endpoints
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
 	}
-	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/api/v1/health", healthHandler)
+	mux.HandleFunc("/health", s.AdminAuthMiddleware(healthHandler))
+	mux.HandleFunc("/api/v1/health", s.AdminAuthMiddleware(healthHandler))
 
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{

@@ -171,10 +171,13 @@ func (h *APIHandlers) HandleAdminLogout(w http.ResponseWriter, r *http.Request) 
 		token = strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
-	if token != "" {
-		tokenHash := h.hashToken(token)
-		_ = h.db.DeleteAdminSession(tokenHash)
+	if token == "" {
+		writeGenericAuthError(w, http.StatusUnauthorized)
+		return
 	}
+
+	tokenHash := h.hashToken(token)
+	_ = h.db.DeleteAdminSession(tokenHash)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

@@ -191,6 +191,22 @@ func TestHandleAdminChangePasswordUsesAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestHandleAdminLogoutRequiresToken(t *testing.T) {
+	h := newAdminLoginTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/auth/logout", nil)
+	rec := httptest.NewRecorder()
+
+	h.HandleAdminLogout(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "{\"error\":\"unauthorized\"}\n" {
+		t.Fatalf("expected generic unauthorized body, got %q", got)
+	}
+}
+
 func TestHandleAdminUsersCreateAndList(t *testing.T) {
 	h := newTestHandler(t, false)
 

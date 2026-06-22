@@ -73,3 +73,22 @@ func TestAdminAuthMiddleware(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
+	token := "secret-token"
+	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+	if rr.Body.String() != "{\"error\":\"unauthorized\"}\n" {
+		t.Fatalf("expected generic unauthorized body, got %q", rr.Body.String())
+	}
+}
