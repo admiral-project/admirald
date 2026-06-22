@@ -9,9 +9,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
 
-func AdminAuthMiddleware(adminToken string, next http.HandlerFunc) http.HandlerFunc {
+func AdminAuthMiddleware(log *logging.Logger, adminToken string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("X-Admiral-Token")
 		if reqToken == "" {
@@ -21,10 +23,14 @@ func AdminAuthMiddleware(adminToken string, next http.HandlerFunc) http.HandlerF
 			}
 		}
 
+		if reqToken == "" {
+			logAuthFailure(log, "WARN", "admin_token", "missing_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
 		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(adminToken)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid admin token"}`))
+			logAuthFailure(log, "WARN", "admin_token", "invalid_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
+	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -21,7 +22,7 @@ const (
 	contextKeyTokenType contextKey = "token_type"
 )
 
-func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string, next http.HandlerFunc) http.HandlerFunc {
+func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, expectedTokenType string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqToken := r.Header.Get("X-Admiral-Token")
 		if reqToken == "" {
@@ -31,40 +32,36 @@ func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string
 			}
 		}
 		if reqToken == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: missing token"}`))
+			logAuthFailure(log, "WARN", "node_token", "missing_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
 		identifier := nodeTokenIdentifier(reqToken, pepper)
 		node, nodeToken, err := db.GetNodeTokenByIdentifier(identifier)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Authentication error")
+			logAuthFailure(log, "ERROR", "node_token", "auth_db_error", http.StatusUnauthorized, r, err)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 		if node == nil || nodeToken == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
+			logAuthFailure(log, "WARN", "node_token", "invalid_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 		if nodeToken.TokenStatus != "active" && nodeToken.TokenStatus != "consumed" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: token not active"}`))
+			logAuthFailure(log, "WARN", "node_token", "inactive_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 		if expectedTokenType != "" && nodeToken.TokenType != expectedTokenType {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error":"forbidden: token type mismatch"}`))
+			logAuthFailure(log, "WARN", "node_token", "token_type_mismatch", http.StatusForbidden, r, nil)
+			writeGenericAuthError(w, http.StatusForbidden)
 			return
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(nodeToken.TokenHash), []byte(reqToken)); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
+			logAuthFailure(log, "WARN", "node_token", "invalid_token", http.StatusUnauthorized, r, err)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
@@ -74,9 +71,8 @@ func NodeAuthMiddleware(db *database.DB, pepper string, expectedTokenType string
 		if node.WireguardIP != "" {
 			clientIPAddr := clientIP(r.RemoteAddr)
 			if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"error":"forbidden: request IP does not match registered node WireGuard IP"}`))
+				logAuthFailure(log, "WARN", "node_token", "wireguard_ip_mismatch", http.StatusForbidden, r, nil)
+				writeGenericAuthError(w, http.StatusForbidden)
 				return
 			}
 		}

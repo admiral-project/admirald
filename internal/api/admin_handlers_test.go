@@ -126,6 +126,9 @@ func TestHandleAdminLoginRejectsInvalidPassword(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
 	}
+	if got := rec.Body.String(); got != "{\"error\":\"Invalid credentials\"}\n" {
+		t.Fatalf("expected generic invalid credentials body, got %q", got)
+	}
 }
 
 func TestHandleAdminChangePasswordRequiresAuthenticatedHeader(t *testing.T) {
@@ -147,6 +150,9 @@ func TestHandleAdminChangePasswordRequiresAuthenticatedHeader(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "{\"error\":\"unauthorized\"}\n" {
+		t.Fatalf("expected generic unauthorized body, got %q", got)
 	}
 }
 
@@ -910,7 +916,7 @@ func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 }
 
 func nodeAuthWrapped(h *APIHandlers, token string, next http.HandlerFunc) http.HandlerFunc {
-	return NodeAuthMiddleware(h.db, "test-pepper", "worker", next)
+	return NodeAuthMiddleware(logging.New("test"), h.db, "test-pepper", "worker", next)
 }
 
 func setupNodeWithToken(t *testing.T, h *APIHandlers, nodeID, hostname, ip, wgIP, nodeRole, os, podmanV, token string) {
@@ -948,6 +954,9 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 	wrapped(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden on mismatching IP, got %d", rec1.Code)
+	}
+	if got := rec1.Body.String(); got != "{\"error\":\"forbidden\"}\n" {
+		t.Fatalf("expected generic forbidden body, got %q", got)
 	}
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
@@ -992,6 +1001,9 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
 	}
+	if got := rec1.Body.String(); got != "{\"error\":\"forbidden\"}\n" {
+		t.Fatalf("expected generic forbidden body, got %q", got)
+	}
 
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
@@ -1034,6 +1046,9 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	wrapped1(rec1, req1)
 	if rec1.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden, got %d", rec1.Code)
+	}
+	if got := rec1.Body.String(); got != "{\"error\":\"forbidden\"}\n" {
+		t.Fatalf("expected generic forbidden body, got %q", got)
 	}
 
 	// Test 2: Valid IP and Node ID -> 200 OK

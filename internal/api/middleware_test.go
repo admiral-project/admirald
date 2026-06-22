@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
 
 func TestAdminAuthMiddleware(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -64,6 +66,9 @@ func TestAdminAuthMiddleware(t *testing.T) {
 
 			if rr.Code != tt.wantStatus {
 				t.Errorf("expected status %d, got %d", tt.wantStatus, rr.Code)
+			}
+			if rr.Code == http.StatusUnauthorized && rr.Body.String() != "{\"error\":\"unauthorized\"}\n" {
+				t.Fatalf("expected generic unauthorized body, got %q", rr.Body.String())
 			}
 		})
 	}

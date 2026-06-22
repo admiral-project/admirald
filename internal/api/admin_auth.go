@@ -33,20 +33,22 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if token == "" {
-			writeError(w, http.StatusUnauthorized, "Admin token required")
+			logAuthFailure(s.log, "WARN", "admin_session", "missing_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
 		tokenHash := s.handlers.hashToken(token)
 		username, expiresAt, lastActivity, err := s.handlers.db.GetAdminSession(tokenHash)
 		if err != nil {
-			s.log.Error("Database error during admin auth check", err, nil)
-			writeError(w, http.StatusInternalServerError, "Auth database error")
+			logAuthFailure(s.log, "ERROR", "admin_session", "auth_db_error", http.StatusUnauthorized, r, err)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
 		if username == "" {
-			writeError(w, http.StatusUnauthorized, "Invalid administrative session")
+			logAuthFailure(s.log, "WARN", "admin_session", "invalid_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
@@ -54,14 +56,16 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Check global expiration
 		if now.After(expiresAt) {
 			_ = s.handlers.db.DeleteAdminSession(tokenHash)
-			writeError(w, http.StatusUnauthorized, "Administrative session expired")
+			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
 		// Check inactivity (max 30 minutes)
 		if now.Sub(lastActivity) > 30*time.Minute {
 			_ = s.handlers.db.DeleteAdminSession(tokenHash)
-			writeError(w, http.StatusUnauthorized, "Administrative session expired due to inactivity")
+			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
 
@@ -97,10 +101,19 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	storedHash, mustChange, err := h.db.GetAdminUser(req.Username)
 	if err != nil {
 		h.log.Error("Failed to fetch admin user", err, map[string]interface{}{"username": req.Username})
-		writeError(w, http.StatusInternalServerError, "Database error")
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if storedHash == "" {
+		h.log.Warn("authentication failed", map[string]interface{}{
+			"auth_kind": "admin_login",
+			"reason":    "invalid_credentials",
+			"username":  req.Username,
+			"status":    http.StatusUnauthorized,
+			"path":      r.URL.Path,
+			"method":    r.Method,
+			"remote_ip": clientIP(r.RemoteAddr),
+		})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -108,10 +121,19 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	ok, err := security.VerifyPassword(req.Password, storedHash)
 	if err != nil {
 		h.log.Error("Failed to verify admin password hash", err, map[string]interface{}{"username": req.Username})
-		writeError(w, http.StatusInternalServerError, "Authentication configuration error")
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if !ok {
+		h.log.Warn("authentication failed", map[string]interface{}{
+			"auth_kind": "admin_login",
+			"reason":    "invalid_credentials",
+			"username":  req.Username,
+			"status":    http.StatusUnauthorized,
+			"path":      r.URL.Path,
+			"method":    r.Method,
+			"remote_ip": clientIP(r.RemoteAddr),
+		})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -166,7 +188,7 @@ func (h *APIHandlers) HandleAdminMe(w http.ResponseWriter, r *http.Request) {
 
 	username := r.Header.Get("X-Admiral-Admin-User")
 	if username == "" {
-		writeError(w, http.StatusUnauthorized, "Missing administrative identity")
+		writeGenericAuthError(w, http.StatusUnauthorized)
 		return
 	}
 	createdAt, err := h.db.GetAdminUserCreatedAt(username)
@@ -206,7 +228,7 @@ func (h *APIHandlers) HandleAdminChangePassword(w http.ResponseWriter, r *http.R
 
 	username := r.Header.Get("X-Admiral-Admin-User")
 	if username == "" {
-		writeError(w, http.StatusUnauthorized, "admin identity is required")
+		writeGenericAuthError(w, http.StatusUnauthorized)
 		return
 	}
 
