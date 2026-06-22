@@ -101,7 +101,7 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := h.clientIP(r)
 	if h.server != nil && h.server.blockAuthAttempt(w, r, "admin_login") {
 		return
 	}
@@ -131,7 +131,7 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 			"status":    http.StatusUnauthorized,
 			"path":      r.URL.Path,
 			"method":    r.Method,
-			"remote_ip": clientIP(r),
+			"remote_ip": h.clientIP(r),
 		})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
@@ -157,7 +157,7 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 			"status":    http.StatusUnauthorized,
 			"path":      r.URL.Path,
 			"method":    r.Method,
-			"remote_ip": clientIP(r),
+			"remote_ip": h.clientIP(r),
 		})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
@@ -263,8 +263,8 @@ func (h *APIHandlers) HandleAdminChangePassword(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !h.loginLimiter.Allow("change-password:"+username+":"+clientIP(r), 5, 1*time.Minute) {
-		h.log.Warn("Change-password rate limit exceeded", map[string]interface{}{"username": username, "ip": clientIP(r)})
+	if !h.loginLimiter.Allow("change-password:"+username+":"+h.clientIP(r), 5, 1*time.Minute) {
+		h.log.Warn("Change-password rate limit exceeded", map[string]interface{}{"username": username, "ip": h.clientIP(r)})
 		writeError(w, http.StatusTooManyRequests, "Too many password change attempts. Try again later.")
 		return
 	}

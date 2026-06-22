@@ -25,10 +25,10 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func AdminAuthMiddleware(log *logging.Logger, adminToken string, next http.HandlerFunc) http.HandlerFunc {
+func AdminAuthMiddleware(log *logging.Logger, adminToken string, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
 	limiter := NewRateLimiter()
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := "admin_token:" + clientIP(r)
+		key := "admin_token:" + getClientIP(r, trustedProxies)
 		if blocked, retryAfter := limiter.IsBlocked(key, authFailureLimit, authFailureWindow); blocked {
 			seconds := int(retryAfter / time.Second)
 			if seconds < 1 {
@@ -139,9 +139,9 @@ func (rl *RateLimiter) Reset(key string) {
 	delete(rl.buckets, key)
 }
 
-func RateLimit(limiter *RateLimiter, key string, maxAttempts int, window time.Duration, next http.HandlerFunc) http.HandlerFunc {
+func RateLimit(limiter *RateLimiter, key string, maxAttempts int, window time.Duration, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		ip := getClientIP(r, trustedProxies)
 		fullKey := key + ":" + ip
 		if !limiter.Allow(fullKey, maxAttempts, window) {
 			w.Header().Set("Content-Type", "application/json")

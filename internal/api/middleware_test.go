@@ -42,7 +42,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 
 func TestAdminAuthMiddleware(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -105,7 +105,7 @@ func TestAdminAuthMiddleware(t *testing.T) {
 
 func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -124,7 +124,7 @@ func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
 
 func TestAdminAuthMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -155,7 +155,7 @@ func TestAdminAuthMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
 
 func TestAdminAuthMiddlewareResetsFailureCounterAfterSuccess(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 

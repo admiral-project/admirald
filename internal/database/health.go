@@ -124,3 +124,40 @@ func (d *DB) GetCommittedResources(nodeID string) (ram, disk int64, err error) {
 	}
 	return
 }
+
+func (d *DB) GetInconsistentInstances() ([]CustomerApp, error) {
+	rows, err := d.Query(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
+		ca.commercial_status, ca.technical_status, ca.tier_snapshot_json, ca.created_at,
+		COALESCE(ca.health_status, ''), COALESCE(ca.health_message, ''),
+		ca.last_health_checked_at,
+		COALESCE(ca.storage_limit_bytes, 0), COALESCE(ca.storage_used_bytes, 0),
+		COALESCE(ca.storage_used_percent, 0), COALESCE(ca.storage_state, 'unknown'),
+		COALESCE(ca.storage_message, ''), ca.storage_checked_at,
+		COALESCE(ca.storage_exceeded, FALSE),
+		COALESCE(ca.logical_instance_id, '')
+		FROM customer_apps ca
+		JOIN nodes n ON ca.node_id = n.id
+		WHERE ca.technical_status = 'running'
+		  AND n.status = 'offline'`)
+	if err != nil {
+		return nil, fmt.Errorf("query inconsistent instances: %w", err)
+	}
+	defer rows.Close()
+
+	var apps []CustomerApp
+	for rows.Next() {
+		var a CustomerApp
+		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID,
+			&a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt,
+			&a.HealthStatus, &a.HealthMessage, &a.LastHealthChecked,
+			&a.StorageLimitBytes, &a.StorageUsedBytes, &a.StorageUsedPct,
+			&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
+			&a.StorageExceeded,
+			&a.LogicalInstanceID,
+		); err != nil {
+			return nil, fmt.Errorf("scan inconsistent instance: %w", err)
+		}
+		apps = append(apps, a)
+	}
+	return apps, nil
+}

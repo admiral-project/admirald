@@ -41,27 +41,52 @@ func parsePagination(r *http.Request) (int, int) {
 	return page, pageSize
 }
 
-func clientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+func (s *Server) clientIP(r *http.Request) string {
+	return getClientIP(r, s.trustedProxies)
+}
+
+func (h *APIHandlers) clientIP(r *http.Request) string {
+	if h.server != nil {
+		return h.server.clientIP(r)
+	}
+	return getClientIP(r, nil)
+}
+
+func getClientIP(r *http.Request, trustedProxies []string) string {
+	remoteAddr := r.RemoteAddr
+	if idx := strings.LastIndex(remoteAddr, ":"); idx >= 0 {
+		remoteAddr = remoteAddr[:idx]
+	}
+	remoteAddr = strings.TrimPrefix(remoteAddr, "[")
+	remoteAddr = strings.TrimSuffix(remoteAddr, "]")
+
+	isTrusted := false
+	if len(trustedProxies) > 0 {
+		for _, proxy := range trustedProxies {
+			if remoteAddr == proxy {
+				isTrusted = true
+				break
+			}
+		}
+	} else if remoteAddr == "127.0.0.1" || remoteAddr == "::1" {
+		// By default trust localhost if no proxies are defined
+		isTrusted = true
+	}
+
+	if isTrusted {
+		// Check X-Forwarded-For header
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ips := strings.Split(xff, ",")
+			if len(ips) > 0 {
+				return strings.TrimSpace(ips[0])
+			}
+		}
+
+		// Check X-Real-IP header
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
 		}
 	}
 
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fallback to RemoteAddr
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx >= 0 {
-		ip = ip[:idx]
-	}
-	// Handle IPv6 literal addresses [::1]:port
-	ip = strings.TrimPrefix(ip, "[")
-	ip = strings.TrimSuffix(ip, "]")
-	return ip
+	return remoteAddr
 }

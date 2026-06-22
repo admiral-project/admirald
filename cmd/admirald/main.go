@@ -95,7 +95,7 @@ func main() {
 	defer publisher.Close()
 
 	// Initialize API Server
-	server := api.NewServer(db, logger, publisher, cfg.AdminToken, cfg.TokenPepper, cfg.TokenTTLMinutes, cfg.SessionHMACKey, secretManager, networkingManager, cfg.TaskEncryptionKey)
+	server := api.NewServer(db, logger, publisher, cfg.AdminToken, cfg.TokenPepper, cfg.TokenTTLMinutes, cfg.SessionHMACKey, secretManager, networkingManager, cfg.TaskEncryptionKey, cfg.TrustedProxies)
 
 	// Start server
 	if err := server.Listen(ctx, cfg.ListenAddress, cfg.Port, cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {
