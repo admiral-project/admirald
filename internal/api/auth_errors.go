@@ -26,7 +26,7 @@ func logAuthFailure(log *logging.Logger, level, authKind, reason string, status 
 	fields := map[string]interface{}{
 		"path":      r.URL.Path,
 		"method":    r.Method,
-		"remote_ip": clientIP(r.RemoteAddr),
+		"remote_ip": clientIP(r),
 		"auth_kind": authKind,
 		"reason":    reason,
 		"status":    status,
@@ -44,7 +44,7 @@ func logAuthFailure(log *logging.Logger, level, authKind, reason string, status 
 }
 
 func (s *Server) authFailureKey(r *http.Request, authKind string) string {
-	return authKind + ":" + clientIP(r.RemoteAddr)
+	return authKind + ":" + clientIP(r)
 }
 
 func (s *Server) blockAuthAttempt(w http.ResponseWriter, r *http.Request, authKind string) bool {

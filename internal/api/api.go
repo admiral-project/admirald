@@ -112,7 +112,6 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/admin/backups/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
 	mux.HandleFunc("/api/admin/backups/restore", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminRestoreBackup)))
 	mux.HandleFunc("/api/admin/settings/backup-storage", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminSettingsStorage)))
-	mux.HandleFunc("/api/admin/settings/backup-storage/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminSettingsStorage)))
 	mux.HandleFunc("/api/admin/nodes", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminNodes)))
 	mux.HandleFunc("/api/admin/nodes/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminNodes)))
 	mux.HandleFunc("/api/admin/tasks", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminTasks)))
@@ -132,7 +131,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{
 		Addr:           addr + ":" + port,
-		Handler:        mux,
+		Handler:        SecurityHeadersMiddleware(mux),
 		TLSConfig:      tlsconfig.NewServerConfig(),
 		ReadTimeout:    15 * time.Second,
 		WriteTimeout:   15 * time.Second,

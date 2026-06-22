@@ -27,7 +27,7 @@ const (
 func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, expectedTokenType string, next http.HandlerFunc) http.HandlerFunc {
 	limiter := NewRateLimiter()
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := "node_token:" + clientIP(r.RemoteAddr)
+		key := "node_token:" + clientIP(r)
 		if blocked, retryAfter := limiter.IsBlocked(key, authFailureLimit, authFailureWindow); blocked {
 			seconds := int(retryAfter / time.Second)
 			if seconds < 1 {
@@ -90,7 +90,7 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 		// Verificamos que la IP origen coincida con la WireGuard IP registrada del nodo.
 		// Peticiones desde 127.0.0.1/::1 (mismo host) se confían siempre.
 		if node.WireguardIP != "" {
-			clientIPAddr := clientIP(r.RemoteAddr)
+			clientIPAddr := clientIP(r)
 			if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
 				limiter.Allow(key, authFailureLimit, authFailureWindow)
 				logAuthFailure(log, "WARN", "node_token", "wireguard_ip_mismatch", http.StatusForbidden, r, nil)

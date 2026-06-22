@@ -374,6 +374,67 @@ func TestHandleAdminInstancesList(t *testing.T) {
 	}
 }
 
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		headers    map[string]string
+		want       string
+	}{
+		{
+			name:       "fallback to remote addr",
+			remoteAddr: "192.168.1.1:1234",
+			want:       "192.168.1.1",
+		},
+		{
+			name:       "X-Forwarded-For single",
+			remoteAddr: "10.0.0.1:1234",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.1"},
+			want:       "203.0.113.1",
+		},
+		{
+			name:       "X-Forwarded-For multiple",
+			remoteAddr: "10.0.0.1:1234",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.1, 10.0.0.2"},
+			want:       "203.0.113.1",
+		},
+		{
+			name:       "X-Real-IP",
+			remoteAddr: "10.0.0.1:1234",
+			headers:    map[string]string{"X-Real-IP": "203.0.113.2"},
+			want:       "203.0.113.2",
+		},
+		{
+			name:       "X-Forwarded-For takes precedence over X-Real-IP",
+			remoteAddr: "10.0.0.1:1234",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+				"X-Real-IP":      "203.0.113.2",
+			},
+			want: "203.0.113.1",
+		},
+		{
+			name:       "IPv6 remote addr",
+			remoteAddr: "[::1]:1234",
+			want:       "::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			got := clientIP(req)
+			if got != tt.want {
+				t.Errorf("clientIP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSyncKnownHostInventoryWritesNodesAndNextAssignments(t *testing.T) {
 	h := newTestHandler(t, false)
 	tmpDir := t.TempDir()
