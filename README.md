@@ -16,7 +16,8 @@ The RPM installs the `admirald` binary and the `admirald.service` unit.
 - Insert durable tasks into PostgreSQL-backed queue for `admiral-fleet` workers
 - Receive task results and update platform state
 - Maintain audit logs
-- Enforce basic security and authorization
+- Enforce basic security and authorization (Rate limiting, HMAC sessions)
+- Background maintenance (Session cleaning, Node health monitoring, Route reconciliation)
 
 ## Quick start
 
@@ -28,26 +29,37 @@ export ADMIRAL_SECRETS_KEY=change-me-in-production
 export ADMIRAL_TLS_CERT_FILE=/etc/admiral/tls/admirald.pem
 export ADMIRAL_TLS_KEY_FILE=/etc/admiral/tls/admirald-key.pem
 export ADMIRAL_QUEUE_DATABASE_URL=postgres://queue:password@localhost:5432/admiral_queue?sslmode=disable
+export ADMIRAL_ED25519_PRIVATE_KEY=$(cat /etc/admiral/signing.key)
+export ADMIRAL_TASK_ENCRYPTION_KEY=32-character-random-string
 
 admirald
 ```
 
 `admirald` requires PostgreSQL for both the main platform database and the durable queue. SQLite is not supported, and the queue database should be a separate PostgreSQL database or schema from the main control-plane database.
 
+Configuration can also be provided via `/etc/admirald.ini`.
+
 ## Architecture
 
 `admirald` does not execute containers directly. It delegates all local execution to `admiral-fleet` agents via a PostgreSQL-backed durable queue.
 
-See [docs/app-definition-v1.md](../docs/app-definition-v1.md) for the app definition format and [docs/alpha-release-gate.md](../docs/alpha-release-gate.md) for validation criteria.
-
 ## API
 
-- `GET /health` — health check
-- `/api/v1/*` — platform API (token auth)
-- `/api/admin/*` — administrative API (session auth)
+- `GET /health` — Health check (admin auth)
+- `/api/v1/*` — Platform API (admin token or node token auth)
+    - `/api/v1/nodes` — Node registration and management
+    - `/api/v1/apps` — Application definition management
+    - `/api/v1/customer-apps` — Instance lifecycle management
+    - `/api/v1/fleet/*` — Worker node callbacks and health reporting
+- `/api/admin/*` — Administrative API (session auth)
+    - `/api/admin/auth/*` — Session management and password changes
+    - `/api/admin/users` — User management
+    - `/api/admin/backups` — Backup and restore operations
+    - `/api/admin/settings/*` — System settings (storage, etc.)
 
 ## Dependencies
 
+- Go 1.21+
 - PostgreSQL 16 for persistent state
 - PostgreSQL-backed durable queue for async task dispatch
 - Caddy with admin API for public HTTP routing
