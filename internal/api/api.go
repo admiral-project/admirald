@@ -316,7 +316,7 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 		if portal.Status == "disabled" {
 			continue
 		}
-		candidates := []string{portal.PublicIP, portal.IP, portal.WireguardIP}
+		candidates := []string{portal.PublicIP, portal.IP, portal.WireguardIP, "127.0.0.1"}
 		var ok bool
 		for _, addr := range candidates {
 			if addr == "" {
