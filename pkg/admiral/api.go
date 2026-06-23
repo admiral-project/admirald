@@ -201,6 +201,7 @@ type BackupRecord struct {
 	RetentionPolicySnapshotJSON string `json:"retention_policy_snapshot_json"`
 	TierSnapshotJSON            string `json:"tier_snapshot_json"`
 	ErrorMessage                string `json:"error_message,omitempty"`
+	VerifiedAt                  string `json:"verified_at,omitempty"`
 }
 
 type ProvisionRequest struct {

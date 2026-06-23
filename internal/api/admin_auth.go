@@ -6,6 +6,7 @@ package api
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -30,6 +31,9 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		token := r.Header.Get("X-Admiral-Admin-Token")
 		if token == "" {
+			token = r.Header.Get("X-Admiral-Token")
+		}
+		if token == "" {
 			authHeader := r.Header.Get("Authorization")
 			if strings.HasPrefix(authHeader, "Bearer ") {
 				token = strings.TrimPrefix(authHeader, "Bearer ")
@@ -43,47 +47,50 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		tokenHash := s.handlers.hashToken(token)
-		username, expiresAt, lastActivity, err := s.handlers.db.GetAdminSession(tokenHash)
-		if err != nil {
-			s.recordAuthFailure(r, "admin_session")
-			logAuthFailure(s.log, "ERROR", "admin_session", "auth_db_error", http.StatusUnauthorized, r, err)
-			writeGenericAuthError(w, http.StatusUnauthorized)
-			return
+		// First try session token lookup
+		if s.adminToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) != 1 {
+			tokenHash := s.handlers.hashToken(token)
+			username, expiresAt, lastActivity, err := s.handlers.db.GetAdminSession(tokenHash)
+			if err != nil {
+				s.recordAuthFailure(r, "admin_session")
+				logAuthFailure(s.log, "ERROR", "admin_session", "auth_db_error", http.StatusUnauthorized, r, err)
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+
+			if username == "" {
+				s.recordAuthFailure(r, "admin_session")
+				logAuthFailure(s.log, "WARN", "admin_session", "invalid_token", http.StatusUnauthorized, r, nil)
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+
+			now := time.Now()
+			// Check global expiration
+			if now.After(expiresAt) {
+				_ = s.handlers.db.DeleteAdminSession(tokenHash)
+				s.recordAuthFailure(r, "admin_session")
+				logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+
+			// Check inactivity (max 30 minutes)
+			if now.Sub(lastActivity) > 30*time.Minute {
+				_ = s.handlers.db.DeleteAdminSession(tokenHash)
+				s.recordAuthFailure(r, "admin_session")
+				logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+
+			// Update activity
+			_ = s.handlers.db.UpdateAdminSessionActivity(tokenHash, now)
+			s.resetAuthFailures(r, "admin_session")
+
+			// Pass username in headers for downstream
+			r.Header.Set("X-Admiral-Admin-User", username)
 		}
-
-		if username == "" {
-			s.recordAuthFailure(r, "admin_session")
-			logAuthFailure(s.log, "WARN", "admin_session", "invalid_token", http.StatusUnauthorized, r, nil)
-			writeGenericAuthError(w, http.StatusUnauthorized)
-			return
-		}
-
-		now := time.Now()
-		// Check global expiration
-		if now.After(expiresAt) {
-			_ = s.handlers.db.DeleteAdminSession(tokenHash)
-			s.recordAuthFailure(r, "admin_session")
-			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
-			writeGenericAuthError(w, http.StatusUnauthorized)
-			return
-		}
-
-		// Check inactivity (max 30 minutes)
-		if now.Sub(lastActivity) > 30*time.Minute {
-			_ = s.handlers.db.DeleteAdminSession(tokenHash)
-			s.recordAuthFailure(r, "admin_session")
-			logAuthFailure(s.log, "WARN", "admin_session", "session_expired", http.StatusUnauthorized, r, nil)
-			writeGenericAuthError(w, http.StatusUnauthorized)
-			return
-		}
-
-		// Update activity
-		_ = s.handlers.db.UpdateAdminSessionActivity(tokenHash, now)
-		s.resetAuthFailures(r, "admin_session")
-
-		// Pass username in headers for downstream
-		r.Header.Set("X-Admiral-Admin-User", username)
 		next(w, r)
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"github.com/admiral-project/admiral/admirald/pkg/admiral/storage"
 	"gopkg.in/yaml.v2"
 )
 
@@ -451,3 +453,103 @@ func mustMarshalRetention(count, days int) string {
 	data, _ := json.Marshal(map[string]int{"count": count, "days": days})
 	return string(data)
 }
+
+// StartBackupVerifier launches a background goroutine that periodically
+// verifies succeeded S3 backups physically exist in remote storage.
+// It runs every 30 minutes and checks each backup record with
+// storage_backend='s3' and status='succeeded' by issuing a HEAD request
+// to the object and comparing Content-Length with the recorded size.
+//
+// This is a paranoid verification layer: even if the fleet worker
+// reports a successful upload, admirald independently confirms the
+// object is reachable and has the correct size.  Backups that fail
+// verification are flagged with an error message and verified_at is
+// cleared; backups that pass get verified_at set to the current
+// timestamp.
+func (s *Server) StartBackupVerifier(ctx context.Context) {
+	s.log.Info("Starting backup verifier background worker", nil)
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	// Run an initial verification pass shortly after startup.
+	go func() {
+		time.Sleep(1 * time.Minute)
+		s.RunBackupVerifierIteration()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.log.Info("Stopping backup verifier", nil)
+			return
+		case <-ticker.C:
+			s.RunBackupVerifierIteration()
+		}
+	}
+}
+
+func (s *Server) RunBackupVerifierIteration() {
+	cfg, err := s.handlers.db.GetActiveBackupStorageConfig()
+	if err != nil {
+		s.log.Error("Backup verifier: failed to get active storage config", err, nil)
+		return
+	}
+	if cfg == nil {
+		return
+	}
+	if cfg.Backend != "s3" {
+		return
+	}
+
+	accessKey := osGetenv("ADMIRAL_S3_ACCESS_KEY_ID")
+	secretKey := osGetenv("ADMIRAL_S3_SECRET_ACCESS_KEY")
+	if accessKey == "" || secretKey == "" {
+		s.log.Error("Backup verifier: ADMIRAL_S3_ACCESS_KEY_ID or ADMIRAL_S3_SECRET_ACCESS_KEY not set in admirald env", nil, nil)
+		return
+	}
+
+	s3Client := storage.NewS3Client(cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.Prefix, accessKey, secretKey, cfg.ForcePathStyle)
+
+	records, err := s.handlers.db.GetSucceededS3Backups()
+	if err != nil {
+		s.log.Error("Backup verifier: failed to query succeeded S3 backups", err, nil)
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+
+	verified := 0
+	failed := 0
+	for _, rec := range records {
+		if err := s3Client.VerifyObject(context.Background(), rec.StorageKey, rec.SizeBytes); err != nil {
+			failed++
+			s.log.Error("Backup verifier: object verification failed", err, map[string]interface{}{
+				"backup_id":     rec.ID,
+				"instance_id":   rec.InstanceID,
+				"node_id":       rec.NodeID,
+				"storage_key":   rec.StorageKey,
+				"expected_size": rec.SizeBytes,
+			})
+			if uerr := s.handlers.db.UpdateBackupVerifiedFailed(rec.ID, fmt.Sprintf("verification failed: %v", err)); uerr != nil {
+				s.log.Error("Backup verifier: failed to mark backup as unverified", uerr, map[string]interface{}{"backup_id": rec.ID})
+			}
+		} else {
+			verified++
+			if uerr := s.handlers.db.UpdateBackupVerified(rec.ID); uerr != nil {
+				s.log.Error("Backup verifier: failed to mark backup as verified", uerr, map[string]interface{}{"backup_id": rec.ID})
+			}
+		}
+	}
+
+	s.log.Info("Backup verifier iteration complete", map[string]interface{}{
+		"total":    len(records),
+		"verified": verified,
+		"failed":   failed,
+	})
+}
+
+// osGetenv is a wrapper around os.Getenv to allow testing.
+var osGetenv = func(key string) string { return _osGetenvImpl(key) }
+
+var _osGetenvImpl = os.Getenv

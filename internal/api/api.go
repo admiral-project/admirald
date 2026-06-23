@@ -114,6 +114,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/admin/backups/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminBackups)))
 	mux.HandleFunc("/api/admin/backups/restore", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminRestoreBackup)))
 	mux.HandleFunc("/api/admin/settings/backup-storage", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminSettingsStorage)))
+	mux.HandleFunc("/api/admin/settings/backup-storage/test", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminSettingsStorage)))
 	mux.HandleFunc("/api/admin/nodes", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminNodes)))
 	mux.HandleFunc("/api/admin/nodes/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminNodes)))
 	mux.HandleFunc("/api/admin/tasks", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminTasks)))
@@ -146,6 +147,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 		s.log.Error("Failed to sync know_host inventory at startup", err, nil)
 	}
 	go s.StartBackupScheduler(ctx)
+	go s.StartBackupVerifier(ctx)
 	go s.StartSessionCleaner(ctx)
 	go s.StartNodeHealthMonitor(ctx)
 	go s.StartTokenGarbageCollector(ctx)

@@ -261,6 +261,17 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 12,
+			Name:    "add_backup_verified_at",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec("ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP")
+				if err != nil {
+					return fmt.Errorf("migration 12 failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -431,7 +442,8 @@ CREATE TABLE IF NOT EXISTS backup_records (
     triggered_by TEXT NOT NULL,
     retention_policy_snapshot_json TEXT NOT NULL DEFAULT '',
     tier_snapshot_json TEXT NOT NULL DEFAULT '',
-    error_message TEXT NOT NULL DEFAULT ''
+    error_message TEXT NOT NULL DEFAULT '',
+    verified_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS task_outbox (
