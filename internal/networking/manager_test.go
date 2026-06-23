@@ -96,7 +96,7 @@ func TestCreateInstanceRoutesGeneratesPersistentHostname(t *testing.T) {
 
 func TestActivateInstanceRoutesUsesFleetHostPorts(t *testing.T) {
 	db := openTestDB(t)
-	if err := db.RegisterNode("node_1", "worker", "10.0.0.8", "", "worker", "", "linux", "5.0.0"); err != nil {
+	if err := db.RegisterNode("node_1", "worker", "10.0.0.8", "10.99.0.8", "worker", "", "linux", "5.0.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 
@@ -139,8 +139,8 @@ func TestActivateInstanceRoutesUsesFleetHostPorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get public route: %v", err)
 	}
-	if stored.TargetHost != "127.0.0.1" || stored.TargetPort != 43123 {
-		t.Fatalf("expected fleet host port target, got %+v", stored)
+	if stored.TargetHost != "10.99.0.8" || stored.TargetPort != 43123 {
+		t.Fatalf("expected WireGuard IP target, got %+v", stored)
 	}
 }
 
