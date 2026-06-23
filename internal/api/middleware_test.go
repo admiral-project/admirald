@@ -11,9 +11,38 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
 
+func TestSecurityHeadersMiddleware(t *testing.T) {
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	headers := map[string]string{
+		"Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+		"X-Content-Type-Options":    "nosniff",
+		"X-Frame-Options":           "DENY",
+		"X-XSS-Protection":          "1; mode=block",
+		"Content-Security-Policy":   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none';",
+	}
+
+	for k, v := range headers {
+		if got := rr.Header().Get(k); got != v {
+			t.Errorf("header %q = %q, want %q", k, got, v)
+		}
+	}
+}
+
 func TestAdminAuthMiddleware(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -76,7 +105,7 @@ func TestAdminAuthMiddleware(t *testing.T) {
 
 func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -95,7 +124,7 @@ func TestAdminAuthMiddlewareProtectsHealthEndpoints(t *testing.T) {
 
 func TestAdminAuthMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -126,7 +155,7 @@ func TestAdminAuthMiddlewareTemporarilyBlocksRepeatedFailures(t *testing.T) {
 
 func TestAdminAuthMiddlewareResetsFailureCounterAfterSuccess(t *testing.T) {
 	token := "secret-token"
-	handler := AdminAuthMiddleware(logging.New("test"), token, func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuthMiddleware(logging.New("test"), token, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 

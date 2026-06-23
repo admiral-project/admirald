@@ -374,6 +374,84 @@ func TestHandleAdminInstancesList(t *testing.T) {
 	}
 }
 
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name           string
+		remoteAddr     string
+		trustedProxies []string
+		headers        map[string]string
+		want           string
+	}{
+		{
+			name:       "fallback to remote addr (not trusted)",
+			remoteAddr: "192.168.1.1:1234",
+			want:       "192.168.1.1",
+		},
+		{
+			name:       "X-Forwarded-For ignored when not trusted",
+			remoteAddr: "192.168.1.1:1234",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.1"},
+			want:       "192.168.1.1",
+		},
+		{
+			name:           "X-Forwarded-For single (trusted proxy)",
+			remoteAddr:     "10.0.0.1:1234",
+			trustedProxies: []string{"10.0.0.1"},
+			headers:        map[string]string{"X-Forwarded-For": "203.0.113.1"},
+			want:           "203.0.113.1",
+		},
+		{
+			name:           "X-Forwarded-For multiple (trusted proxy)",
+			remoteAddr:     "10.0.0.1:1234",
+			trustedProxies: []string{"10.0.0.1"},
+			headers:        map[string]string{"X-Forwarded-For": "203.0.113.1, 10.0.0.2"},
+			want:           "203.0.113.1",
+		},
+		{
+			name:           "X-Real-IP (trusted proxy)",
+			remoteAddr:     "10.0.0.1:1234",
+			trustedProxies: []string{"10.0.0.1"},
+			headers:        map[string]string{"X-Real-IP": "203.0.113.2"},
+			want:           "203.0.113.2",
+		},
+		{
+			name:       "Localhost trusted by default",
+			remoteAddr: "127.0.0.1:1234",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.5"},
+			want:       "203.0.113.5",
+		},
+		{
+			name:           "X-Forwarded-For takes precedence over X-Real-IP (trusted)",
+			remoteAddr:     "10.0.0.1:1234",
+			trustedProxies: []string{"10.0.0.1"},
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+				"X-Real-IP":       "203.0.113.2",
+			},
+			want: "203.0.113.1",
+		},
+		{
+			name:       "IPv6 remote addr",
+			remoteAddr: "[::1]:1234",
+			want:       "::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			got := getClientIP(req, tt.trustedProxies)
+			if got != tt.want {
+				t.Errorf("getClientIP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSyncKnownHostInventoryWritesNodesAndNextAssignments(t *testing.T) {
 	h := newTestHandler(t, false)
 	tmpDir := t.TempDir()
@@ -964,7 +1042,7 @@ func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 }
 
 func nodeAuthWrapped(h *APIHandlers, token string, next http.HandlerFunc) http.HandlerFunc {
-	return NodeAuthMiddleware(logging.New("test"), h.db, "test-pepper", "worker", next)
+	return NodeAuthMiddleware(logging.New("test"), h.db, "test-pepper", "worker", nil, next)
 }
 
 func setupNodeWithToken(t *testing.T, h *APIHandlers, nodeID, hostname, ip, wgIP, nodeRole, os, podmanV, token string) {
@@ -1061,6 +1139,40 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 	wrapped(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestResourceReconciler(t *testing.T) {
+	h := newTestHandler(t, false)
+	server := &Server{
+		handlers: h,
+		log:      logging.New("test"),
+	}
+
+	// 1. Register node and instance
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
+
+	// 2. Mark node offline
+	if err := h.db.UpdateNodeStatus("node_001", "offline"); err != nil {
+		t.Fatalf("mark node offline: %v", err)
+	}
+
+	// 3. Run reconciliation
+	server.reconcileResources()
+
+	// 4. Verify instance is unhealthy
+	inst, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if inst.HealthStatus != "unhealthy" || inst.HealthMessage != "node_offline" {
+		t.Fatalf("expected unhealthy/node_offline, got %s/%s", inst.HealthStatus, inst.HealthMessage)
 	}
 }
 

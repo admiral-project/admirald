@@ -49,6 +49,7 @@ type Config struct {
 	NetworkingCockpitHost    string
 	NetworkingCockpitTarget  string
 	CaddyAdminURL            string
+	TrustedProxies           []string
 }
 
 func Load() (*Config, error) {
@@ -88,6 +89,7 @@ func load(path string) (*Config, error) {
 		"networking_cockpit_host":    "",
 		"networking_cockpit_target":  "http://127.0.0.1:9090",
 		"caddy_admin_url":            "http://127.0.0.1:2019",
+		"trusted_proxies":            "",
 	}
 
 	loadINI(path, values)
@@ -123,6 +125,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "networking_cockpit_host", "ADMIRAL_NETWORKING_COCKPIT_HOST")
 	applyEnv(values, "networking_cockpit_target", "ADMIRAL_NETWORKING_COCKPIT_TARGET")
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
+	applyEnv(values, "trusted_proxies", "ADMIRAL_TRUSTED_PROXIES")
 
 	if values["admin_token"] == "" {
 		return nil, fmt.Errorf("admin_token is required via %s or ADMIRAL_ADMIN_TOKEN", path)
@@ -170,6 +173,15 @@ func load(path string) (*Config, error) {
 	}
 	if values["caddy_admin_url"] == "" {
 		values["caddy_admin_url"] = "http://127.0.0.1:2019"
+	}
+
+	var trustedProxies []string
+	if values["trusted_proxies"] != "" {
+		for _, p := range strings.Split(values["trusted_proxies"], ",") {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				trustedProxies = append(trustedProxies, trimmed)
+			}
+		}
 	}
 
 	ttl := 5
@@ -237,6 +249,7 @@ func load(path string) (*Config, error) {
 		NetworkingCockpitHost:    values["networking_cockpit_host"],
 		NetworkingCockpitTarget:  values["networking_cockpit_target"],
 		CaddyAdminURL:            values["caddy_admin_url"],
+		TrustedProxies:           trustedProxies,
 	}, nil
 }
 
