@@ -220,9 +220,8 @@ func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string,
 		targetPort := svc.Port
 		if len(hostPorts) > 0 && hostPorts[0] != nil {
 			if hostPort, ok := hostPorts[0][route.ServiceName]; ok && hostPort > 0 {
-				if node.WireguardIP != "" && node.WireguardIP != "127.0.0.1" {
-					targetHost = node.WireguardIP
-				} else {
+				targetHost = node.WireguardIP
+				if targetHost == "" {
 					targetHost = node.IP
 				}
 				targetPort = hostPort
