@@ -13,14 +13,24 @@ import (
 func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	payload := admiral.AppDefinitionPayload{
 		Name: "cacao-accounting",
+		SharedVolumes: map[string]admiral.YAMLSharedVolume{
+			"shared-data": {
+				Mount:    "/srv/app/shared",
+				Services: []string{"web"},
+			},
+		},
 		Services: map[string]admiral.YAMLService{
 			"web": {
-				Image: "example.com/app:1",
+				Image:     "example.com/app:1",
+				DependsOn: []string{"db"},
 				Env: map[string]string{
 					"APP_MODE":         "saas",
 					"MAX_USERS":        "1",
 					"ADMIRAL_APP_CODE": "bad",
 				},
+			},
+			"db": {
+				Image: "postgres:16",
 			},
 		},
 	}
@@ -32,10 +42,20 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 		},
 	}
 	services := buildServiceInfos(payload, tier, "inst_123", "tenant_456", map[string]map[string]string{})
-	if len(services) != 1 {
-		t.Fatalf("expected 1 service, got %d", len(services))
+	if len(services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(services))
 	}
-	env := services[0].Env
+	var web admiral.ServiceInfo
+	for _, service := range services {
+		if service.Name == "web" {
+			web = service
+			break
+		}
+	}
+	if web.Name == "" {
+		t.Fatal("expected web service in build output")
+	}
+	env := web.Env
 	if env["APP_MODE"] != "saas" {
 		t.Fatalf("expected app env to remain, got %q", env["APP_MODE"])
 	}
@@ -53,5 +73,11 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	}
 	if env["ADMIRAL_TENANT_ID"] != "tenant_456" {
 		t.Fatalf("expected tenant id env, got %q", env["ADMIRAL_TENANT_ID"])
+	}
+	if len(web.DependsOn) != 1 || web.DependsOn[0] != "db" {
+		t.Fatalf("expected depends_on to propagate, got %#v", web.DependsOn)
+	}
+	if len(web.SharedVolumes) != 1 || web.SharedVolumes[0].Name != "shared-data" {
+		t.Fatalf("expected shared volume mount to propagate, got %#v", web.SharedVolumes)
 	}
 }

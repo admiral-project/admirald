@@ -334,8 +334,9 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 					Storage:     matchedTier.Storage,
 					Environment: matchedTier.Environment,
 				},
-				Services: services,
-				Backup:   buildTaskBackupInfo(target),
+				Services:      services,
+				SharedVolumes: buildSharedVolumeInfos(payload),
+				Backup:        buildTaskBackupInfo(target),
 			}
 			task.Storage = &admiral.StorageConfig{
 				Backend: backend,
@@ -423,8 +424,9 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 					Name:        inst.TierName,
 					Environment: matchedTier.Environment,
 				},
-				Services: services,
-				Backup:   buildTaskBackupInfo(target),
+				Services:      services,
+				SharedVolumes: buildSharedVolumeInfos(payload),
+				Backup:        buildTaskBackupInfo(target),
 			}
 			task.Storage = &admiral.StorageConfig{
 				Backend: backend,

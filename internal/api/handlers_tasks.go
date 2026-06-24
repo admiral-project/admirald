@@ -57,7 +57,8 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 			Storage:     tier.Storage,
 			Environment: tier.Environment,
 		},
-		Services: services,
+		Services:      services,
+		SharedVolumes: buildSharedVolumeInfos(payload),
 	}
 
 	if action == admiral.ActionBackupDatabase || action == admiral.ActionBackupVolumes {
@@ -168,15 +169,16 @@ func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, t
 	}
 
 	task := &admiral.FleetTask{
-		TaskID:      generateID("task"),
-		OperationID: opID,
-		NodeID:      nodeID,
-		Action:      admiral.ActionRestoreBackup,
-		InstanceID:  instID,
-		App:         admiral.AppInfo{Name: payload.Name, Version: "latest"},
-		Tier:        admiral.TierInfo{Name: tier.Name, CPU: tier.CPU, Memory: tier.Memory, Storage: tier.Storage, Environment: tier.Environment},
-		Services:    services,
-		Backup:      buildTaskBackupInfo(target),
+		TaskID:        generateID("task"),
+		OperationID:   opID,
+		NodeID:        nodeID,
+		Action:        admiral.ActionRestoreBackup,
+		InstanceID:    instID,
+		App:           admiral.AppInfo{Name: payload.Name, Version: "latest"},
+		Tier:          admiral.TierInfo{Name: tier.Name, CPU: tier.CPU, Memory: tier.Memory, Storage: tier.Storage, Environment: tier.Environment},
+		Services:      services,
+		SharedVolumes: buildSharedVolumeInfos(payload),
+		Backup:        buildTaskBackupInfo(target),
 		Restore: &admiral.RestoreInfo{
 			BackupID:       bk.ID,
 			StorageBackend: srcType,

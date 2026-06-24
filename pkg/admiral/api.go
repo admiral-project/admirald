@@ -44,12 +44,13 @@ type HeartbeatRequest struct {
 // AppDefinitionPayload is the parsed YAML structure for an Admiral app definition.
 // It declares services, tiers, and backup sources for an application.
 type AppDefinitionPayload struct {
-	Name        string                 `yaml:"name" json:"name"`
-	DisplayName string                 `yaml:"display_name" json:"display_name"`
-	Description string                 `yaml:"description" json:"description"`
-	Services    map[string]YAMLService `yaml:"services" json:"services"`
-	Secrets     map[string]YAMLSecret  `yaml:"secrets,omitempty" json:"secrets,omitempty"`
-	Tiers       map[string]YAMLTier    `yaml:"tiers" json:"tiers"`
+	Name          string                      `yaml:"name" json:"name"`
+	DisplayName   string                      `yaml:"display_name" json:"display_name"`
+	Description   string                      `yaml:"description" json:"description"`
+	Services      map[string]YAMLService      `yaml:"services" json:"services"`
+	SharedVolumes map[string]YAMLSharedVolume `yaml:"shared_volumes,omitempty" json:"shared_volumes,omitempty"`
+	Secrets       map[string]YAMLSecret       `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Tiers         map[string]YAMLTier         `yaml:"tiers" json:"tiers"`
 }
 
 // YAMLService describes a single container service within an app.
@@ -62,12 +63,20 @@ type YAMLService struct {
 	Port        int                   `yaml:"port,omitempty" json:"port,omitempty"`
 	Public      bool                  `yaml:"public,omitempty" json:"public,omitempty"`
 	Volume      string                `yaml:"volume,omitempty" json:"volume,omitempty"`
+	DependsOn   []string              `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
 	Command     string                `yaml:"command,omitempty" json:"command,omitempty"`
 	Env         map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
 	Secrets     map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	HealthCheck *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 	Backup      *YAMLServiceBackup    `yaml:"backup" json:"backup"`
 	Registry    *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
+}
+
+type YAMLSharedVolume struct {
+	Mount    string   `yaml:"mount" json:"mount"`
+	Services []string `yaml:"services" json:"services"`
+	UID      int      `yaml:"uid,omitempty" json:"uid,omitempty"`
+	GID      int      `yaml:"gid,omitempty" json:"gid,omitempty"`
 }
 
 // YAMLRegistry configures authentication for a private container registry.

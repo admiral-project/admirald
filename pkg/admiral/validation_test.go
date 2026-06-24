@@ -562,4 +562,117 @@ func TestValidateAppDefinitionEdgeCases(t *testing.T) {
 			t.Error("expected tier enabling database backup without database service to fail")
 		}
 	})
+
+}
+
+func TestValidateAppDefinitionAllowsSharedVolumesAndDependsOn(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "erpnext",
+		DisplayName: "ERPNext",
+		SharedVolumes: map[string]YAMLSharedVolume{
+			"sites": {
+				Mount:    "/home/frappe/frappe-bench/sites",
+				Services: []string{"backend", "worker"},
+			},
+		},
+		Services: map[string]YAMLService{
+			"backend": {
+				Image:     "docker.io/frappe/erpnext:v15",
+				Port:      8000,
+				DependsOn: []string{"db", "redis"},
+				Backup:    &YAMLServiceBackup{Type: "volume"},
+			},
+			"worker": {
+				Image:     "docker.io/frappe/erpnext:v15",
+				DependsOn: []string{"backend"},
+				Backup:    &YAMLServiceBackup{Type: "none"},
+			},
+			"db": {
+				Image: "docker.io/library/mariadb:10.11",
+				Env: map[string]string{
+					"MARIADB_DATABASE": "erpnext",
+				},
+				Secrets: map[string]YAMLSecret{
+					"MARIADB_USER":     {Generate: "username"},
+					"MARIADB_PASSWORD": {Generate: "password"},
+				},
+				Backup: &YAMLServiceBackup{
+					Type:        "database",
+					Engine:      "mariadb",
+					DatabaseEnv: "MARIADB_DATABASE",
+					UsernameEnv: "MARIADB_USER",
+					PasswordEnv: "MARIADB_PASSWORD",
+				},
+			},
+			"redis": {
+				Image:  "docker.io/library/redis:7",
+				Port:   6379,
+				Backup: &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G", PriceMonthly: 10},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err != nil {
+		t.Fatalf("expected valid complex app definition: %v", err)
+	}
+}
+
+func TestValidateAppDefinitionRejectsDuplicateServicePort(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "dupport",
+		DisplayName: "Dup Port",
+		Services: map[string]YAMLService{
+			"redis-cache": {Image: "redis:7", Port: 6379, Backup: &YAMLServiceBackup{Type: "none"}},
+			"redis-queue": {Image: "redis:7", Port: 6379, Backup: &YAMLServiceBackup{Type: "none"}},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected duplicate internal port to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsDependencyCycle(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "cycle",
+		DisplayName: "Cycle",
+		Services: map[string]YAMLService{
+			"a": {Image: "example.com/a:1", DependsOn: []string{"b"}, Backup: &YAMLServiceBackup{Type: "none"}},
+			"b": {Image: "example.com/b:1", DependsOn: []string{"a"}, Backup: &YAMLServiceBackup{Type: "none"}},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected dependency cycle to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsDuplicateSharedMount(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "dup-shared",
+		DisplayName: "Dup Shared",
+		SharedVolumes: map[string]YAMLSharedVolume{
+			"sites": {Mount: "/srv/app/shared", Services: []string{"app"}},
+			"cache": {Mount: "/srv/app/shared", Services: []string{"app"}},
+		},
+		Services: map[string]YAMLService{
+			"app": {Image: "example.com/app:1", Backup: &YAMLServiceBackup{Type: "volume"}},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected duplicate shared mount to fail")
+	}
 }

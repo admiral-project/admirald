@@ -4,6 +4,7 @@
 package api
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -21,13 +22,15 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 		// Resolve ${VAR} references in env values using secret values
 		env = resolveEnvRefs(env, secretValues[name], secretValues["__global__"])
 		si := admiral.ServiceInfo{
-			Name:    name,
-			Image:   svc.Image,
-			Port:    svc.Port,
-			Volume:  svc.Volume,
-			Command: svc.Command,
-			Env:     env,
-			Secrets: secretValues[name],
+			Name:          name,
+			Image:         svc.Image,
+			Port:          svc.Port,
+			Volume:        svc.Volume,
+			DependsOn:     append([]string(nil), svc.DependsOn...),
+			SharedVolumes: serviceSharedVolumes(payload, name),
+			Command:       svc.Command,
+			Env:           env,
+			Secrets:       secretValues[name],
 		}
 		if svc.Registry != nil {
 			si.Registry = &admiral.RegistryConfig{
@@ -39,6 +42,52 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 		services = append(services, si)
 	}
 	return services
+}
+
+func buildSharedVolumeInfos(payload admiral.AppDefinitionPayload) []admiral.SharedVolumeInfo {
+	names := make([]string, 0, len(payload.SharedVolumes))
+	for name := range payload.SharedVolumes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	volumes := make([]admiral.SharedVolumeInfo, 0, len(names))
+	for _, name := range names {
+		volume := payload.SharedVolumes[name]
+		volumes = append(volumes, admiral.SharedVolumeInfo{
+			Name:     name,
+			Mount:    volume.Mount,
+			Services: append([]string(nil), volume.Services...),
+			UID:      volume.UID,
+			GID:      volume.GID,
+		})
+	}
+	return volumes
+}
+
+func serviceSharedVolumes(payload admiral.AppDefinitionPayload, serviceName string) []admiral.ServiceSharedVolumeMount {
+	names := make([]string, 0, len(payload.SharedVolumes))
+	for name := range payload.SharedVolumes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	mounts := make([]admiral.ServiceSharedVolumeMount, 0)
+	for _, name := range names {
+		volume := payload.SharedVolumes[name]
+		for _, sharedService := range volume.Services {
+			if sharedService == serviceName {
+				mounts = append(mounts, admiral.ServiceSharedVolumeMount{
+					Name:  name,
+					Mount: volume.Mount,
+					UID:   volume.UID,
+					GID:   volume.GID,
+				})
+				break
+			}
+		}
+	}
+	return mounts
 }
 
 func resolveEnvRefs(env map[string]string, svcSecrets, globalSecrets map[string]string) map[string]string {

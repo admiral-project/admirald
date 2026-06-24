@@ -5,6 +5,7 @@ package admiral
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,6 +57,43 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		}
 	}
 
+	sharedMountIndex := make(map[string]string, len(payload.SharedVolumes))
+	serviceSharedVolumes := make(map[string]map[string]YAMLSharedVolume, len(payload.Services))
+	for volumeName, shared := range payload.SharedVolumes {
+		if volumeName == "" {
+			return fmt.Errorf("shared volume name is required")
+		}
+		if !serviceNamePattern.MatchString(volumeName) {
+			return fmt.Errorf("shared volume name %q must match %s", volumeName, serviceNamePattern.String())
+		}
+		mount := filepath.Clean(strings.TrimSpace(shared.Mount))
+		if !filepath.IsAbs(mount) {
+			return fmt.Errorf("shared volume %q mount %q must be an absolute path", volumeName, shared.Mount)
+		}
+		if len(shared.Services) == 0 {
+			return fmt.Errorf("shared volume %q requires at least one service", volumeName)
+		}
+		if existing, ok := sharedMountIndex[mount]; ok {
+			return fmt.Errorf("shared volume %q mount %q conflicts with shared volume %q", volumeName, mount, existing)
+		}
+		sharedMountIndex[mount] = volumeName
+		for _, serviceName := range shared.Services {
+			if _, ok := payload.Services[serviceName]; !ok {
+				return fmt.Errorf("shared volume %q references undefined service %q", volumeName, serviceName)
+			}
+			if serviceSharedVolumes[serviceName] == nil {
+				serviceSharedVolumes[serviceName] = make(map[string]YAMLSharedVolume)
+			}
+			serviceSharedVolumes[serviceName][volumeName] = YAMLSharedVolume{
+				Mount:    mount,
+				Services: append([]string(nil), shared.Services...),
+				UID:      shared.UID,
+				GID:      shared.GID,
+			}
+		}
+	}
+
+	usedPorts := make(map[int]string)
 	for name, svc := range payload.Services {
 		if name == "" {
 			return fmt.Errorf("service name is required")
@@ -77,8 +115,22 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if svc.Backup == nil {
 			return fmt.Errorf("service %q backup is required and must declare database, volume, or none", name)
 		}
+		if svc.Port > 0 {
+			if existing, ok := usedPorts[svc.Port]; ok {
+				return fmt.Errorf("port %d conflict between services %q and %q", svc.Port, existing, name)
+			}
+			usedPorts[svc.Port] = name
+		}
 		if svc.Public && svc.Port <= 0 {
 			return fmt.Errorf("service %q marked public requires a port greater than zero", name)
+		}
+		for _, dep := range svc.DependsOn {
+			if dep == name {
+				return fmt.Errorf("service %q cannot depend on itself", name)
+			}
+			if _, ok := payload.Services[dep]; !ok {
+				return fmt.Errorf("service %q depends_on references undefined service %q", name, dep)
+			}
 		}
 		if errs := validateHealthcheck(name, svc.HealthCheck); len(errs) > 0 {
 			for _, e := range errs {
@@ -110,6 +162,18 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 				return fmt.Errorf("service %q secret %q has unsupported generator %q", name, envName, secret.Generate)
 			}
 		}
+		if svc.Volume != "" {
+			serviceVolumeMount := defaultServiceVolumeMount(name, svc.Image)
+			for sharedName, shared := range serviceSharedVolumes[name] {
+				if shared.Mount == serviceVolumeMount {
+					return fmt.Errorf("service %q private volume mount %q conflicts with shared volume %q", name, serviceVolumeMount, sharedName)
+				}
+			}
+		}
+	}
+
+	if err := validateDependencyCycles(payload.Services); err != nil {
+		return err
 	}
 
 	publicCount := 0
@@ -200,8 +264,8 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 			}
 		case "volume":
 			volumeBackupCount++
-			if svc.Volume == "" {
-				return fmt.Errorf("service %q volume backup requires a declared volume", name)
+			if svc.Volume == "" && len(serviceSharedVolumes[name]) == 0 {
+				return fmt.Errorf("service %q volume backup requires a declared volume or shared volume", name)
 			}
 			if svc.Backup.Engine != "" || svc.Backup.DatabaseEnv != "" || svc.Backup.UsernameEnv != "" || svc.Backup.PasswordEnv != "" {
 				return fmt.Errorf("service %q volume backup cannot declare database backup fields", name)
@@ -223,6 +287,53 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		}
 	}
 
+	return nil
+}
+
+func defaultServiceVolumeMount(serviceName, image string) string {
+	img := strings.ToLower(strings.TrimSpace(image))
+	switch {
+	case strings.Contains(img, "postgres"):
+		return "/var/lib/postgresql/data"
+	case strings.Contains(img, "mariadb"), strings.Contains(img, "mysql"):
+		return "/var/lib/mysql"
+	case strings.Contains(img, "wordpress"):
+		return "/var/www/html/wp-content"
+	case serviceName == "db":
+		return "/var/lib/postgresql/data"
+	default:
+		return "/data"
+	}
+}
+
+func validateDependencyCycles(services map[string]YAMLService) error {
+	visited := make(map[string]bool, len(services))
+	inStack := make(map[string]bool, len(services))
+
+	var visit func(string) error
+	visit = func(name string) error {
+		if inStack[name] {
+			return fmt.Errorf("service dependency cycle detected involving %q", name)
+		}
+		if visited[name] {
+			return nil
+		}
+		visited[name] = true
+		inStack[name] = true
+		for _, dep := range services[name].DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		inStack[name] = false
+		return nil
+	}
+
+	for name := range services {
+		if err := visit(name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

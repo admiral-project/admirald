@@ -26,17 +26,18 @@ const (
 )
 
 type FleetTask struct {
-	TaskID      string         `json:"task_id"`
-	OperationID string         `json:"operation_id"`
-	NodeID      string         `json:"node_id"`
-	Action      TaskAction     `json:"action"`
-	InstanceID  string         `json:"instance_id"`
-	App         AppInfo        `json:"app"`
-	Tier        TierInfo       `json:"tier"`
-	Services    []ServiceInfo  `json:"services"`
-	Backup      *BackupInfo    `json:"backup,omitempty"`
-	Restore     *RestoreInfo   `json:"restore,omitempty"`
-	Storage     *StorageConfig `json:"storage,omitempty"`
+	TaskID        string             `json:"task_id"`
+	OperationID   string             `json:"operation_id"`
+	NodeID        string             `json:"node_id"`
+	Action        TaskAction         `json:"action"`
+	InstanceID    string             `json:"instance_id"`
+	App           AppInfo            `json:"app"`
+	Tier          TierInfo           `json:"tier"`
+	Services      []ServiceInfo      `json:"services"`
+	SharedVolumes []SharedVolumeInfo `json:"shared_volumes,omitempty"`
+	Backup        *BackupInfo        `json:"backup,omitempty"`
+	Restore       *RestoreInfo       `json:"restore,omitempty"`
+	Storage       *StorageConfig     `json:"storage,omitempty"`
 }
 
 type StorageConfig struct {
@@ -67,14 +68,31 @@ type TierInfo struct {
 }
 
 type ServiceInfo struct {
-	Name     string            `json:"name"`
-	Image    string            `json:"image"`
-	Port     int               `json:"port,omitempty"`
-	Volume   string            `json:"volume,omitempty"`
-	Command  string            `json:"command,omitempty"`
-	Env      map[string]string `json:"env,omitempty"`
-	Secrets  map[string]string `json:"secrets,omitempty"`
-	Registry *RegistryConfig   `json:"registry,omitempty"`
+	Name          string                     `json:"name"`
+	Image         string                     `json:"image"`
+	Port          int                        `json:"port,omitempty"`
+	Volume        string                     `json:"volume,omitempty"`
+	DependsOn     []string                   `json:"depends_on,omitempty"`
+	SharedVolumes []ServiceSharedVolumeMount `json:"shared_volumes,omitempty"`
+	Command       string                     `json:"command,omitempty"`
+	Env           map[string]string          `json:"env,omitempty"`
+	Secrets       map[string]string          `json:"secrets,omitempty"`
+	Registry      *RegistryConfig            `json:"registry,omitempty"`
+}
+
+type SharedVolumeInfo struct {
+	Name     string   `json:"name"`
+	Mount    string   `json:"mount"`
+	Services []string `json:"services"`
+	UID      int      `json:"uid,omitempty"`
+	GID      int      `json:"gid,omitempty"`
+}
+
+type ServiceSharedVolumeMount struct {
+	Name  string `json:"name"`
+	Mount string `json:"mount"`
+	UID   int    `json:"uid,omitempty"`
+	GID   int    `json:"gid,omitempty"`
 }
 
 // RegistryConfig carries credentials for authenticating to a private

@@ -119,15 +119,16 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	}
 
 	task := &admiral.FleetTask{
-		TaskID:      generateID("task"),
-		OperationID: opID,
-		NodeID:      req.TargetNodeID,
-		Action:      admiral.ActionRestoreBackup,
-		InstanceID:  inst.ID,
-		App:         admiral.AppInfo{Name: payload.Name, Version: "latest"},
-		Tier:        admiral.TierInfo{Name: matchedTier.Name, CPU: matchedTier.CPU, Memory: matchedTier.Memory, Storage: matchedTier.Storage, Environment: matchedTier.Environment},
-		Services:    services,
-		Backup:      buildTaskBackupInfo(target),
+		TaskID:        generateID("task"),
+		OperationID:   opID,
+		NodeID:        req.TargetNodeID,
+		Action:        admiral.ActionRestoreBackup,
+		InstanceID:    inst.ID,
+		App:           admiral.AppInfo{Name: payload.Name, Version: "latest"},
+		Tier:          admiral.TierInfo{Name: matchedTier.Name, CPU: matchedTier.CPU, Memory: matchedTier.Memory, Storage: matchedTier.Storage, Environment: matchedTier.Environment},
+		Services:      services,
+		SharedVolumes: buildSharedVolumeInfos(payload),
+		Backup:        buildTaskBackupInfo(target),
 		Restore: &admiral.RestoreInfo{
 			BackupID:       bk.ID,
 			StorageBackend: srcType,
@@ -357,7 +358,8 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 			Storage:     matchedTier.Storage,
 			Environment: matchedTier.Environment,
 		},
-		Services: services,
+		Services:      services,
+		SharedVolumes: buildSharedVolumeInfos(payload),
 	}
 	task.Backup = buildTaskBackupInfo(target)
 
