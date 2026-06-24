@@ -391,3 +391,175 @@ func TestValidateAppDefinitionRejectsReservedTierEnvironmentName(t *testing.T) {
 		t.Fatal("expected reserved tier environment name to fail")
 	}
 }
+
+func TestParseStorageBytes(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"1024", 1024},
+		{"1K", 1024},
+		{"1KB", 1024},
+		{"1KiB", 1024},
+		{"1M", 1024 * 1024},
+		{"1MB", 1024 * 1024},
+		{"1MiB", 1024 * 1024},
+		{"1G", 1024 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
+		{"1GiB", 1024 * 1024 * 1024},
+		{"1T", 1024 * 1024 * 1024 * 1024},
+		{"1TB", 1024 * 1024 * 1024 * 1024},
+		{"1TiB", 1024 * 1024 * 1024 * 1024},
+		{"", 0},
+		{"invalid", 0},
+		{"-1G", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseStorageBytes(tt.input)
+			if got != tt.want {
+				t.Errorf("parseStorageBytes(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateHealthcheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		hc      *YAMLHealthCheck
+		wantErr bool
+	}{
+		{"nil healthcheck", nil, false},
+		{"valid http", &YAMLHealthCheck{Type: "http", Path: "/"}, false},
+		{"http missing path", &YAMLHealthCheck{Type: "http"}, true},
+		{"valid tcp", &YAMLHealthCheck{Type: "tcp", Port: 80}, false},
+		{"tcp missing port", &YAMLHealthCheck{Type: "tcp"}, true},
+		{"valid command", &YAMLHealthCheck{Type: "command", Command: []string{"ls"}}, false},
+		{"command missing command", &YAMLHealthCheck{Type: "command"}, true},
+		{"invalid type", &YAMLHealthCheck{Type: "invalid"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateHealthcheck("svc", tt.hc)
+			if tt.wantErr && len(errs) == 0 {
+				t.Errorf("expected error for %s, got none", tt.name)
+			}
+			if !tt.wantErr && len(errs) > 0 {
+				t.Errorf("expected no error for %s, got %v", tt.name, errs)
+			}
+		})
+	}
+}
+
+func TestValidateAppDefinitionEdgeCases(t *testing.T) {
+	t.Run("missing name", func(t *testing.T) {
+		payload := AppDefinitionPayload{}
+		if err := ValidateAppDefinition(payload); err == nil || err.Error() != "name is required" {
+			t.Errorf("expected 'name is required' error, got %v", err)
+		}
+	})
+
+	t.Run("missing display_name", func(t *testing.T) {
+		payload := AppDefinitionPayload{Name: "app"}
+		if err := ValidateAppDefinition(payload); err == nil || err.Error() != "display_name is required" {
+			t.Errorf("expected 'display_name is required' error, got %v", err)
+		}
+	})
+
+	t.Run("no services", func(t *testing.T) {
+		payload := AppDefinitionPayload{Name: "app", DisplayName: "App"}
+		if err := ValidateAppDefinition(payload); err == nil || err.Error() != "at least one service is required" {
+			t.Errorf("expected 'at least one service is required' error, got %v", err)
+		}
+	})
+
+	t.Run("no tiers", func(t *testing.T) {
+		payload := AppDefinitionPayload{
+			Name:        "app",
+			DisplayName: "App",
+			Services:    map[string]YAMLService{"web": {Image: "img", Backup: &YAMLServiceBackup{Type: "none"}}},
+		}
+		if err := ValidateAppDefinition(payload); err == nil || err.Error() != "at least one tier is required" {
+			t.Errorf("expected 'at least one tier is required' error, got %v", err)
+		}
+	})
+
+	t.Run("top-level secrets", func(t *testing.T) {
+		payload := AppDefinitionPayload{
+			Name:        "app",
+			DisplayName: "App",
+			Services:    map[string]YAMLService{"web": {Image: "img", Backup: &YAMLServiceBackup{Type: "none"}}},
+			Tiers:       map[string]YAMLTier{"starter": {CPU: 1, Memory: "1G", Storage: "10G"}},
+			Secrets: map[string]YAMLSecret{
+				"SECRET": {Generate: "random"},
+			},
+		}
+		if err := ValidateAppDefinition(payload); err != nil {
+			t.Errorf("expected valid app definition with secrets, got %v", err)
+		}
+
+		payload.Secrets["BAD"] = YAMLSecret{Generate: "invalid"}
+		if err := ValidateAppDefinition(payload); err == nil {
+			t.Error("expected invalid generator to fail")
+		}
+
+		payload.Secrets["BOTH"] = YAMLSecret{Generate: "random", Value: "val"}
+		if err := ValidateAppDefinition(payload); err == nil {
+			t.Error("expected both generate and value to fail")
+		}
+	})
+
+	t.Run("registry config", func(t *testing.T) {
+		payload := AppDefinitionPayload{
+			Name:        "app",
+			DisplayName: "App",
+			Services: map[string]YAMLService{
+				"web": {
+					Image:  "img",
+					Backup: &YAMLServiceBackup{Type: "none"},
+					Registry: &YAMLRegistry{
+						Server:   "reg.example.com",
+						Username: "user",
+						Password: "pw",
+					},
+				},
+			},
+			Tiers: map[string]YAMLTier{"starter": {CPU: 1, Memory: "1G", Storage: "10G"}},
+		}
+		if err := ValidateAppDefinition(payload); err != nil {
+			t.Errorf("expected valid app definition with registry, got %v", err)
+		}
+
+		payload.Services["web"].Registry.Server = ""
+		if err := ValidateAppDefinition(payload); err == nil {
+			t.Error("expected missing registry server to fail")
+		}
+	})
+
+	t.Run("tier backups", func(t *testing.T) {
+		payload := AppDefinitionPayload{
+			Name:        "app",
+			DisplayName: "App",
+			Services:    map[string]YAMLService{"web": {Image: "img", Backup: &YAMLServiceBackup{Type: "none"}}},
+			Tiers: map[string]YAMLTier{
+				"starter": {
+					CPU:     1,
+					Memory:  "1G",
+					Storage: "10G",
+					Backups: &BackupPolicy{
+						Enabled:        true,
+						Schedule:       "daily",
+						Retention:      RetentionPolicy{Count: 1, Days: 1},
+						BackupDatabase: true,
+					},
+				},
+			},
+		}
+		if err := ValidateAppDefinition(payload); err == nil {
+			t.Error("expected tier enabling database backup without database service to fail")
+		}
+	})
+}

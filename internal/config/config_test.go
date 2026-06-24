@@ -152,10 +152,21 @@ func TestLoadDerivesNetworkingHostsFromBaseDomain(t *testing.T) {
 }
 
 func TestRedactURL(t *testing.T) {
-	got := RedactURL("postgres://user:pass@db.example.com:5432/admiral?sslmode=disable")
-	want := "postgres://REDACTED:REDACTED@db.example.com:5432/admiral?sslmode=disable"
-	if got != want {
-		t.Fatalf("expected redacted URL %q, got %q", want, got)
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"postgres://user:pass@db.example.com:5432/admiral?sslmode=disable", "postgres://REDACTED:REDACTED@db.example.com:5432/admiral?sslmode=disable"},
+		{"postgres://user@db.example.com:5432/admiral", "postgres://REDACTED@db.example.com:5432/admiral"},
+		{"postgres://:pass@db.example.com:5432/admiral", "postgres://:REDACTED@db.example.com:5432/admiral"},
+		{"postgres://db.example.com:5432/admiral", "postgres://db.example.com:5432/admiral"},
+		{"not-a-url", "not-a-url"},
+	}
+	for _, tt := range tests {
+		got := RedactURL(tt.input)
+		if got != tt.want {
+			t.Errorf("RedactURL(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
 
@@ -177,6 +188,101 @@ func TestLoadRejectsSameLogicalDatabase(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when core and queue DBs are the same")
 	}
+}
+
+func TestLoadINI(t *testing.T) {
+	tempDir := t.TempDir()
+	iniFile := filepath.Join(tempDir, "admirald.ini")
+	content := `
+port = 9090
+listen_address = 0.0.0.0
+# Comment
+; Another comment
+invalid_line
+database_url = postgres://localhost/admiral
+`
+	if err := os.WriteFile(iniFile, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	values := map[string]string{
+		"port":           "8080",
+		"listen_address": "127.0.0.1",
+		"database_url":   "",
+	}
+	loadINI(iniFile, values)
+
+	if values["port"] != "9090" {
+		t.Errorf("expected port 9090, got %s", values["port"])
+	}
+	if values["listen_address"] != "0.0.0.0" {
+		t.Errorf("expected listen_address 0.0.0.0, got %s", values["listen_address"])
+	}
+	if values["database_url"] != "postgres://localhost/admiral" {
+		t.Errorf("expected database_url postgres://localhost/admiral, got %s", values["database_url"])
+	}
+}
+
+func TestLoadWithTrustedProxies(t *testing.T) {
+	tempDir := t.TempDir()
+	certFile := writeTempFile(t, tempDir, "server.crt")
+	keyFile := writeTempFile(t, tempDir, "server.key")
+
+	setEnv(t, "ADMIRAL_ENV", "development")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
+	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
+	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
+	setEnv(t, "ADMIRAL_DATABASE_URL", "postgres://user:pass@localhost:5432/admiral_core?sslmode=require")
+	setEnv(t, "ADMIRAL_QUEUE_DATABASE_URL", "postgres://queue:pass@localhost:5432/admiral_queue?sslmode=require")
+	setEnv(t, "ADMIRAL_TRUSTED_PROXIES", "10.0.0.1, 10.0.0.2")
+
+	cfg, err := load("/tmp/does-not-exist.ini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "10.0.0.1" || cfg.TrustedProxies[1] != "10.0.0.2" {
+		t.Errorf("unexpected trusted proxies: %v", cfg.TrustedProxies)
+	}
+}
+
+func TestLoadWithTokenTTL(t *testing.T) {
+	tempDir := t.TempDir()
+	certFile := writeTempFile(t, tempDir, "server.crt")
+	keyFile := writeTempFile(t, tempDir, "server.key")
+
+	setEnv(t, "ADMIRAL_ENV", "development")
+	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "dev-token")
+	setEnv(t, "ADMIRAL_TOKEN_PEPPER", "dev-pepper")
+	setEnv(t, "ADMIRAL_TLS_CERT_FILE", certFile)
+	setEnv(t, "ADMIRAL_TLS_KEY_FILE", keyFile)
+	setEnv(t, "ADMIRAL_DATABASE_URL", "postgres://user:pass@localhost:5432/admiral_core?sslmode=require")
+	setEnv(t, "ADMIRAL_QUEUE_DATABASE_URL", "postgres://queue:pass@localhost:5432/admiral_queue?sslmode=require")
+
+	t.Run("default TTL", func(t *testing.T) {
+		cfg, err := load("/tmp/does-not-exist.ini")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.TokenTTLMinutes != 5 {
+			t.Errorf("expected default TTL 5, got %d", cfg.TokenTTLMinutes)
+		}
+	})
+
+	t.Run("INI TTL", func(t *testing.T) {
+		iniFile := filepath.Join(tempDir, "ttl.ini")
+		content := "token_ttl_minutes = 15\n"
+		if err := os.WriteFile(iniFile, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := load(iniFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.TokenTTLMinutes != 15 {
+			t.Errorf("expected INI TTL 15, got %d", cfg.TokenTTLMinutes)
+		}
+	})
 }
 
 func setEnv(t *testing.T, key, value string) {

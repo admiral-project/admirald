@@ -4,6 +4,7 @@
 package logging
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,24 @@ func TestMaskValueNonString(t *testing.T) {
 	if got := maskValue(123); got != "****" {
 		t.Errorf("maskValue(123) = %q, want '****'", got)
 	}
+}
+
+func TestLogger(t *testing.T) {
+	l := New("test")
+	l.Info("test info", map[string]interface{}{"key": "val"})
+	l.Warn("test warn", map[string]interface{}{"key": "val"})
+	l.Error("test error", fmt.Errorf("fail"), map[string]interface{}{"key": "val"})
+	l.Error("test error nil", nil, nil)
+}
+
+func TestLoggerFatal(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("The code did not panic")
+		}
+	}()
+	l := New("test")
+	l.Fatal("fatal error", fmt.Errorf("boom"), nil)
 }
 
 func TestIsSensitiveKey(t *testing.T) {
