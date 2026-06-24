@@ -8,11 +8,34 @@ import (
 	"time"
 )
 
+func seedTestAppDefinition(t *testing.T, db *DB) {
+	t.Helper()
+
+	err := db.SaveAppDefinition(
+		"app",
+		"App",
+		"Test app",
+		"name: app",
+		[]AppTier{{
+			AppName:      "app",
+			Name:         "starter",
+			CPU:          1,
+			Memory:       "1G",
+			Storage:      "10G",
+			PriceMonthly: 10,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("seed app definition: %v", err)
+	}
+}
+
 func TestGetNodeMetricsIncludesInitializingAndSetupFailed(t *testing.T) {
 	db := OpenTestDB(t)
 	if err := db.TruncateTables(); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
+	seedTestAppDefinition(t, db)
 
 	if err := db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
@@ -56,6 +79,7 @@ func TestGetExpiredGracePeriodAppsExcludesTransientAndTerminalStates(t *testing.
 	if err := db.TruncateTables(); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
+	seedTestAppDefinition(t, db)
 
 	if err := db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
