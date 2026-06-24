@@ -496,9 +496,15 @@ func (h *APIHandlers) handleNodeReady(w http.ResponseWriter, nodeID string) {
 	case "worker":
 		readyURL = fmt.Sprintf("http://%s:9099/ready", addr)
 	case "portal":
-		readyURL = fmt.Sprintf("https://%s:5001/ready", addr)
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		scheme := "https"
+		if h.server.devMode {
+			scheme = "http"
+		}
+		readyURL = fmt.Sprintf("%s://%s:5001/ready", scheme, addr)
+		if scheme == "https" {
+			client.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
 		}
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported node role: %s", node.NodeRole))

@@ -27,6 +27,7 @@ type Server struct {
 	fleetLimiter   *RateLimiter
 	adminLimiter   *RateLimiter
 	trustedProxies []string
+	devMode        bool
 }
 
 const (
@@ -34,7 +35,7 @@ const (
 	authFailureWindow = 5 * time.Minute
 )
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string, trustedProxies []string) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string, trustedProxies []string, devMode bool) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
 	// invalidates all active admin web sessions (flagship/harbor must
@@ -58,6 +59,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		fleetLimiter:   NewRateLimiter(),
 		adminLimiter:   NewRateLimiter(),
 		trustedProxies: trustedProxies,
+		devMode:        devMode,
 	}
 	handlers.server = server
 	return server
@@ -324,7 +326,11 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 			if addr == "" {
 				continue
 			}
-			healthURL := fmt.Sprintf("https://%s:5001/health", addr)
+			scheme := "https"
+			if s.devMode {
+				scheme = "http"
+			}
+			healthURL := fmt.Sprintf("%s://%s:5001/health", scheme, addr)
 			resp, err := client.Get(healthURL)
 			if err != nil {
 				s.log.Info("Portal node health check attempt failed", map[string]interface{}{"node_id": portal.ID, "addr": addr, "error": err.Error()})
