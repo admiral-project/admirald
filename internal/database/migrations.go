@@ -272,6 +272,17 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 13,
+			Name:    "add_setup_completed",
+			Up: func(db *sql.DB) error {
+				_, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS setup_completed BOOLEAN NOT NULL DEFAULT FALSE")
+				if err != nil {
+					return fmt.Errorf("migration 13 failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

@@ -35,6 +35,7 @@ type CustomerApp struct {
 	Hostname            string     `json:"hostname"`
 	LogicalInstanceID   string     `json:"logical_instance_id"`
 	InspectData         string     `json:"inspect_data,omitempty"`
+	SetupCompleted      bool       `json:"setup_completed"`
 }
 
 func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {
@@ -128,6 +129,17 @@ func (d *DB) UpdateCustomerAppInspectData(id, inspectData string) error {
 	return nil
 }
 
+// SetSetupCompleted marks the setup_command phase as completed for the
+// given instance. Called after a successful setup_command execution
+// during the provision callback.
+func (d *DB) SetSetupCompleted(id string) error {
+	_, err := d.Exec("UPDATE customer_apps SET setup_completed = TRUE WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("set setup_completed for instance %q: %w", id, err)
+	}
+	return nil
+}
+
 func (d *DB) UpdateCustomerAppTier(id, tierName, tierSnapshotJSON string) error {
 	_, err := d.Exec(`
 		UPDATE customer_apps
@@ -169,7 +181,8 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 			COALESCE(ca.storage_exceeded, FALSE),
 			COALESCE(pr.hostname, ''),
-			COALESCE(ca.logical_instance_id, '')
+			COALESCE(ca.logical_instance_id, ''),
+			COALESCE(ca.setup_completed, FALSE)
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			WHERE ca.customer_id = $3 ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset, customerID)
@@ -183,7 +196,8 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 			COALESCE(ca.storage_exceeded, FALSE),
 			COALESCE(pr.hostname, ''),
-			COALESCE(ca.logical_instance_id, '')
+			COALESCE(ca.logical_instance_id, ''),
+			COALESCE(ca.setup_completed, FALSE)
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset)
@@ -204,6 +218,7 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			&a.StorageExceeded,
 			&a.Hostname,
 			&a.LogicalInstanceID,
+			&a.SetupCompleted,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan customer app row: %w", err)
 		}
@@ -223,7 +238,8 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		COALESCE(ca.storage_message, ''), ca.storage_checked_at,
 		COALESCE(ca.storage_exceeded, FALSE),
 		COALESCE(pr.hostname, ''),
-		COALESCE(ca.logical_instance_id, '')
+		COALESCE(ca.logical_instance_id, ''),
+		COALESCE(ca.setup_completed, FALSE)
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 		WHERE ca.id = $1`
@@ -235,6 +251,7 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		&a.StorageExceeded,
 		&a.Hostname,
 		&a.LogicalInstanceID,
+		&a.SetupCompleted,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
