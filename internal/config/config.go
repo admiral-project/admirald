@@ -50,6 +50,7 @@ type Config struct {
 	NetworkingCockpitTarget  string
 	CaddyAdminURL            string
 	TrustedProxies           []string
+	DevMode                  bool
 }
 
 func Load() (*Config, error) {
@@ -250,6 +251,7 @@ func load(path string) (*Config, error) {
 		NetworkingCockpitTarget:  values["networking_cockpit_target"],
 		CaddyAdminURL:            values["caddy_admin_url"],
 		TrustedProxies:           trustedProxies,
+		DevMode:                  os.Getenv("ADMIRAL_ENV") == "development",
 	}, nil
 }
 
