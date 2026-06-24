@@ -117,3 +117,45 @@ func TestRetryableAction(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSetupMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		want     setupCallbackMetadata
+	}{
+		{
+			name:     "empty metadata",
+			metadata: "",
+			want:     setupCallbackMetadata{},
+		},
+		{
+			name:     "no setup fields",
+			metadata: `{"host_ports":{"web":8080}}`,
+			want:     setupCallbackMetadata{},
+		},
+		{
+			name:     "has_setup true",
+			metadata: `{"has_setup":true}`,
+			want:     setupCallbackMetadata{HasSetup: true},
+		},
+		{
+			name:     "setup_failed true with error",
+			metadata: `{"has_setup":true,"setup_failed":true,"setup_error":"bench new-site failed"}`,
+			want:     setupCallbackMetadata{HasSetup: true, SetupFailed: true, SetupError: "bench new-site failed"},
+		},
+		{
+			name:     "invalid json",
+			metadata: `{not valid`,
+			want:     setupCallbackMetadata{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSetupMetadata(tt.metadata)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parseSetupMetadata(%q) = %#v, want %#v", tt.metadata, got, tt.want)
+			}
+		})
+	}
+}

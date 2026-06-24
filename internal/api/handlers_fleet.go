@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,6 +21,25 @@ func parseHostPortsFromMetadata(metadata string) map[string]int {
 		return nil
 	}
 	return data.HostPorts
+}
+
+// setupCallbackMetadata holds information about the setup_command phase
+// reported by fleet in the provision task callback metadata.
+type setupCallbackMetadata struct {
+	HasSetup    bool   `json:"has_setup"`
+	SetupFailed bool   `json:"setup_failed"`
+	SetupError  string `json:"setup_error"`
+}
+
+func parseSetupMetadata(metadata string) setupCallbackMetadata {
+	var data setupCallbackMetadata
+	if metadata == "" {
+		return data
+	}
+	if err := json.Unmarshal([]byte(metadata), &data); err != nil {
+		return setupCallbackMetadata{}
+	}
+	return data
 }
 
 // PATCH /api/v1/apps/{id}/availability — change app availability
@@ -162,7 +182,21 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 	var nextTechStatus string
 	if res.Success {
 		switch op.Action {
-		case string(admiral.ActionProvisionApp), string(admiral.ActionStartApp), string(admiral.ActionResumeApp), string(admiral.ActionReactivateApp):
+		case string(admiral.ActionProvisionApp):
+			nextTechStatus = "running"
+			setupMeta := parseSetupMetadata(res.Metadata)
+			if setupMeta.HasSetup {
+				if uerr := h.db.SetSetupCompleted(op.InstanceID); uerr != nil {
+					h.log.Error("Failed to mark setup_completed", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			}
+			if h.networking != nil {
+				hostPorts := parseHostPortsFromMetadata(res.Metadata)
+				if err := h.networking.ActivateInstanceRoutes(r.Context(), op.InstanceID, hostPorts); err != nil {
+					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			}
+		case string(admiral.ActionStartApp), string(admiral.ActionResumeApp), string(admiral.ActionReactivateApp):
 			nextTechStatus = "running"
 			if h.networking != nil {
 				hostPorts := parseHostPortsFromMetadata(res.Metadata)
@@ -227,44 +261,18 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			nextTechStatus = "failed"
 		}
 		if op.Action == string(admiral.ActionProvisionApp) {
-			// Release capacity on provisioning failure
-			if inst, ierr := h.db.GetCustomerApp(op.InstanceID); ierr == nil && inst != nil && inst.NodeID != nil {
-				var tier database.AppTier
-				if jerr := json.Unmarshal([]byte(inst.TierSnapshotJSON), &tier); jerr == nil {
-					r := database.ParseSizeBytes(tier.Memory)
-					d := database.ParseSizeBytes(tier.Storage)
-					if r > 0 && d > 0 {
-						if cerr := h.db.ReleaseNodeCommitment(*inst.NodeID, r, d); cerr != nil {
-							h.log.Error("Failed to release capacity on provision failure", cerr, map[string]interface{}{"node_id": *inst.NodeID, "instance_id": op.InstanceID})
-						} else if rerr := h.recomputeNodePolicy(*inst.NodeID); rerr != nil {
-							h.log.Error("Failed to recompute node policy after provision failure release", rerr, map[string]interface{}{"node_id": *inst.NodeID, "instance_id": op.InstanceID})
-						} else {
-							h.auditCapacityEvent("node_capacity_released", *inst.NodeID, op.InstanceID, op.ID, admiral.ActionProvisionApp, r, d)
-						}
-					}
+			setupMeta := parseSetupMetadata(res.Metadata)
+			if setupMeta.SetupFailed {
+				nextTechStatus = "setup_failed"
+				if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", ""); uerr != nil {
+					h.log.Error("Failed to set commercial_status cancelled on setup failure", uerr, map[string]interface{}{"instance_id": op.InstanceID})
 				}
+				h.log.Info("Instance setup failed, marking commercial_status cancelled", map[string]interface{}{
+					"instance_id": op.InstanceID,
+					"setup_error": setupMeta.SetupError,
+				})
 			}
-			if h.networking != nil {
-				routes, err := h.db.GetPublicRoutes()
-				if err == nil {
-					for _, route := range routes {
-						if route.AppInstanceID != op.InstanceID {
-							continue
-						}
-						route.Status = string(admiral.RouteStatusFailed)
-						route.LastError = res.Error
-						now := time.Now().UTC()
-						route.LastHealthCheckedAt = &now
-						route.LastHealthStatus = "unhealthy"
-						if uerr := h.db.UpdatePublicRoute(&route); uerr != nil {
-							h.log.Error("Failed to update route status", uerr, map[string]interface{}{"hostname": route.Hostname})
-						}
-					}
-				}
-				if uerr := h.networking.Sync(r.Context()); uerr != nil {
-					h.log.Error("Failed to sync routes after failure", uerr, nil)
-				}
-			}
+			h.releaseCapacityAndFailRoutes(r.Context(), op.InstanceID, op.ID, res.Error)
 		}
 		if op.Action == string(admiral.ActionResizeApp) {
 			h.handleResizeCallback(op, res, false)
@@ -367,4 +375,47 @@ func maxInt64(v, floor int64) int64 {
 		return floor
 	}
 	return v
+}
+
+// releaseCapacityAndFailRoutes releases the node capacity committed to
+// an instance and marks its public routes as failed. Used when a
+// provision or setup fails and the instance is no longer operational.
+func (h *APIHandlers) releaseCapacityAndFailRoutes(ctx context.Context, instanceID, operationID, errMsg string) {
+	if inst, ierr := h.db.GetCustomerApp(instanceID); ierr == nil && inst != nil && inst.NodeID != nil {
+		var tier database.AppTier
+		if jerr := json.Unmarshal([]byte(inst.TierSnapshotJSON), &tier); jerr == nil {
+			r := database.ParseSizeBytes(tier.Memory)
+			d := database.ParseSizeBytes(tier.Storage)
+			if r > 0 && d > 0 {
+				if cerr := h.db.ReleaseNodeCommitment(*inst.NodeID, r, d); cerr != nil {
+					h.log.Error("Failed to release capacity on provision failure", cerr, map[string]interface{}{"node_id": *inst.NodeID, "instance_id": instanceID})
+				} else if rerr := h.recomputeNodePolicy(*inst.NodeID); rerr != nil {
+					h.log.Error("Failed to recompute node policy after provision failure release", rerr, map[string]interface{}{"node_id": *inst.NodeID, "instance_id": instanceID})
+				} else {
+					h.auditCapacityEvent("node_capacity_released", *inst.NodeID, instanceID, operationID, admiral.ActionProvisionApp, r, d)
+				}
+			}
+		}
+	}
+	if h.networking != nil {
+		routes, err := h.db.GetPublicRoutes()
+		if err == nil {
+			for _, route := range routes {
+				if route.AppInstanceID != instanceID {
+					continue
+				}
+				route.Status = string(admiral.RouteStatusFailed)
+				route.LastError = errMsg
+				now := time.Now().UTC()
+				route.LastHealthCheckedAt = &now
+				route.LastHealthStatus = "unhealthy"
+				if uerr := h.db.UpdatePublicRoute(&route); uerr != nil {
+					h.log.Error("Failed to update route status", uerr, map[string]interface{}{"hostname": route.Hostname})
+				}
+			}
+		}
+		if uerr := h.networking.Sync(ctx); uerr != nil {
+			h.log.Error("Failed to sync routes after failure", uerr, nil)
+		}
+	}
 }

@@ -453,6 +453,15 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 
 		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
 
+		// If the app definition includes setup_command on any service,
+		// transition to "initializing" so the customer is informed that
+		// the application is being set up, not just provisioned.
+		if hasSetupCommand(payload) {
+			if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "initializing"); uerr != nil {
+				h.log.Error("Failed to set initializing status", uerr, map[string]interface{}{"instance_id": instanceID})
+			}
+		}
+
 		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
 			OperationID: operationID,
 			Status:      "queued",
