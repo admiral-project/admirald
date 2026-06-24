@@ -81,3 +81,85 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 		t.Fatalf("expected shared volume mount to propagate, got %#v", web.SharedVolumes)
 	}
 }
+
+func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
+	payload := admiral.AppDefinitionPayload{
+		Name: "erpnext",
+		Services: map[string]admiral.YAMLService{
+			"backend": {
+				Image:        "frappe/erpnext:v15",
+				SetupCommand: "bench new-site site.local",
+			},
+			"frontend": {
+				Image: "frappe/erpnext:v15",
+			},
+		},
+	}
+	tier := database.AppTier{Name: "dev"}
+	services := buildServiceInfos(payload, tier, "inst_1", "tenant_1", nil)
+	var backend, frontend admiral.ServiceInfo
+	for _, s := range services {
+		switch s.Name {
+		case "backend":
+			backend = s
+		case "frontend":
+			frontend = s
+		}
+	}
+	if backend.SetupCommand != "bench new-site site.local" {
+		t.Fatalf("expected backend setup_command to propagate, got %q", backend.SetupCommand)
+	}
+	if frontend.SetupCommand != "" {
+		t.Fatalf("expected frontend setup_command to be empty, got %q", frontend.SetupCommand)
+	}
+}
+
+func TestHasSetupCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload admiral.AppDefinitionPayload
+		want    bool
+	}{
+		{
+			name: "no setup commands",
+			payload: admiral.AppDefinitionPayload{
+				Services: map[string]admiral.YAMLService{
+					"web": {Image: "nginx:1"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "one service with setup command",
+			payload: admiral.AppDefinitionPayload{
+				Services: map[string]admiral.YAMLService{
+					"web":     {Image: "nginx:1"},
+					"backend": {Image: "app:1", SetupCommand: "init-db"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "setup command is whitespace only",
+			payload: admiral.AppDefinitionPayload{
+				Services: map[string]admiral.YAMLService{
+					"web": {Image: "nginx:1", SetupCommand: "   "},
+				},
+			},
+			want: false,
+		},
+		{
+			name:    "empty services",
+			payload: admiral.AppDefinitionPayload{},
+			want:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasSetupCommand(tt.payload)
+			if got != tt.want {
+				t.Fatalf("hasSetupCommand() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

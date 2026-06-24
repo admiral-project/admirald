@@ -75,6 +75,7 @@ type ServiceInfo struct {
 	DependsOn     []string                   `json:"depends_on,omitempty"`
 	SharedVolumes []ServiceSharedVolumeMount `json:"shared_volumes,omitempty"`
 	Command       string                     `json:"command,omitempty"`
+	SetupCommand  string                     `json:"setup_command,omitempty"`
 	Env           map[string]string          `json:"env,omitempty"`
 	Secrets       map[string]string          `json:"secrets,omitempty"`
 	Registry      *RegistryConfig            `json:"registry,omitempty"`

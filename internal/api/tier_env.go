@@ -29,6 +29,7 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 			DependsOn:     append([]string(nil), svc.DependsOn...),
 			SharedVolumes: serviceSharedVolumes(payload, name),
 			Command:       svc.Command,
+			SetupCommand:  svc.SetupCommand,
 			Env:           env,
 			Secrets:       secretValues[name],
 		}
@@ -131,6 +132,18 @@ func mergeEnvironmentMaps(maps ...map[string]string) map[string]string {
 		}
 	}
 	return result
+}
+
+// hasSetupCommand returns true if any service in the app definition
+// defines a setup_command. This is used by the provision handler to
+// decide whether to set "initializing" status before dispatching the task.
+func hasSetupCommand(payload admiral.AppDefinitionPayload) bool {
+	for _, svc := range payload.Services {
+		if strings.TrimSpace(svc.SetupCommand) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // filterProtectedVars removes ADMIRAL_ prefixed keys from the map.
