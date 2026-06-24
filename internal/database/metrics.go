@@ -69,8 +69,8 @@ func (d *DB) GetNodeMetrics(nodeID string) (*NodeMetrics, error) {
 		SELECT
 			COALESCE(SUM(CASE WHEN technical_status = 'running' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN technical_status = 'stopped' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN technical_status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN technical_status = 'provisioning' OR technical_status = 'pending_provision' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN technical_status IN ('failed', 'setup_failed') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN technical_status IN ('provisioning', 'pending_provision', 'initializing') THEN 1 ELSE 0 END), 0),
 			COUNT(*)
 		FROM customer_apps WHERE node_id = $1`, nodeID)
 	var running, stopped, failed, provisioning, total int

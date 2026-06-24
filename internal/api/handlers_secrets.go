@@ -162,10 +162,13 @@ func normalizeInstanceSecrets(all map[string]map[string]string, payload admiral.
 
 	// Propagate to client services
 	for svcName, secrets := range all {
-		if svcName == dbService {
+		if svcName == dbService || svcName == "__global__" {
 			continue
 		}
 		for envName := range secrets {
+			if exact, ok := dbSecrets[envName]; ok {
+				all[svcName][envName] = exact
+			}
 			upper := strings.ToUpper(envName)
 			if dbUser != "" && isDBUserEnv(upper) {
 				all[svcName][envName] = dbSecrets[dbUser]

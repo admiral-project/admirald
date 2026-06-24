@@ -1238,3 +1238,46 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 		t.Fatalf("expected 403 Forbidden, got %d", rec3.Code)
 	}
 }
+
+func TestHandleAdminHealthCallbackPreservesInitializingTechnicalStatus(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	token := "test-token-health-preserve"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token)
+	wrapped := nodeAuthWrapped(h, token, h.HandleAdminHealthCallback)
+
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_001", "", "initializing"); err != nil {
+		t.Fatalf("set technical status: %v", err)
+	}
+
+	body, _ := json.Marshal(admiral.HealthReport{
+		InstanceID:   "inst_001",
+		NodeID:       "node_001",
+		HealthStatus: admiral.HealthHealthy,
+		Message:      "all good",
+		HostPorts:    map[string]int{"web": 18080},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
+	req.Header.Set("X-Admiral-Token", token)
+	req.RemoteAddr = "10.99.0.2:51820"
+	rec := httptest.NewRecorder()
+
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	inst, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if inst.TechnicalStatus != "initializing" {
+		t.Fatalf("expected technical_status to remain initializing, got %q", inst.TechnicalStatus)
+	}
+	if inst.HealthStatus != string(admiral.HealthHealthy) {
+		t.Fatalf("expected health_status healthy, got %q", inst.HealthStatus)
+	}
+}

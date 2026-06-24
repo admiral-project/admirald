@@ -156,14 +156,21 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	techStatus := healthToTechStatus(report.HealthStatus)
-	if err := h.db.UpdateInstanceHealthAndTechStatus(report.InstanceID, string(report.HealthStatus), techStatus, report.Message); err != nil {
+	preserveTechnicalStatus := inst.TechnicalStatus == "initializing" || inst.TechnicalStatus == "setup_failed"
+	var updateErr error
+	if preserveTechnicalStatus {
+		updateErr = h.db.UpdateInstanceHealth(report.InstanceID, string(report.HealthStatus), report.Message)
+	} else {
+		techStatus := healthToTechStatus(report.HealthStatus)
+		updateErr = h.db.UpdateInstanceHealthAndTechStatus(report.InstanceID, string(report.HealthStatus), techStatus, report.Message)
+	}
+	if updateErr != nil {
 		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
 		writeError(w, http.StatusInternalServerError, "Failed to update health")
 		return
 	}
 
-	if len(report.HostPorts) > 0 && h.networking != nil {
+	if !preserveTechnicalStatus && len(report.HostPorts) > 0 && h.networking != nil {
 		if err := h.networking.ActivateInstanceRoutes(r.Context(), report.InstanceID, report.HostPorts); err != nil {
 			h.log.Warn("Route reconciliation from health check failed", map[string]interface{}{
 				"instance_id": report.InstanceID,

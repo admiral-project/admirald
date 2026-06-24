@@ -42,6 +42,10 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "Application is not scheduled on any active node")
 		return
 	}
+	if blockedMsg, blocked := validateTechnicalStatusAction(inst.TechnicalStatus, req.Action); blocked {
+		writeError(w, http.StatusConflict, blockedMsg)
+		return
+	}
 	if req.NodeID != "" && req.NodeID != *inst.NodeID {
 		writeError(w, http.StatusConflict, fmt.Sprintf("Instance is assigned to node %q and cannot execute this action on node %q", *inst.NodeID, req.NodeID))
 		return
@@ -278,6 +282,18 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		OperationID: operationID,
 		Status:      "queued",
 	})
+}
+
+func validateTechnicalStatusAction(technicalStatus, action string) (string, bool) {
+	switch technicalStatus {
+	case "initializing", "setup_failed":
+		if action == "deprovision" {
+			return "", false
+		}
+		return fmt.Sprintf("Action %q is not allowed while instance technical_status is %q", action, technicalStatus), true
+	default:
+		return "", false
+	}
 }
 
 func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request) {

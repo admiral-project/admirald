@@ -11,6 +11,7 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"gopkg.in/yaml.v2"
 )
 
 func parseHostPortsFromMetadata(metadata string) map[string]int {
@@ -213,11 +214,18 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			h.handleResizeCallback(op, res, true)
 		case string(admiral.ActionDeprovisionApp):
 			nextTechStatus = "deprovisioned"
-			if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned"); uerr != nil {
+			inst, ierr := h.db.GetCustomerApp(op.InstanceID)
+			preserveSetupFailed := ierr == nil && inst != nil && inst.TechnicalStatus == "setup_failed"
+			if preserveSetupFailed {
+				nextTechStatus = "setup_failed"
+				if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", ""); uerr != nil {
+					h.log.Error("Failed to preserve setup_failed status after cleanup", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+				}
+			} else if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "cancelled", "deprovisioned"); uerr != nil {
 				h.log.Error("Failed to update instance as deprovisioned", uerr, map[string]interface{}{"instance_id": op.InstanceID})
 			}
-			// Release committed capacity
-			if inst, ierr := h.db.GetCustomerApp(op.InstanceID); ierr == nil && inst != nil && inst.NodeID != nil {
+			// Release committed capacity unless a prior provision failure already did it.
+			if inst != nil && inst.NodeID != nil && !preserveSetupFailed {
 				var tier database.AppTier
 				if jerr := json.Unmarshal([]byte(inst.TierSnapshotJSON), &tier); jerr == nil {
 					r := database.ParseSizeBytes(tier.Memory)
@@ -271,6 +279,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 					"instance_id": op.InstanceID,
 					"setup_error": setupMeta.SetupError,
 				})
+				if derr := h.enqueueSetupFailureCleanup(r.Context(), op); derr != nil {
+					h.log.Error("Failed to enqueue cleanup after setup failure", derr, map[string]interface{}{
+						"instance_id":  op.InstanceID,
+						"operation_id": op.ID,
+					})
+				}
 			}
 			h.releaseCapacityAndFailRoutes(r.Context(), op.InstanceID, op.ID, res.Error)
 		}
@@ -286,6 +300,44 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (h *APIHandlers) enqueueSetupFailureCleanup(ctx context.Context, op *database.Operation) error {
+	if op == nil {
+		return fmt.Errorf("missing operation")
+	}
+	inst, err := h.db.GetCustomerApp(op.InstanceID)
+	if err != nil {
+		return fmt.Errorf("load instance for setup cleanup: %w", err)
+	}
+	if inst == nil {
+		return fmt.Errorf("instance %q not found for setup cleanup", op.InstanceID)
+	}
+	if inst.NodeID == nil || *inst.NodeID == "" {
+		return fmt.Errorf("instance %q has no node assigned for setup cleanup", op.InstanceID)
+	}
+	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+	if err != nil {
+		return fmt.Errorf("load app definition for setup cleanup: %w", err)
+	}
+	if appDef == nil {
+		return fmt.Errorf("app definition %q not found for setup cleanup", inst.AppDefinitionName)
+	}
+	var payload admiral.AppDefinitionPayload
+	if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil { //nolint:gosec // trusted stored YAML
+		return fmt.Errorf("parse app definition for setup cleanup: %w", err)
+	}
+	tier := currentTierFromInstance(inst)
+	if tier.Name == "" {
+		tier = database.AppTier{Name: inst.TierName}
+	}
+	cleanupOpID := generateID("op")
+	if err := h.db.CreateOperation(cleanupOpID, op.InstanceID, *inst.NodeID, string(admiral.ActionDeprovisionApp), "pending_dispatch", "system"); err != nil {
+		return fmt.Errorf("create setup cleanup operation: %w", err)
+	}
+	h.enqueueTask(cleanupOpID, op.InstanceID, *inst.NodeID, inst.CustomerID, appDef.RawYAML, tier, admiral.ActionDeprovisionApp, "", "")
+	_ = ctx
+	return nil
 }
 
 func parseResizeTargetTier(metadata string) (database.AppTier, bool) {

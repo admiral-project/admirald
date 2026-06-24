@@ -192,7 +192,12 @@ func (s *Server) checkGracePeriodExpiry() {
 	}
 
 	for _, app := range apps {
-		if app.TechnicalStatus == "stopped" || app.TechnicalStatus == "paused_for_storage" {
+		if app.TechnicalStatus == "stopped" ||
+			app.TechnicalStatus == "paused_for_storage" ||
+			app.TechnicalStatus == "initializing" ||
+			app.TechnicalStatus == "setup_failed" ||
+			app.TechnicalStatus == "deprovisioning" ||
+			app.TechnicalStatus == "deprovisioned" {
 			continue
 		}
 		if app.NodeID == nil || *app.NodeID == "" {

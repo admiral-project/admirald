@@ -60,7 +60,7 @@ func (d *DB) GetExpiredGracePeriodApps() ([]CustomerApp, error) {
 		WHERE grace_period_ends_at IS NOT NULL
 		AND grace_period_ends_at < CURRENT_TIMESTAMP
 		AND storage_state = 'over_quota'
-		AND technical_status NOT IN ('stopped', 'paused_for_storage')
+		AND technical_status NOT IN ('stopped', 'paused_for_storage', 'initializing', 'setup_failed', 'deprovisioning', 'deprovisioned')
 		ORDER BY grace_period_ends_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query expired grace period apps: %w", err)
