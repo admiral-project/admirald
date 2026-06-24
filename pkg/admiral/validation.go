@@ -263,25 +263,37 @@ func parseStorageBytes(value string) int64 {
 	multiplier := int64(1)
 
 	switch {
-	case strings.HasSuffix(lower, "tib"), strings.HasSuffix(lower, "ti"), strings.HasSuffix(lower, "tb"):
+	case strings.HasSuffix(lower, "tib"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		value = value[:len(value)-3]
+	case strings.HasSuffix(lower, "ti"), strings.HasSuffix(lower, "tb"):
 		multiplier = 1024 * 1024 * 1024 * 1024
 		value = value[:len(value)-2]
 	case strings.HasSuffix(lower, "t"):
 		multiplier = 1024 * 1024 * 1024 * 1024
 		value = value[:len(value)-1]
-	case strings.HasSuffix(lower, "gib"), strings.HasSuffix(lower, "gi"), strings.HasSuffix(lower, "gb"):
+	case strings.HasSuffix(lower, "gib"):
+		multiplier = 1024 * 1024 * 1024
+		value = value[:len(value)-3]
+	case strings.HasSuffix(lower, "gi"), strings.HasSuffix(lower, "gb"):
 		multiplier = 1024 * 1024 * 1024
 		value = value[:len(value)-2]
 	case strings.HasSuffix(lower, "g"):
 		multiplier = 1024 * 1024 * 1024
 		value = value[:len(value)-1]
-	case strings.HasSuffix(lower, "mib"), strings.HasSuffix(lower, "mi"), strings.HasSuffix(lower, "mb"):
+	case strings.HasSuffix(lower, "mib"):
+		multiplier = 1024 * 1024
+		value = value[:len(value)-3]
+	case strings.HasSuffix(lower, "mi"), strings.HasSuffix(lower, "mb"):
 		multiplier = 1024 * 1024
 		value = value[:len(value)-2]
 	case strings.HasSuffix(lower, "m"):
 		multiplier = 1024 * 1024
 		value = value[:len(value)-1]
-	case strings.HasSuffix(lower, "kib"), strings.HasSuffix(lower, "ki"), strings.HasSuffix(lower, "kb"):
+	case strings.HasSuffix(lower, "kib"):
+		multiplier = 1024
+		value = value[:len(value)-3]
+	case strings.HasSuffix(lower, "ki"), strings.HasSuffix(lower, "kb"):
 		multiplier = 1024
 		value = value[:len(value)-2]
 	case strings.HasSuffix(lower, "k"):
