@@ -61,6 +61,15 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 		SharedVolumes: buildSharedVolumeInfos(payload),
 	}
 
+	// Populate setup_completed from the DB so fleet can skip setup
+	// if it has already been executed successfully (e.g. on a retry
+	// after a lost callback).
+	if action == admiral.ActionProvisionApp {
+		if inst, ierr := h.db.GetCustomerApp(instID); ierr == nil && inst != nil {
+			task.SetupCompleted = inst.SetupCompleted
+		}
+	}
+
 	if action == admiral.ActionBackupDatabase || action == admiral.ActionBackupVolumes {
 		target, err := resolveBackupTarget(payload, backupService)
 		if err != nil {

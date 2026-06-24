@@ -26,18 +26,19 @@ const (
 )
 
 type FleetTask struct {
-	TaskID        string             `json:"task_id"`
-	OperationID   string             `json:"operation_id"`
-	NodeID        string             `json:"node_id"`
-	Action        TaskAction         `json:"action"`
-	InstanceID    string             `json:"instance_id"`
-	App           AppInfo            `json:"app"`
-	Tier          TierInfo           `json:"tier"`
-	Services      []ServiceInfo      `json:"services"`
-	SharedVolumes []SharedVolumeInfo `json:"shared_volumes,omitempty"`
-	Backup        *BackupInfo        `json:"backup,omitempty"`
-	Restore       *RestoreInfo       `json:"restore,omitempty"`
-	Storage       *StorageConfig     `json:"storage,omitempty"`
+	TaskID         string             `json:"task_id"`
+	OperationID    string             `json:"operation_id"`
+	NodeID         string             `json:"node_id"`
+	Action         TaskAction         `json:"action"`
+	InstanceID     string             `json:"instance_id"`
+	App            AppInfo            `json:"app"`
+	Tier           TierInfo           `json:"tier"`
+	Services       []ServiceInfo      `json:"services"`
+	SharedVolumes  []SharedVolumeInfo `json:"shared_volumes,omitempty"`
+	Backup         *BackupInfo        `json:"backup,omitempty"`
+	Restore        *RestoreInfo       `json:"restore,omitempty"`
+	Storage        *StorageConfig     `json:"storage,omitempty"`
+	SetupCompleted bool               `json:"setup_completed,omitempty"`
 }
 
 type StorageConfig struct {
