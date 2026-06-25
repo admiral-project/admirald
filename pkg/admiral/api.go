@@ -67,19 +67,21 @@ type AppDefinitionPayload struct {
 // setup command fails, the instance is marked "setup_failed" and
 // commercial_status is set to "cancelled".
 type YAMLService struct {
-	Image         string                `yaml:"image" json:"image"`
-	Port          int                   `yaml:"port,omitempty" json:"port,omitempty"`
-	Public        bool                  `yaml:"public,omitempty" json:"public,omitempty"`
-	Volume        string                `yaml:"volume,omitempty" json:"volume,omitempty"`
-	DependsOn     []string              `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	Command       string                `yaml:"command,omitempty" json:"command,omitempty"`
-	SetupCommand  string                `yaml:"setup_command,omitempty" json:"setup_command,omitempty"`
-	NotifyOnSetup []YAMLSetupNotice     `yaml:"notify_on_setup,omitempty" json:"notify_on_setup,omitempty"`
-	Env           map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
-	Secrets       map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
-	HealthCheck   *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
-	Backup        *YAMLServiceBackup    `yaml:"backup" json:"backup"`
-	Registry      *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
+	Image               string                `yaml:"image" json:"image"`
+	Port                int                   `yaml:"port,omitempty" json:"port,omitempty"`
+	Public              bool                  `yaml:"public,omitempty" json:"public,omitempty"`
+	Volume              string                `yaml:"volume,omitempty" json:"volume,omitempty"`
+	DependsOn           []string              `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	Requires            []string              `yaml:"requires,omitempty" json:"requires,omitempty"`
+	Command             string                `yaml:"command,omitempty" json:"command,omitempty"`
+	SetupCommand        string                `yaml:"setup_command,omitempty" json:"setup_command,omitempty"`
+	NotifyOnSetup       []YAMLSetupNotice     `yaml:"notify_on_setup,omitempty" json:"notify_on_setup,omitempty"`
+	Env                 map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
+	Secrets             map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	HealthCheck         *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+	HealthCheckWaitSecs int                   `yaml:"healthcheck_wait_timeout,omitempty" json:"healthcheck_wait_timeout,omitempty"`
+	Backup              *YAMLServiceBackup    `yaml:"backup" json:"backup"`
+	Registry            *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
 }
 
 type YAMLSetupNotice struct {

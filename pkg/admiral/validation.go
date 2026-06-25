@@ -132,6 +132,17 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 				return fmt.Errorf("service %q depends_on references undefined service %q", name, dep)
 			}
 		}
+		for _, req := range svc.Requires {
+			if req == name {
+				return fmt.Errorf("service %q cannot require itself", name)
+			}
+			if _, ok := payload.Services[req]; !ok {
+				return fmt.Errorf("service %q requires references undefined service %q", name, req)
+			}
+		}
+		if svc.HealthCheckWaitSecs < 0 {
+			return fmt.Errorf("service %q healthcheck_wait_timeout must not be negative", name)
+		}
 		if errs := validateHealthcheck(name, svc.HealthCheck); len(errs) > 0 {
 			for _, e := range errs {
 				return e
@@ -330,6 +341,11 @@ func validateDependencyCycles(services map[string]YAMLService) error {
 		inStack[name] = true
 		for _, dep := range services[name].DependsOn {
 			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		for _, req := range services[name].Requires {
+			if err := visit(req); err != nil {
 				return err
 			}
 		}

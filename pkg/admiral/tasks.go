@@ -69,19 +69,21 @@ type TierInfo struct {
 }
 
 type ServiceInfo struct {
-	Name          string                     `json:"name"`
-	Image         string                     `json:"image"`
-	Port          int                        `json:"port,omitempty"`
-	Volume        string                     `json:"volume,omitempty"`
-	DependsOn     []string                   `json:"depends_on,omitempty"`
-	SharedVolumes []ServiceSharedVolumeMount `json:"shared_volumes,omitempty"`
-	Command       string                     `json:"command,omitempty"`
-	SetupCommand  string                     `json:"setup_command,omitempty"`
-	NotifyOnSetup []YAMLSetupNotice          `json:"notify_on_setup,omitempty"`
-	Env           map[string]string          `json:"env,omitempty"`
-	Secrets       map[string]string          `json:"secrets,omitempty"`
-	HealthCheck   *YAMLHealthCheck           `json:"healthcheck,omitempty"`
-	Registry      *RegistryConfig            `json:"registry,omitempty"`
+	Name                string                     `json:"name"`
+	Image               string                     `json:"image"`
+	Port                int                        `json:"port,omitempty"`
+	Volume              string                     `json:"volume,omitempty"`
+	DependsOn           []string                   `json:"depends_on,omitempty"`
+	Requires            []string                   `json:"requires,omitempty"`
+	SharedVolumes       []ServiceSharedVolumeMount `json:"shared_volumes,omitempty"`
+	Command             string                     `json:"command,omitempty"`
+	SetupCommand        string                     `json:"setup_command,omitempty"`
+	NotifyOnSetup       []YAMLSetupNotice          `json:"notify_on_setup,omitempty"`
+	Env                 map[string]string          `json:"env,omitempty"`
+	Secrets             map[string]string          `json:"secrets,omitempty"`
+	HealthCheck         *YAMLHealthCheck           `json:"healthcheck,omitempty"`
+	HealthCheckWaitSecs int                        `json:"healthcheck_wait_timeout,omitempty"`
+	Registry            *RegistryConfig            `json:"registry,omitempty"`
 }
 
 type SharedVolumeInfo struct {
