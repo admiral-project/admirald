@@ -22,19 +22,21 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 		// Resolve ${VAR} references in env values using secret values
 		env = resolveEnvRefs(env, secretValues[name], secretValues["__global__"])
 		si := admiral.ServiceInfo{
-			Name:          name,
-			Image:         svc.Image,
-			Port:          svc.Port,
-			Volume:        svc.Volume,
-			DependsOn:     append([]string(nil), svc.DependsOn...),
-			SharedVolumes: serviceSharedVolumes(payload, name),
-			Command:       svc.Command,
-			SetupCommand:  svc.SetupCommand,
-			NotifyOnSetup: append([]admiral.YAMLSetupNotice(nil), svc.NotifyOnSetup...),
-			Env:           env,
-			Secrets:       secretValues[name],
-			HealthCheck:   svc.HealthCheck,
-			User:          svc.User,
+			Name:                name,
+			Image:               svc.Image,
+			Port:                svc.Port,
+			Volume:              svc.Volume,
+			DependsOn:           append([]string(nil), svc.DependsOn...),
+			Requires:            append([]string(nil), svc.Requires...),
+			SharedVolumes:       serviceSharedVolumes(payload, name),
+			Command:             svc.Command,
+			SetupCommand:        svc.SetupCommand,
+			NotifyOnSetup:       append([]admiral.YAMLSetupNotice(nil), svc.NotifyOnSetup...),
+			Env:                 env,
+			Secrets:             secretValues[name],
+			HealthCheck:         svc.HealthCheck,
+			HealthCheckWaitSecs: svc.HealthCheckWaitSecs,
+			User:                svc.User,
 		}
 		if svc.Registry != nil {
 			si.Registry = &admiral.RegistryConfig{

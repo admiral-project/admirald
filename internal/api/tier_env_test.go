@@ -88,6 +88,7 @@ func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 		Services: map[string]admiral.YAMLService{
 			"backend": {
 				Image:        "example.com/app:1",
+				Requires:     []string{"db"},
 				SetupCommand: "app migrate --bootstrap",
 				NotifyOnSetup: []admiral.YAMLSetupNotice{
 					{Label: "Usuario administrador", Value: "Administrator"},
@@ -96,6 +97,8 @@ func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 					Type:    "command",
 					Command: []string{"app", "healthcheck"},
 				},
+				HealthCheckWaitSecs: 180,
+				User:                "1000",
 			},
 			"frontend": {
 				Image: "example.com/web:1",
@@ -121,6 +124,15 @@ func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 	}
 	if backend.HealthCheck == nil || backend.HealthCheck.Type != "command" {
 		t.Fatalf("expected healthcheck to propagate, got %#v", backend.HealthCheck)
+	}
+	if len(backend.Requires) != 1 || backend.Requires[0] != "db" {
+		t.Fatalf("expected requires to propagate, got %#v", backend.Requires)
+	}
+	if backend.HealthCheckWaitSecs != 180 {
+		t.Fatalf("expected healthcheck wait timeout to propagate, got %d", backend.HealthCheckWaitSecs)
+	}
+	if backend.User != "1000" {
+		t.Fatalf("expected user to propagate, got %q", backend.User)
 	}
 	if frontend.SetupCommand != "" {
 		t.Fatalf("expected frontend setup_command to be empty, got %q", frontend.SetupCommand)
