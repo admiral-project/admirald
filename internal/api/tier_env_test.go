@@ -84,14 +84,21 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 
 func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 	payload := admiral.AppDefinitionPayload{
-		Name: "erpnext",
+		Name: "suite-app",
 		Services: map[string]admiral.YAMLService{
 			"backend": {
-				Image:        "frappe/erpnext:v15",
-				SetupCommand: "bench new-site site.local",
+				Image:        "example.com/app:1",
+				SetupCommand: "app migrate --bootstrap",
+				NotifyOnSetup: []admiral.YAMLSetupNotice{
+					{Label: "Usuario administrador", Value: "Administrator"},
+				},
+				HealthCheck: &admiral.YAMLHealthCheck{
+					Type:    "command",
+					Command: []string{"app", "healthcheck"},
+				},
 			},
 			"frontend": {
-				Image: "frappe/erpnext:v15",
+				Image: "example.com/web:1",
 			},
 		},
 	}
@@ -106,8 +113,14 @@ func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 			frontend = s
 		}
 	}
-	if backend.SetupCommand != "bench new-site site.local" {
+	if backend.SetupCommand != "app migrate --bootstrap" {
 		t.Fatalf("expected backend setup_command to propagate, got %q", backend.SetupCommand)
+	}
+	if len(backend.NotifyOnSetup) != 1 || backend.NotifyOnSetup[0].Label != "Usuario administrador" {
+		t.Fatalf("expected notify_on_setup to propagate, got %#v", backend.NotifyOnSetup)
+	}
+	if backend.HealthCheck == nil || backend.HealthCheck.Type != "command" {
+		t.Fatalf("expected healthcheck to propagate, got %#v", backend.HealthCheck)
 	}
 	if frontend.SetupCommand != "" {
 		t.Fatalf("expected frontend setup_command to be empty, got %q", frontend.SetupCommand)

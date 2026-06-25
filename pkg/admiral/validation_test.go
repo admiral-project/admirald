@@ -454,6 +454,40 @@ func TestValidateHealthcheck(t *testing.T) {
 	}
 }
 
+func TestValidateAppDefinitionNotifyOnSetup(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "notice-app",
+		DisplayName: "Notice App",
+		Services: map[string]YAMLService{
+			"app": {
+				Image: "example.com/app:1",
+				NotifyOnSetup: []YAMLSetupNotice{
+					{Label: "Usuario administrador", Value: "Administrator"},
+				},
+				Backup: &YAMLServiceBackup{Type: "none"},
+			},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {CPU: 1, Memory: "1G", Storage: "10G"},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err != nil {
+		t.Fatalf("expected notify_on_setup to validate, got %v", err)
+	}
+
+	payload.Services["app"] = YAMLService{
+		Image: "example.com/app:1",
+		NotifyOnSetup: []YAMLSetupNotice{
+			{Label: "", Value: "Administrator"},
+		},
+		Backup: &YAMLServiceBackup{Type: "none"},
+	}
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected missing notify_on_setup label to fail")
+	}
+}
+
 func TestValidateAppDefinitionEdgeCases(t *testing.T) {
 	t.Run("missing name", func(t *testing.T) {
 		payload := AppDefinitionPayload{}

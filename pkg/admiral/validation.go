@@ -137,6 +137,14 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 				return e
 			}
 		}
+		for _, notice := range svc.NotifyOnSetup {
+			if strings.TrimSpace(notice.Label) == "" {
+				return fmt.Errorf("service %q notify_on_setup label is required", name)
+			}
+			if strings.TrimSpace(notice.Value) == "" {
+				return fmt.Errorf("service %q notify_on_setup value is required", name)
+			}
+		}
 		if svc.Registry != nil {
 			if svc.Registry.Server == "" {
 				return fmt.Errorf("service %q registry server is required", name)

@@ -523,6 +523,31 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, instanceID string) {
+	inst, err := h.db.GetCustomerApp(instanceID)
+	if err != nil {
+		h.log.Error("Get customer app failed", err, map[string]interface{}{"instance_id": instanceID})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if inst == nil {
+		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+	if err != nil {
+		h.log.Error("Get app definition failed", err, map[string]interface{}{"instance_id": instanceID, "app_name": inst.AppDefinitionName})
+		writeError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	var payload admiral.AppDefinitionPayload
+	if appDef != nil {
+		if err := yaml.Unmarshal([]byte(appDef.RawYAML), &payload); err != nil { //nolint:gosec // trusted stored YAML
+			h.log.Error("Parse app definition failed", err, map[string]interface{}{"instance_id": instanceID, "app_name": inst.AppDefinitionName})
+			writeError(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+	}
+
 	secrets, err := h.db.GetExposedInstanceSecrets(instanceID)
 	if err != nil {
 		h.log.Error("Get exposed secrets failed", err, map[string]interface{}{"instance_id": instanceID})
@@ -530,19 +555,39 @@ func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	credentials := make([]admiral.Credential, 0, len(secrets))
+	generators := make(map[string]map[string]string)
+	for serviceName, svc := range payload.Services {
+		generators[serviceName] = make(map[string]string, len(svc.Secrets))
+		for envName, secretDef := range svc.Secrets {
+			generators[serviceName][envName] = secretDef.Generate
+		}
+	}
+	if len(payload.Secrets) > 0 {
+		generators["__global__"] = make(map[string]string, len(payload.Secrets))
+		for envName, secretDef := range payload.Secrets {
+			generators["__global__"][envName] = secretDef.Generate
+		}
+	}
+
+	credentials := make([]admiral.Credential, 0, len(secrets)+len(payload.Services))
 	for _, s := range secrets {
 		plain, err := h.secrets.Decrypt(s.EncryptedValue)
 		if err != nil {
 			h.log.Error("Decrypt secret failed", err, nil)
 			continue
 		}
+		generate := ""
+		if byService, ok := generators[s.ServiceName]; ok {
+			generate = byService[s.EnvName]
+		}
 		credentials = append(credentials, admiral.Credential{
-			Service: s.ServiceName,
-			Name:    s.EnvName,
-			Value:   plain,
+			Service:  s.ServiceName,
+			Name:     s.EnvName,
+			Value:    plain,
+			Generate: generate,
 		})
 	}
+	credentials = append(credentials, buildSetupNotices(payload)...)
 
 	writeJSON(w, http.StatusOK, credentials)
 }

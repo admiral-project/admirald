@@ -62,23 +62,29 @@ type AppDefinitionPayload struct {
 // SetupCommand is an optional command executed once via "podman exec"
 // after the service container is running during provisioning. It is used
 // for application-level initialization that must happen after the
-// container starts (e.g. "bench new-site" for ERPNext). When any service
-// defines a SetupCommand, the instance transitions through "initializing"
-// before reaching "running". If any setup command fails, the instance is
-// marked "setup_failed" and commercial_status is set to "cancelled".
+// container starts. When any service defines a SetupCommand, the instance
+// transitions through "initializing" before reaching "running". If any
+// setup command fails, the instance is marked "setup_failed" and
+// commercial_status is set to "cancelled".
 type YAMLService struct {
-	Image        string                `yaml:"image" json:"image"`
-	Port         int                   `yaml:"port,omitempty" json:"port,omitempty"`
-	Public       bool                  `yaml:"public,omitempty" json:"public,omitempty"`
-	Volume       string                `yaml:"volume,omitempty" json:"volume,omitempty"`
-	DependsOn    []string              `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	Command      string                `yaml:"command,omitempty" json:"command,omitempty"`
-	SetupCommand string                `yaml:"setup_command,omitempty" json:"setup_command,omitempty"`
-	Env          map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
-	Secrets      map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
-	HealthCheck  *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
-	Backup       *YAMLServiceBackup    `yaml:"backup" json:"backup"`
-	Registry     *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
+	Image         string                `yaml:"image" json:"image"`
+	Port          int                   `yaml:"port,omitempty" json:"port,omitempty"`
+	Public        bool                  `yaml:"public,omitempty" json:"public,omitempty"`
+	Volume        string                `yaml:"volume,omitempty" json:"volume,omitempty"`
+	DependsOn     []string              `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	Command       string                `yaml:"command,omitempty" json:"command,omitempty"`
+	SetupCommand  string                `yaml:"setup_command,omitempty" json:"setup_command,omitempty"`
+	NotifyOnSetup []YAMLSetupNotice     `yaml:"notify_on_setup,omitempty" json:"notify_on_setup,omitempty"`
+	Env           map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
+	Secrets       map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	HealthCheck   *YAMLHealthCheck      `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+	Backup        *YAMLServiceBackup    `yaml:"backup" json:"backup"`
+	Registry      *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
+}
+
+type YAMLSetupNotice struct {
+	Label string `yaml:"label" json:"label"`
+	Value string `yaml:"value" json:"value"`
 }
 
 type YAMLSharedVolume struct {
@@ -285,6 +291,7 @@ type Credential struct {
 	Name     string `json:"name"`
 	Value    string `json:"value"`
 	Generate string `json:"generate,omitempty"`
+	Kind     string `json:"kind,omitempty"`
 }
 
 type BackupRestoreSource struct {

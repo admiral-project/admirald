@@ -30,8 +30,10 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 			SharedVolumes: serviceSharedVolumes(payload, name),
 			Command:       svc.Command,
 			SetupCommand:  svc.SetupCommand,
+			NotifyOnSetup: append([]admiral.YAMLSetupNotice(nil), svc.NotifyOnSetup...),
 			Env:           env,
 			Secrets:       secretValues[name],
+			HealthCheck:   svc.HealthCheck,
 		}
 		if svc.Registry != nil {
 			si.Registry = &admiral.RegistryConfig{

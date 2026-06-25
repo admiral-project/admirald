@@ -86,7 +86,28 @@ func (h *APIHandlers) createInstanceSecrets(instanceID string, payload admiral.A
 			credentials = append(credentials, admiral.Credential{Service: "__global__", Name: envName, Value: plain, Generate: secretDef.Generate})
 		}
 	}
+	credentials = append(credentials, buildSetupNotices(payload)...)
 	return credentials, nil
+}
+
+func buildSetupNotices(payload admiral.AppDefinitionPayload) []admiral.Credential {
+	credentials := make([]admiral.Credential, 0)
+	for serviceName, svc := range payload.Services {
+		for _, notice := range svc.NotifyOnSetup {
+			label := strings.TrimSpace(notice.Label)
+			value := strings.TrimSpace(notice.Value)
+			if label == "" || value == "" {
+				continue
+			}
+			credentials = append(credentials, admiral.Credential{
+				Service: serviceName,
+				Name:    label,
+				Value:   value,
+				Kind:    "notice",
+			})
+		}
+	}
+	return credentials
 }
 
 func (h *APIHandlers) loadExistingPlainSecrets(instanceID string) map[string]map[string]string {
