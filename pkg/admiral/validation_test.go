@@ -3,7 +3,14 @@
 
 package admiral
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"gopkg.in/yaml.v2"
+)
 
 func TestValidateAppDefinitionWithServiceBackups(t *testing.T) {
 	payload := AppDefinitionPayload{
@@ -59,6 +66,28 @@ func TestValidateAppDefinitionWithServiceBackups(t *testing.T) {
 
 	if err := ValidateAppDefinition(payload); err != nil {
 		t.Fatalf("expected valid app definition: %v", err)
+	}
+}
+
+func TestValidateERPNextExampleAppDefinition(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	examplePath := filepath.Join(filepath.Dir(file), "..", "..", "..", "examples", "apps", "erpnext.yaml")
+
+	data, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read erpnext example: %v", err)
+	}
+
+	var payload AppDefinitionPayload
+	if err := yaml.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal erpnext example: %v", err)
+	}
+
+	if err := ValidateAppDefinition(payload); err != nil {
+		t.Fatalf("expected erpnext example to validate, got %v", err)
 	}
 }
 
