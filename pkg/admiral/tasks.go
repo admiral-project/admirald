@@ -84,6 +84,7 @@ type ServiceInfo struct {
 	HealthCheck         *YAMLHealthCheck           `json:"healthcheck,omitempty"`
 	HealthCheckWaitSecs int                        `json:"healthcheck_wait_timeout,omitempty"`
 	Registry            *RegistryConfig            `json:"registry,omitempty"`
+	User                string                     `json:"user,omitempty"`
 }
 
 type SharedVolumeInfo struct {

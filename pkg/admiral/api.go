@@ -82,6 +82,7 @@ type YAMLService struct {
 	HealthCheckWaitSecs int                   `yaml:"healthcheck_wait_timeout,omitempty" json:"healthcheck_wait_timeout,omitempty"`
 	Backup              *YAMLServiceBackup    `yaml:"backup" json:"backup"`
 	Registry            *YAMLRegistry         `yaml:"registry,omitempty" json:"registry,omitempty"`
+	User                string                `yaml:"user,omitempty" json:"user,omitempty"`
 }
 
 type YAMLSetupNotice struct {

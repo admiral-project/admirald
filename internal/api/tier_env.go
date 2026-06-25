@@ -34,6 +34,7 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 			Env:           env,
 			Secrets:       secretValues[name],
 			HealthCheck:   svc.HealthCheck,
+			User:          svc.User,
 		}
 		if svc.Registry != nil {
 			si.Registry = &admiral.RegistryConfig{
