@@ -57,6 +57,70 @@ func TestNormalizeInstanceSecretsPropagatesExactMatchFromDBService(t *testing.T)
 	}
 }
 
+func TestNormalizeInstanceSecretsPropagatesWordPressAndGiteaDBCredentials(t *testing.T) {
+	payload := admiral.AppDefinitionPayload{
+		Services: map[string]admiral.YAMLService{
+			"web": {
+				Image: "docker.io/library/wordpress:6",
+				Secrets: map[string]admiral.YAMLSecret{
+					"WORDPRESS_DB_USER":     {},
+					"WORDPRESS_DB_PASSWORD": {},
+					"WORDPRESS_DB_NAME":     {},
+				},
+			},
+			"setup": {
+				Image: "docker.io/gitea/gitea:1.22",
+				Secrets: map[string]admiral.YAMLSecret{
+					"GITEA__database__USER":   {},
+					"GITEA__database__PASSWD": {},
+				},
+			},
+			"db": {
+				Image: "docker.io/library/mariadb:10.11",
+				Secrets: map[string]admiral.YAMLSecret{
+					"MARIADB_USER":     {},
+					"MARIADB_PASSWORD": {},
+					"MARIADB_DATABASE": {},
+				},
+			},
+		},
+	}
+	all := map[string]map[string]string{
+		"web": {
+			"WORDPRESS_DB_USER":     "wp-user",
+			"WORDPRESS_DB_PASSWORD": "wp-pass",
+			"WORDPRESS_DB_NAME":     "wp-name",
+		},
+		"setup": {
+			"GITEA__database__USER":   "gitea-user",
+			"GITEA__database__PASSWD": "gitea-pass",
+		},
+		"db": {
+			"MARIADB_USER":     "db-user",
+			"MARIADB_PASSWORD": "db-pass",
+			"MARIADB_DATABASE": "db-name",
+		},
+	}
+
+	normalizeInstanceSecrets(all, payload)
+
+	if got := all["web"]["WORDPRESS_DB_USER"]; got != "db-user" {
+		t.Fatalf("expected wordpress db user to match db user, got %q", got)
+	}
+	if got := all["web"]["WORDPRESS_DB_PASSWORD"]; got != "db-pass" {
+		t.Fatalf("expected wordpress db password to match db password, got %q", got)
+	}
+	if got := all["web"]["WORDPRESS_DB_NAME"]; got != "db-name" {
+		t.Fatalf("expected wordpress db name to match db name, got %q", got)
+	}
+	if got := all["setup"]["GITEA__database__USER"]; got != "db-user" {
+		t.Fatalf("expected gitea db user to match db user, got %q", got)
+	}
+	if got := all["setup"]["GITEA__database__PASSWD"]; got != "db-pass" {
+		t.Fatalf("expected gitea db password to match db password, got %q", got)
+	}
+}
+
 func TestValidateTechnicalStatusAction(t *testing.T) {
 	tests := []struct {
 		name           string
