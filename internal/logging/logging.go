@@ -103,17 +103,8 @@ func redact(v interface{}) interface{} {
 }
 
 func maskValue(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		if len(val) <= 4 {
-			return "****"
-		}
-		return val[:2] + "****" + val[len(val)-2:]
-	case []byte:
-		return maskValue(string(val))
-	default:
-		return "****"
-	}
+	_ = v
+	return "****"
 }
 
 func equalFold(a, b string) bool {
