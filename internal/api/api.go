@@ -336,8 +336,9 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 				s.log.Info("Portal node health check attempt failed", map[string]interface{}{"node_id": portal.ID, "addr": addr, "error": err.Error()})
 				continue
 			}
-			resp.Body.Close()
-
+			if cerr := resp.Body.Close(); cerr != nil {
+				_ = cerr
+			}
 			if resp.StatusCode == http.StatusOK {
 				ok = true
 				if err := s.handlers.db.UpdatePortalHeartbeat(portal.ID, addr); err != nil {
