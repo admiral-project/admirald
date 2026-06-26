@@ -47,6 +47,7 @@ type AppDefinitionPayload struct {
 	Name          string                      `yaml:"name" json:"name"`
 	DisplayName   string                      `yaml:"display_name" json:"display_name"`
 	Description   string                      `yaml:"description" json:"description"`
+	Environment   map[string]string           `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Services      map[string]YAMLService      `yaml:"services" json:"services"`
 	SharedVolumes map[string]YAMLSharedVolume `yaml:"shared_volumes,omitempty" json:"shared_volumes,omitempty"`
 	Secrets       map[string]YAMLSecret       `yaml:"secrets,omitempty" json:"secrets,omitempty"`

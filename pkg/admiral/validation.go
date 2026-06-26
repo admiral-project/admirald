@@ -41,6 +41,9 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	if len(payload.Tiers) == 0 {
 		return fmt.Errorf("at least one tier is required")
 	}
+	if err := validateEnvironmentMap("app", payload.Environment); err != nil {
+		return err
+	}
 
 	for envName, secret := range payload.Secrets {
 		if envName == "" {
@@ -362,18 +365,22 @@ func validateDependencyCycles(services map[string]YAMLService) error {
 }
 
 func ValidateTierEnvironment(tierName string, environment map[string]string) error {
+	return validateEnvironmentMap(fmt.Sprintf("tier %q", tierName), environment)
+}
+
+func validateEnvironmentMap(scope string, environment map[string]string) error {
 	if environment == nil {
 		return nil
 	}
 	for key, value := range environment {
 		if key == "" {
-			return fmt.Errorf("tier %q environment variable name is required", tierName)
+			return fmt.Errorf("%s environment variable name is required", scope)
 		}
 		if !envNamePattern.MatchString(key) {
-			return fmt.Errorf("tier %q environment variable %q is invalid, must match %s", tierName, key, envNamePattern.String())
+			return fmt.Errorf("%s environment variable %q is invalid, must match %s", scope, key, envNamePattern.String())
 		}
 		if len(key) >= len("ADMIRAL_") && key[:len("ADMIRAL_")] == "ADMIRAL_" {
-			return fmt.Errorf("tier %q environment variable %q uses reserved ADMIRAL_ prefix", tierName, key)
+			return fmt.Errorf("%s environment variable %q uses reserved ADMIRAL_ prefix", scope, key)
 		}
 		if value == "" {
 			// Empty strings are allowed; Admiral treats values as strings.

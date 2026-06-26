@@ -13,6 +13,12 @@ import (
 func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	payload := admiral.AppDefinitionPayload{
 		Name: "cacao-accounting",
+		Environment: map[string]string{
+			"APP_MODE":            "agency",
+			"GLOBAL_ONLY":         "yes",
+			"MAX_USERS":           "0",
+			"ADMIRAL_INSTANCE_ID": "bad",
+		},
 		SharedVolumes: map[string]admiral.YAMLSharedVolume{
 			"shared-data": {
 				Mount:    "/srv/app/shared",
@@ -57,10 +63,13 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	}
 	env := web.Env
 	if env["APP_MODE"] != "saas" {
-		t.Fatalf("expected app env to remain, got %q", env["APP_MODE"])
+		t.Fatalf("expected service env to override app env, got %q", env["APP_MODE"])
+	}
+	if env["GLOBAL_ONLY"] != "yes" {
+		t.Fatalf("expected app-level environment to propagate, got %q", env["GLOBAL_ONLY"])
 	}
 	if env["MAX_USERS"] != "2" {
-		t.Fatalf("expected tier env to override app env, got %q", env["MAX_USERS"])
+		t.Fatalf("expected tier env to override merged env, got %q", env["MAX_USERS"])
 	}
 	if env["ADMIRAL_APP_CODE"] != "cacao-accounting" {
 		t.Fatalf("expected admiral env to override reserved key, got %q", env["ADMIRAL_APP_CODE"])
@@ -79,6 +88,57 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	}
 	if len(web.SharedVolumes) != 1 || web.SharedVolumes[0].Name != "shared-data" {
 		t.Fatalf("expected shared volume mount to propagate, got %#v", web.SharedVolumes)
+	}
+}
+
+func TestBuildServiceInfosResolvesAppEnvironmentReferencesForSetup(t *testing.T) {
+	payload := admiral.AppDefinitionPayload{
+		Name: "gitea",
+		Environment: map[string]string{
+			"DB_TYPE":   "postgres",
+			"DB_HOST":   "127.0.0.1:5432",
+			"ROOT_HOST": "apps.example.test",
+		},
+		Services: map[string]admiral.YAMLService{
+			"web": {
+				Image:        "docker.io/gitea/gitea:1.22",
+				SetupCommand: "gitea migrate",
+				Env: map[string]string{
+					"DB_TYPE":     "${DB_TYPE}",
+					"DB_HOST":     "${DB_HOST}",
+					"ROOT_URL":    "https://${ROOT_HOST}/",
+					"DB_USER":     "${DB_USER}",
+					"DB_PASSWORD": "${DB_PASSWORD}",
+				},
+			},
+		},
+	}
+	secretValues := map[string]map[string]string{
+		"web": {
+			"DB_USER":     "gitea-user",
+			"DB_PASSWORD": "gitea-pass",
+		},
+	}
+
+	services := buildServiceInfos(payload, database.AppTier{Name: "small"}, "inst_1", "tenant_1", secretValues)
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	env := services[0].Env
+	if env["DB_TYPE"] != "postgres" {
+		t.Fatalf("expected DB_TYPE from app environment, got %q", env["DB_TYPE"])
+	}
+	if env["DB_HOST"] != "127.0.0.1:5432" {
+		t.Fatalf("expected DB_HOST from app environment, got %q", env["DB_HOST"])
+	}
+	if env["ROOT_URL"] != "https://apps.example.test/" {
+		t.Fatalf("expected interpolated ROOT_URL, got %q", env["ROOT_URL"])
+	}
+	if env["DB_USER"] != "gitea-user" {
+		t.Fatalf("expected DB_USER from service secret, got %q", env["DB_USER"])
+	}
+	if env["DB_PASSWORD"] != "gitea-pass" {
+		t.Fatalf("expected DB_PASSWORD from service secret, got %q", env["DB_PASSWORD"])
 	}
 }
 

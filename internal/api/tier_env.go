@@ -4,6 +4,7 @@
 package api
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,16 +12,17 @@ import (
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
 
+var envRefPattern = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
+
 func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTier, instanceID, customerID string, secretValues map[string]map[string]string) []admiral.ServiceInfo {
 	services := make([]admiral.ServiceInfo, 0, len(payload.Services))
 	for name, svc := range payload.Services {
-		// Precedence: tier environment > service env > Admiral internal vars
+		// Precedence: tier environment > service env > app environment > Admiral internal vars
 		// ADMIRAL_ prefixed vars are system-protected and cannot be overridden.
 		env := mergeEnvironmentMaps(admiralEnvironment(payload.Name, tier.Name, instanceID, customerID))
-		env = mergeEnvironmentMaps(env, filterProtectedVars(svc.Env))
-		env = mergeEnvironmentMaps(env, filterProtectedVars(tier.Environment))
-		// Resolve ${VAR} references in env values using secret values
-		env = resolveEnvRefs(env, secretValues[name], secretValues["__global__"])
+		env = resolveEnvLayer(env, filterProtectedVars(payload.Environment), secretValues[name], secretValues["__global__"])
+		env = resolveEnvLayer(env, filterProtectedVars(svc.Env), secretValues[name], secretValues["__global__"])
+		env = resolveEnvLayer(env, filterProtectedVars(tier.Environment), secretValues[name], secretValues["__global__"])
 		si := admiral.ServiceInfo{
 			Name:                name,
 			Image:               svc.Image,
@@ -96,27 +98,69 @@ func serviceSharedVolumes(payload admiral.AppDefinitionPayload, serviceName stri
 	return mounts
 }
 
-func resolveEnvRefs(env map[string]string, svcSecrets, globalSecrets map[string]string) map[string]string {
-	resolved := make(map[string]string, len(env))
-	for k, v := range env {
-		if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
-			ref := v[2 : len(v)-1]
+func resolveEnvLayer(baseEnv, layerEnv, svcSecrets, globalSecrets map[string]string) map[string]string {
+	if len(layerEnv) == 0 {
+		return mergeEnvironmentMaps(baseEnv)
+	}
+
+	resolvedLayer := make(map[string]string, len(layerEnv))
+	resolving := make(map[string]bool, len(layerEnv))
+
+	var resolveValue func(string, string) string
+	resolveValue = func(currentKey, value string) string {
+		return envRefPattern.ReplaceAllStringFunc(value, func(match string) string {
+			parts := envRefPattern.FindStringSubmatch(match)
+			if len(parts) != 2 {
+				return match
+			}
+			ref := parts[1]
 			if svcSecrets != nil {
 				if val, ok := svcSecrets[ref]; ok {
-					resolved[k] = val
-					continue
+					return val
 				}
 			}
 			if globalSecrets != nil {
 				if val, ok := globalSecrets[ref]; ok {
-					resolved[k] = val
-					continue
+					return val
 				}
 			}
-		}
-		resolved[k] = v
+			if val, ok := resolvedLayer[ref]; ok {
+				return val
+			}
+			if ref == currentKey {
+				if val, ok := baseEnv[ref]; ok {
+					return val
+				}
+				return match
+			}
+			if resolving[ref] {
+				return match
+			}
+			raw, ok := layerEnv[ref]
+			if !ok {
+				if val, ok := baseEnv[ref]; ok {
+					return val
+				}
+				return match
+			}
+			resolving[ref] = true
+			val := resolveValue(ref, raw)
+			resolving[ref] = false
+			resolvedLayer[ref] = val
+			return val
+		})
 	}
-	return resolved
+
+	for k, v := range layerEnv {
+		if resolving[k] {
+			continue
+		}
+		resolving[k] = true
+		resolvedLayer[k] = resolveValue(k, v)
+		resolving[k] = false
+	}
+
+	return mergeEnvironmentMaps(baseEnv, resolvedLayer)
 }
 
 func admiralEnvironment(appCode, tierCode, instanceID, tenantID string) map[string]string {

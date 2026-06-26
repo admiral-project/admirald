@@ -349,6 +349,31 @@ func TestValidateAppDefinitionRejectsInvalidTierEnvironmentName(t *testing.T) {
 	}
 }
 
+func TestValidateAppDefinitionRejectsInvalidAppEnvironmentName(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "sample",
+		DisplayName: "Sample",
+		Environment: map[string]string{
+			"MAX-APP": "1",
+		},
+		Services: map[string]YAMLService{
+			"web": {Image: "example.com/web:1", Backup: &YAMLServiceBackup{Type: "none"}},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {
+				CPU:          1,
+				Memory:       "1G",
+				Storage:      "10G",
+				PriceMonthly: 10,
+			},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected invalid app environment name to fail")
+	}
+}
+
 func TestValidateRestoreSourceAllowsLocalPath(t *testing.T) {
 	rec := &BackupRecord{StorageBackend: "local_path", StorageKey: "/var/lib/admiral/backups/test.tgz"}
 	if err := ValidateRestoreSource(BackupRestoreSource{}, rec); err != nil {
@@ -418,6 +443,31 @@ func TestValidateAppDefinitionRejectsReservedTierEnvironmentName(t *testing.T) {
 
 	if err := ValidateAppDefinition(payload); err == nil {
 		t.Fatal("expected reserved tier environment name to fail")
+	}
+}
+
+func TestValidateAppDefinitionRejectsReservedAppEnvironmentName(t *testing.T) {
+	payload := AppDefinitionPayload{
+		Name:        "sample",
+		DisplayName: "Sample",
+		Environment: map[string]string{
+			"ADMIRAL_TENANT_ID": "fake",
+		},
+		Services: map[string]YAMLService{
+			"web": {Image: "example.com/web:1", Backup: &YAMLServiceBackup{Type: "none"}},
+		},
+		Tiers: map[string]YAMLTier{
+			"starter": {
+				CPU:          1,
+				Memory:       "1G",
+				Storage:      "10G",
+				PriceMonthly: 10,
+			},
+		},
+	}
+
+	if err := ValidateAppDefinition(payload); err == nil {
+		t.Fatal("expected reserved app environment name to fail")
 	}
 }
 
