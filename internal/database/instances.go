@@ -36,6 +36,7 @@ type CustomerApp struct {
 	LogicalInstanceID   string     `json:"logical_instance_id"`
 	InspectData         string     `json:"inspect_data,omitempty"`
 	SetupCompleted      bool       `json:"setup_completed"`
+	SetupTimeoutSeconds int        `json:"setup_timeout_seconds,omitempty"`
 }
 
 func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {

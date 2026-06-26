@@ -10,6 +10,7 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"gopkg.in/yaml.v2"
 )
 
 var envRefPattern = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
@@ -33,6 +34,7 @@ func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTi
 			SharedVolumes:       serviceSharedVolumes(payload, name),
 			Command:             svc.Command,
 			SetupCommand:        svc.SetupCommand,
+			SetupTimeout:        svc.SetupTimeout,
 			NotifyOnSetup:       append([]admiral.YAMLSetupNotice(nil), svc.NotifyOnSetup...),
 			Env:                 env,
 			Secrets:             secretValues[name],
@@ -181,6 +183,29 @@ func mergeEnvironmentMaps(maps ...map[string]string) map[string]string {
 		}
 	}
 	return result
+}
+
+// maxSetupTimeoutSeconds returns the maximum setup_timeout (in seconds)
+// across all services that have a setup_command. Returns 0 if no service
+// defines a setup_command or no timeout is specified.
+func maxSetupTimeoutSeconds(rawYAML string) int {
+	if rawYAML == "" {
+		return 0
+	}
+	var payload admiral.AppDefinitionPayload
+	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
+		return 0
+	}
+	maxTimeout := 0
+	for _, svc := range payload.Services {
+		if strings.TrimSpace(svc.SetupCommand) == "" {
+			continue
+		}
+		if svc.SetupTimeout > maxTimeout {
+			maxTimeout = svc.SetupTimeout
+		}
+	}
+	return maxTimeout
 }
 
 // hasSetupCommand returns true if any service in the app definition

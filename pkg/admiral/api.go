@@ -76,6 +76,7 @@ type YAMLService struct {
 	Requires            []string              `yaml:"requires,omitempty" json:"requires,omitempty"`
 	Command             string                `yaml:"command,omitempty" json:"command,omitempty"`
 	SetupCommand        string                `yaml:"setup_command,omitempty" json:"setup_command,omitempty"`
+	SetupTimeout        int                   `yaml:"setup_timeout,omitempty" json:"setup_timeout,omitempty"`
 	NotifyOnSetup       []YAMLSetupNotice     `yaml:"notify_on_setup,omitempty" json:"notify_on_setup,omitempty"`
 	Env                 map[string]string     `yaml:"env,omitempty" json:"env,omitempty"`
 	Secrets             map[string]YAMLSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
