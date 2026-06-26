@@ -74,7 +74,7 @@ func TestValidateERPNextExampleAppDefinition(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	examplePath := filepath.Join(filepath.Dir(file), "..", "..", "..", "examples", "apps", "erpnext.yaml")
+	examplePath := filepath.Join(filepath.Dir(file), "testdata", "erpnext.yaml")
 
 	data, err := os.ReadFile(examplePath)
 	if err != nil {

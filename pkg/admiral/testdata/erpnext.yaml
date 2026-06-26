@@ -1,0 +1,297 @@
+name: erpnext
+display_name: ERPNext 15
+description: Open-source enterprise resource planning software with a modern, comprehensive, and user-friendly Enterprise Resource Planning (ERP) solution.
+
+environment:
+  FRAPPE_SITE_NAME: frontend
+  DB_HOST: 127.0.0.1
+  DB_PORT: "3306"
+  REDIS_CACHE: 127.0.0.1:6379
+  REDIS_QUEUE: 127.0.0.1:6380
+  REDIS_SOCKETIO: 127.0.0.1:6381
+  FRAPPE_REDIS_CACHE: redis://127.0.0.1:6379
+  FRAPPE_REDIS_QUEUE: redis://127.0.0.1:6380
+  FRAPPE_REDIS_SOCKETIO: redis://127.0.0.1:6381
+
+secrets:
+  MARIADB_ROOT_PASSWORD:
+    generate: password
+
+shared_volumes:
+  logs:
+    mount: /home/frappe/frappe-bench/logs
+    services:
+      - frontend
+      - backend
+      - setup
+      - websocket
+      - scheduler
+      - worker-default
+  sites:
+    mount: /home/frappe/frappe-bench/sites
+    services:
+      - frontend
+      - backend
+      - setup
+      - websocket
+      - scheduler
+      - worker-default
+
+services:
+  frontend:
+    image: docker.io/frappe/erpnext:v15.10.0
+    port: 8080
+    public: true
+    command: nginx-entrypoint.sh
+    depends_on:
+      - backend
+      - websocket
+    requires:
+      - backend
+      - websocket
+    env:
+      BACKEND: 127.0.0.1:8000
+      SOCKETIO: 127.0.0.1:9000
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+    backup:
+      type: none
+
+  backend:
+    image: docker.io/frappe/erpnext:v15.10.0
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    requires:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    env:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      REDIS_CACHE: ${REDIS_CACHE}
+      REDIS_QUEUE: ${REDIS_QUEUE}
+      REDIS_SOCKETIO: ${REDIS_SOCKETIO}
+    healthcheck:
+      type: tcp
+      port: 8000
+    backup:
+      type: volume
+
+  setup:
+    image: docker.io/frappe/erpnext:v15.10.0
+    command: sh -c "sleep infinity"
+    setup_command: bench new-site "$FRAPPE_DEFAULT_SITE" --db-type mariadb --db-host "$DB_HOST" --db-port "$DB_PORT" --db-root-username root --db-root-password $MARIADB_ROOT_PASSWORD --admin-password $ERP_ADMIN_PASSWORD --install-app erpnext --set-default --no-mariadb-socket
+    notify_on_setup:
+      - label: Usuario administrador
+        value: Administrator
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    requires:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    env:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      FRAPPE_DEFAULT_SITE: ${FRAPPE_SITE_NAME}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      FRAPPE_REDIS_CACHE: ${FRAPPE_REDIS_CACHE}
+      FRAPPE_REDIS_QUEUE: ${FRAPPE_REDIS_QUEUE}
+      FRAPPE_REDIS_SOCKETIO: ${FRAPPE_REDIS_SOCKETIO}
+      REDIS_CACHE: ${REDIS_CACHE}
+      REDIS_QUEUE: ${REDIS_QUEUE}
+      REDIS_SOCKETIO: ${REDIS_SOCKETIO}
+    secrets:
+      ERP_ADMIN_PASSWORD:
+        generate: password
+        expose: true
+    backup:
+      type: none
+
+  websocket:
+    image: docker.io/frappe/erpnext:v15.10.0
+    command: node /home/frappe/frappe-bench/apps/frappe/socketio.js
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    requires:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    env:
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      FRAPPE_REDIS_CACHE: ${FRAPPE_REDIS_CACHE}
+      FRAPPE_REDIS_QUEUE: ${FRAPPE_REDIS_QUEUE}
+      FRAPPE_REDIS_SOCKETIO: ${FRAPPE_REDIS_SOCKETIO}
+    backup:
+      type: none
+
+  db:
+    image: docker.io/library/mariadb:10.11
+    volume: erp_db
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --skip-character-set-client-handshake
+    env:
+      MARIADB_DATABASE: erpnext
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    secrets:
+      MARIADB_USER:
+        generate: username
+        expose: true
+      MARIADB_PASSWORD:
+        generate: password
+        expose: true
+    healthcheck:
+      type: command
+      command:
+        - sh
+        - -c
+        - mariadb-admin ping -h 127.0.0.1 -uroot -p"$MARIADB_ROOT_PASSWORD" --silent
+    healthcheck_wait_timeout: 180
+    backup:
+      type: database
+      engine: mariadb
+      database_env: MARIADB_DATABASE
+      username_env: MARIADB_USER
+      password_env: MARIADB_PASSWORD
+
+  redis-cache:
+    image: docker.io/library/redis:7-alpine
+    port: 6379
+    command: redis-server --port 6379 --maxmemory 2gb
+    healthcheck:
+      type: command
+      command: ["redis-cli", "-p", "6379", "ping"]
+    backup:
+      type: none
+
+  redis-queue:
+    image: docker.io/library/redis:7-alpine
+    port: 6380
+    command: redis-server --port 6380 --maxmemory 2gb
+    healthcheck:
+      type: command
+      command: ["redis-cli", "-p", "6380", "ping"]
+    backup:
+      type: none
+
+  redis-socketio:
+    image: docker.io/library/redis:7-alpine
+    port: 6381
+    command: redis-server --port 6381 --maxmemory 512mb
+    healthcheck:
+      type: command
+      command: ["redis-cli", "-p", "6381", "ping"]
+    backup:
+      type: none
+
+  scheduler:
+    image: docker.io/frappe/erpnext:v15.10.0
+    command: bench schedule
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    requires:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    env:
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      FRAPPE_REDIS_CACHE: ${FRAPPE_REDIS_CACHE}
+      FRAPPE_REDIS_QUEUE: ${FRAPPE_REDIS_QUEUE}
+      FRAPPE_REDIS_SOCKETIO: ${FRAPPE_REDIS_SOCKETIO}
+    backup:
+      type: none
+
+  worker-default:
+    image: docker.io/frappe/erpnext:v15.10.0
+    command: bench worker --queue default
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    requires:
+      - db
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    env:
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+      FRAPPE_REDIS_CACHE: ${FRAPPE_REDIS_CACHE}
+      FRAPPE_REDIS_QUEUE: ${FRAPPE_REDIS_QUEUE}
+      FRAPPE_REDIS_SOCKETIO: ${FRAPPE_REDIS_SOCKETIO}
+    backup:
+      type: none
+
+tiers:
+  dev:
+    cpu: 0.5
+    memory: 256M
+    storage: 1G
+    price_monthly: 0
+    free: true
+
+  production-xs:
+    cpu: 1
+    memory: 1G
+    storage: 5G
+    price_monthly: 10
+
+  production-s:
+    cpu: 1
+    memory: 2G
+    storage: 10G
+    price_monthly: 20
+    backups:
+      enabled: true
+      schedule: daily
+      retention:
+        count: 7
+        days: 30
+      backup_database: true
+      backup_volumes: true
+
+  production-m:
+    cpu: 2
+    memory: 4G
+    storage: 20G
+    price_monthly: 40
+    backups:
+      enabled: true
+      schedule: daily
+      retention:
+        count: 7
+        days: 30
+      backup_database: true
+      backup_volumes: true
+
+  production-l:
+    cpu: 4
+    memory: 8G
+    storage: 50G
+    price_monthly: 80
+    backups:
+      enabled: true
+      schedule: daily
+      retention:
+        count: 14
+        days: 60
+      backup_database: true
+      backup_volumes: true
