@@ -4,6 +4,7 @@
 package api
 
 import (
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,12 +16,12 @@ import (
 
 var envRefPattern = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 
-func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTier, instanceID, customerID string, secretValues map[string]map[string]string) []admiral.ServiceInfo {
+func buildServiceInfos(payload admiral.AppDefinitionPayload, tier database.AppTier, instanceID, customerID, publicBaseURL string, secretValues map[string]map[string]string) []admiral.ServiceInfo {
 	services := make([]admiral.ServiceInfo, 0, len(payload.Services))
 	for name, svc := range payload.Services {
 		// Precedence: tier environment > service env > app environment > Admiral internal vars
 		// ADMIRAL_ prefixed vars are system-protected and cannot be overridden.
-		env := mergeEnvironmentMaps(admiralEnvironment(payload.Name, tier.Name, instanceID, customerID))
+		env := mergeEnvironmentMaps(admiralEnvironment(payload.Name, tier.Name, instanceID, customerID, publicBaseURL))
 		env = resolveEnvLayer(env, filterProtectedVars(payload.Environment), secretValues[name], secretValues["__global__"])
 		env = resolveEnvLayer(env, filterProtectedVars(svc.Env), secretValues[name], secretValues["__global__"])
 		env = resolveEnvLayer(env, filterProtectedVars(tier.Environment), secretValues[name], secretValues["__global__"])
@@ -165,14 +166,21 @@ func resolveEnvLayer(baseEnv, layerEnv, svcSecrets, globalSecrets map[string]str
 	return mergeEnvironmentMaps(baseEnv, resolvedLayer)
 }
 
-func admiralEnvironment(appCode, tierCode, instanceID, tenantID string) map[string]string {
-	return map[string]string{
+func admiralEnvironment(appCode, tierCode, instanceID, tenantID, publicBaseURL string) map[string]string {
+	env := map[string]string{
 		"ADMIRAL_APP_CODE":    appCode,
 		"ADMIRAL_TIER_CODE":   tierCode,
 		"ADMIRAL_INSTANCE_ID": instanceID,
 		"ADMIRAL_TENANT_ID":   tenantID,
 		"ADMIRAL_ENVIRONMENT": "production",
 	}
+	if publicBaseURL != "" {
+		env["ADMIRAL_PUBLIC_URL"] = publicBaseURL
+		if parsed, err := url.Parse(publicBaseURL); err == nil && parsed.Host != "" {
+			env["ADMIRAL_PUBLIC_HOSTNAME"] = parsed.Host
+		}
+	}
+	return env
 }
 
 func mergeEnvironmentMaps(maps ...map[string]string) map[string]string {

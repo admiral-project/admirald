@@ -47,7 +47,7 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 			"ENABLE_API_ACCESS": "false",
 		},
 	}
-	services := buildServiceInfos(payload, tier, "inst_123", "tenant_456", map[string]map[string]string{})
+	services := buildServiceInfos(payload, tier, "inst_123", "tenant_456", "https://cacao123.apps.example.com/", map[string]map[string]string{})
 	if len(services) != 2 {
 		t.Fatalf("expected 2 services, got %d", len(services))
 	}
@@ -82,6 +82,12 @@ func TestBuildServiceInfosMergesEnvironmentWithPrecedence(t *testing.T) {
 	}
 	if env["ADMIRAL_TENANT_ID"] != "tenant_456" {
 		t.Fatalf("expected tenant id env, got %q", env["ADMIRAL_TENANT_ID"])
+	}
+	if env["ADMIRAL_PUBLIC_URL"] != "https://cacao123.apps.example.com/" {
+		t.Fatalf("expected public URL env, got %q", env["ADMIRAL_PUBLIC_URL"])
+	}
+	if env["ADMIRAL_PUBLIC_HOSTNAME"] != "cacao123.apps.example.com" {
+		t.Fatalf("expected public hostname env, got %q", env["ADMIRAL_PUBLIC_HOSTNAME"])
 	}
 	if len(web.DependsOn) != 1 || web.DependsOn[0] != "db" {
 		t.Fatalf("expected depends_on to propagate, got %#v", web.DependsOn)
@@ -120,7 +126,7 @@ func TestBuildServiceInfosResolvesAppEnvironmentReferencesForSetup(t *testing.T)
 		},
 	}
 
-	services := buildServiceInfos(payload, database.AppTier{Name: "small"}, "inst_1", "tenant_1", secretValues)
+	services := buildServiceInfos(payload, database.AppTier{Name: "small"}, "inst_1", "tenant_1", "", secretValues)
 	if len(services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(services))
 	}
@@ -166,7 +172,7 @@ func TestBuildServiceInfosPropagatesSetupCommand(t *testing.T) {
 		},
 	}
 	tier := database.AppTier{Name: "dev"}
-	services := buildServiceInfos(payload, tier, "inst_1", "tenant_1", nil)
+	services := buildServiceInfos(payload, tier, "inst_1", "tenant_1", "", nil)
 	var backend, frontend admiral.ServiceInfo
 	for _, s := range services {
 		switch s.Name {

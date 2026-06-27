@@ -97,7 +97,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	services := buildServiceInfos(payload, matchedTier, inst.ID, inst.CustomerID, allSecretValues)
+	services := buildServiceInfos(payload, matchedTier, inst.ID, inst.CustomerID, h.publicBaseURLForInstance(inst.ID), allSecretValues)
 
 	srcType := strings.ToLower(strings.TrimSpace(req.Source.Type))
 	srcURI := strings.TrimSpace(req.Source.URI)
@@ -339,7 +339,7 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 	allSecretValues, _ := h.decryptedSecretMap(instanceID)
 	secretValues := scopeTaskSecrets(action, payload, allSecretValues, target.ServiceName)
 
-	services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
+	services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, h.publicBaseURLForInstance(instanceID), secretValues)
 
 	task := &admiral.FleetTask{
 		TaskID:      generateID("task"),

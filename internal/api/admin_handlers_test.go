@@ -1022,7 +1022,7 @@ func TestBuildServiceInfosTierEnvPrecedence(t *testing.T) {
 		"web": {"SECRET_KEY": "sk-123"},
 	}
 
-	services := buildServiceInfos(payload, tier, "inst_001", "cust_001", allSecretValues)
+	services := buildServiceInfos(payload, tier, "inst_001", "cust_001", "", allSecretValues)
 	if len(services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(services))
 	}

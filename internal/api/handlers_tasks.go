@@ -38,7 +38,7 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 		secretValues = scopeTaskSecrets(action, payload, allSecretValues, backupService)
 	}
 
-	services := buildServiceInfos(payload, tier, instID, tenantID, secretValues)
+	services := buildServiceInfos(payload, tier, instID, tenantID, h.publicBaseURLForInstance(instID), secretValues)
 
 	task := &admiral.FleetTask{
 		TaskID:      generateID("task"),
@@ -162,7 +162,7 @@ func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, t
 		return
 	}
 
-	services := buildServiceInfos(payload, tier, instID, "", allSecretValues)
+	services := buildServiceInfos(payload, tier, instID, "", h.publicBaseURLForInstance(instID), allSecretValues)
 
 	srcType := strings.ToLower(strings.TrimSpace(bk.StorageBackend))
 	srcURI := bk.StorageKey
@@ -345,4 +345,17 @@ func cloneSecretMap(all map[string]map[string]string) map[string]map[string]stri
 		cloned[serviceName] = inner
 	}
 	return cloned
+}
+
+func (h *APIHandlers) publicBaseURLForInstance(instanceID string) string {
+	routes, err := h.db.GetRoutesByInstance(instanceID)
+	if err != nil || len(routes) == 0 {
+		return ""
+	}
+	for _, route := range routes {
+		if route.Hostname != "" {
+			return "https://" + strings.TrimRight(route.Hostname, "/") + "/"
+		}
+	}
+	return ""
 }

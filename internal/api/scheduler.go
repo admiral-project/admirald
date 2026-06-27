@@ -320,7 +320,7 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 				continue
 			}
 			secretValues := scopeTaskSecrets(admiral.ActionBackupDatabase, payload, allSecretValues, target.ServiceName)
-			services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
+			services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, h.publicBaseURLForInstance(instanceID), secretValues)
 
 			task := &admiral.FleetTask{
 				TaskID:      generateID("task"),
@@ -413,7 +413,7 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 				continue
 			}
 			secretValues := scopeTaskSecrets(admiral.ActionBackupVolumes, payload, decryptedSecrets, target.ServiceName)
-			services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, secretValues)
+			services := buildServiceInfos(payload, matchedTier, instanceID, inst.CustomerID, h.publicBaseURLForInstance(instanceID), secretValues)
 
 			task := &admiral.FleetTask{
 				TaskID:      generateID("task"),
