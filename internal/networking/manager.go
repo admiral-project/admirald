@@ -29,6 +29,8 @@ import (
 
 var appCodePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+const defaultLocalPortalTarget = "https://127.0.0.1:5001"
+
 type Manager struct {
 	DB      *database.DB
 	Caddy   *CaddyAdminClient
@@ -106,8 +108,12 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 			continue
 		}
 		// Do not overwrite routes that have been configured with a real proxy target.
-		if strings.HasPrefix(existing.TargetURL, "http://") || strings.HasPrefix(existing.TargetURL, "https://") ||
-			existing.TargetHost != "" && existing.TargetPort > 0 {
+		// The portal route is the exception when it still uses the historical
+		// single-node default; Ansible may later provide a WireGuard target for a
+		// dedicated portal node.
+		if !shouldReplaceSeededStaticRoute(existing, route) &&
+			(strings.HasPrefix(existing.TargetURL, "http://") || strings.HasPrefix(existing.TargetURL, "https://") ||
+				existing.TargetHost != "" && existing.TargetPort > 0) {
 			continue
 		}
 		existing.PublicID = route.PublicID
@@ -126,6 +132,22 @@ func (m *Manager) SeedStaticRoutes(ctx context.Context) error {
 		}
 	}
 	return m.Sync(ctx)
+}
+
+func shouldReplaceSeededStaticRoute(existing *database.PublicRoute, desired database.PublicRoute) bool {
+	if existing == nil {
+		return false
+	}
+	if existing.RouteKind != desired.RouteKind {
+		return true
+	}
+	if desired.RouteKind != string(admiral.RouteKindPortal) {
+		return false
+	}
+	if strings.TrimSpace(desired.TargetURL) == "" || desired.TargetURL == existing.TargetURL {
+		return false
+	}
+	return existing.TargetURL == "" || existing.TargetURL == defaultLocalPortalTarget
 }
 
 func (m *Manager) CreateInstanceRoutes(instanceID string, appDef admiral.AppDefinitionPayload, nodeID string) ([]database.PublicRoute, error) {

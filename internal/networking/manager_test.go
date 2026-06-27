@@ -184,6 +184,63 @@ func TestSeedStaticRoutesCreatesAdminAndPortal(t *testing.T) {
 	}
 }
 
+func TestSeedStaticRoutesUpdatesDefaultPortalTarget(t *testing.T) {
+	db := openTestDB(t)
+	cfg := &config.Config{
+		NetworkingPortalHost:   "portal.example.com",
+		NetworkingPortalTarget: "https://10.99.0.100:5001",
+	}
+	mgr, err := NewManager(db, cfg, logging.New("test"), secrets.NewManager("secret"))
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	mgr.Caddy = nil
+
+	if err := db.CreatePublicRoute(mgr.staticRoute("portal.example.com", string(admiral.RouteKindPortal), "portal", defaultLocalPortalTarget)); err != nil {
+		t.Fatalf("create default portal route: %v", err)
+	}
+	if err := mgr.SeedStaticRoutes(context.Background()); err != nil {
+		t.Fatalf("seed static routes: %v", err)
+	}
+
+	route, err := db.GetPublicRoute("portal.example.com")
+	if err != nil {
+		t.Fatalf("get portal route: %v", err)
+	}
+	if route.TargetURL != "https://10.99.0.100:5001" {
+		t.Fatalf("expected WireGuard portal target, got %q", route.TargetURL)
+	}
+}
+
+func TestSeedStaticRoutesPreservesCustomPortalTarget(t *testing.T) {
+	db := openTestDB(t)
+	cfg := &config.Config{
+		NetworkingPortalHost:   "portal.example.com",
+		NetworkingPortalTarget: "https://10.99.0.100:5001",
+	}
+	mgr, err := NewManager(db, cfg, logging.New("test"), secrets.NewManager("secret"))
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	mgr.Caddy = nil
+
+	customTarget := "https://portal.internal.example.com:5001"
+	if err := db.CreatePublicRoute(mgr.staticRoute("portal.example.com", string(admiral.RouteKindPortal), "portal", customTarget)); err != nil {
+		t.Fatalf("create custom portal route: %v", err)
+	}
+	if err := mgr.SeedStaticRoutes(context.Background()); err != nil {
+		t.Fatalf("seed static routes: %v", err)
+	}
+
+	route, err := db.GetPublicRoute("portal.example.com")
+	if err != nil {
+		t.Fatalf("get portal route: %v", err)
+	}
+	if route.TargetURL != customTarget {
+		t.Fatalf("expected custom portal target to be preserved, got %q", route.TargetURL)
+	}
+}
+
 func TestCheckRouteHealthUsesPublicHostnameThroughCaddy(t *testing.T) {
 	mgr := &Manager{
 		Caddy: &CaddyAdminClient{
