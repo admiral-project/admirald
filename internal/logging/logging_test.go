@@ -73,8 +73,8 @@ func TestMaskValueShort(t *testing.T) {
 }
 
 func TestMaskValueLong(t *testing.T) {
-	if got := maskValue("abcdefgh"); got != "ab****gh" {
-		t.Errorf("maskValue('abcdefgh') = %q, want 'ab****gh'", got)
+	if got := maskValue("abcdefgh"); got != "****" {
+		t.Errorf("maskValue('abcdefgh') = %q, want '****'", got)
 	}
 }
 
