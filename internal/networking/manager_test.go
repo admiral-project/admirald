@@ -318,6 +318,78 @@ func TestCheckRouteHealthUsesServiceHTTPHealthcheckPathAndExpectedStatus(t *test
 	}
 }
 
+func TestIsSafePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"valid/path", true},
+		{"/abs/path", true},
+		{"../traversal", false},
+		{"path/../traversal", false},
+		{"clean/path/.", false}, // filepath.Clean("clean/path/.") -> "clean/path"
+	}
+	for _, tt := range tests {
+		if got := isSafePath(tt.path); got != tt.want {
+			t.Errorf("isSafePath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestShouldReplaceSeededStaticRoute(t *testing.T) {
+	desired := database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: "https://10.99.0.100:5001"}
+
+	tests := []struct {
+		name     string
+		existing *database.PublicRoute
+		want     bool
+	}{
+		{
+			name:     "nil existing",
+			existing: nil,
+			want:     false,
+		},
+		{
+			name:     "different kind",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindAdmin)},
+			want:     true,
+		},
+		{
+			name:     "default portal target",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: defaultLocalPortalTarget},
+			want:     true,
+		},
+		{
+			name:     "custom portal target",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: "https://custom:5001"},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldReplaceSeededStaticRoute(tt.existing, desired); got != tt.want {
+				t.Errorf("shouldReplaceSeededStaticRoute() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRandomDigits(t *testing.T) {
+	got, err := randomDigits(6)
+	if err != nil {
+		t.Fatalf("randomDigits failed: %v", err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("expected 6 digits, got %d", len(got))
+	}
+	for _, c := range got {
+		if c < '0' || c > '9' {
+			t.Fatalf("unexpected character %q in random digits", c)
+		}
+	}
+}
+
 func openTestDB(t *testing.T) *database.DB {
 	t.Helper()
 

@@ -5,6 +5,7 @@ package api
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
@@ -115,6 +116,56 @@ func TestRetryableAction(t *testing.T) {
 		if gotAction != tt.want || gotStatus != tt.status || gotOK != tt.ok {
 			t.Fatalf("retryableAction(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.action, gotAction, gotStatus, gotOK, tt.want, tt.status, tt.ok)
 		}
+	}
+}
+
+func TestGenerateID(t *testing.T) {
+	got := generateID("op")
+	if !strings.HasPrefix(got, "op_") {
+		t.Errorf("expected prefix op_, got %q", got)
+	}
+	if len(got) != 3+16 { // op_ + 16 hex chars
+		t.Errorf("unexpected length %d for %q", len(got), got)
+	}
+}
+
+func TestGenerateUUID(t *testing.T) {
+	got := generateUUID()
+	// 8-4-4-4-12
+	if len(got) != 36 {
+		t.Errorf("unexpected UUID length %d", len(got))
+	}
+	if got[8] != '-' || got[13] != '-' || got[18] != '-' || got[23] != '-' {
+		t.Errorf("unexpected UUID format %q", got)
+	}
+	// Check version 4
+	if got[14] != '4' {
+		t.Errorf("expected version 4, got %c", got[14])
+	}
+}
+
+func TestGenerateSecretValue(t *testing.T) {
+	t.Run("username", func(t *testing.T) {
+		got := generateSecretValue("username")
+		if !strings.HasPrefix(got, "usr_") {
+			t.Errorf("expected prefix usr_, got %q", got)
+		}
+		if len(got) != 4+12 {
+			t.Errorf("unexpected length %d for %q", len(got), got)
+		}
+	})
+	t.Run("password", func(t *testing.T) {
+		got := generateSecretValue("password")
+		if len(got) != 24 { // 12 bytes = 24 hex chars
+			t.Errorf("unexpected length %d for %q", len(got), got)
+		}
+	})
+}
+
+func TestGenerateSecretKey(t *testing.T) {
+	got := generateSecretKey()
+	if len(got) != 64 { // 32 bytes = 64 hex chars
+		t.Errorf("unexpected length %d for %q", len(got), got)
 	}
 }
 
