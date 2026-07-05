@@ -225,12 +225,12 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 	`, nodeID, string(admiral.CommandPending), string(admiral.CommandLeased), consumerID, defaultLeaseSeconds)
 
 	var (
-		commandID       string
-		payload         []byte
-		attemptCount    int
-		maxAttempts     int
-		taskSignature   sql.NullString
-		signedAt        sql.NullInt64
+		commandID     string
+		payload       []byte
+		attemptCount  int
+		maxAttempts   int
+		taskSignature sql.NullString
+		signedAt      sql.NullInt64
 	)
 	if err := row.Scan(&commandID, &payload, &attemptCount, &maxAttempts, &taskSignature, &signedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

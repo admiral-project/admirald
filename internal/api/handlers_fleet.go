@@ -155,10 +155,10 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"command_id":     commandID,
-		"task":           task,
-		"attempt_count":  attemptCount,
-		"max_attempts":   maxAttempts,
+		"command_id":    commandID,
+		"task":          task,
+		"attempt_count": attemptCount,
+		"max_attempts":  maxAttempts,
 	})
 }
 
