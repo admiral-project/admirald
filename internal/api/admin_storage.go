@@ -40,9 +40,9 @@ func (h *APIHandlers) HandleAdminSettingsStorage(w http.ResponseWriter, r *http.
 		}
 
 		if req.Backend == "s3" && !strings.HasPrefix(req.Endpoint, "https://") {
-			if !strings.HasPrefix(req.Endpoint, "http://localhost") &&
+			if req.Endpoint != "http://localhost" &&
 				!strings.HasPrefix(req.Endpoint, "http://127.0.0.1") &&
-				!strings.HasPrefix(req.Endpoint, "http://10.") {
+				!strings.HasPrefix(req.Endpoint, "http://[::1]") {
 				writeError(w, http.StatusBadRequest, "S3 endpoint must use HTTPS for non-localhost endpoints")
 				return
 			}

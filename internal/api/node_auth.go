@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -86,12 +87,12 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			return
 		}
 
-		// Fleet se comunica con admirald únicamente a través de la VPN WireGuard.
+		// Fleet se comunica con admirald a través de la VPN WireGuard.
 		// Verificamos que la IP origen coincida con la WireGuard IP registrada del nodo.
-		// Peticiones desde 127.0.0.1/::1 (mismo host) se confían siempre.
-		if node.WireguardIP != "" {
+		// En modo desarrollo (ADMIRAL_DEV_MODE=true) se permite localhost para --single-node.
+		if node.WireguardIP != "" && os.Getenv("ADMIRAL_DEV_MODE") != "true" {
 			clientIPAddr := getClientIP(r, trustedProxies)
-			if clientIPAddr != node.WireguardIP && clientIPAddr != "127.0.0.1" && clientIPAddr != "::1" {
+			if clientIPAddr != node.WireguardIP {
 				limiter.Allow(key, authFailureLimit, authFailureWindow)
 				logAuthFailure(log, "WARN", "node_token", "wireguard_ip_mismatch", http.StatusForbidden, r, nil)
 				writeGenericAuthError(w, http.StatusForbidden)
