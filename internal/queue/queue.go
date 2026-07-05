@@ -46,30 +46,44 @@ func NewPublisher(db *queuedb.DB, log *logging.Logger, seed []byte, encryptionKe
 }
 
 func (p *Publisher) PublishTask(task *admiral.FleetTask) error {
+	task.TaskSignature = ""
+	task.SignedAt = 0
+
 	payload, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("serialize task payload: %w", err)
 	}
+	signedAt := time.Now().Unix()
+	sig := p.signPayload(payload, signedAt)
+
+	task.TaskSignature = sig
+	task.SignedAt = signedAt
+
 	storePayload, err := p.sealPayload(payload)
 	if err != nil {
 		return fmt.Errorf("encrypt task payload: %w", err)
 	}
-	signedAt := time.Now().Unix()
-	sig := p.signPayload(storePayload, signedAt)
 	return p.persistTask(task, storePayload, admiral.CommandPending, defaultMaxAttempts, "", "", sig, signedAt)
 }
 
 func (p *Publisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
+	task.TaskSignature = ""
+	task.SignedAt = 0
+
 	payload, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("serialize task payload: %w", err)
 	}
+	signedAt := time.Now().Unix()
+	sig := p.signPayload(payload, signedAt)
+
+	task.TaskSignature = sig
+	task.SignedAt = signedAt
+
 	storePayload, err := p.sealPayload(payload)
 	if err != nil {
 		return fmt.Errorf("encrypt task payload: %w", err)
 	}
-	signedAt := time.Now().Unix()
-	sig := p.signPayload(storePayload, signedAt)
 	return p.persistTask(task, storePayload, admiral.CommandFailed, 0, reason, result, sig, signedAt)
 }
 
@@ -207,16 +221,18 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 			attempt_count = attempt_count + 1
 		FROM next_command
 		WHERE fc.id = next_command.id
-		RETURNING fc.id, fc.payload, fc.attempt_count, fc.max_attempts
+		RETURNING fc.id, fc.payload, fc.attempt_count, fc.max_attempts, fc.task_signature, fc.signed_at
 	`, nodeID, string(admiral.CommandPending), string(admiral.CommandLeased), consumerID, defaultLeaseSeconds)
 
 	var (
-		commandID    string
-		payload      []byte
-		attemptCount int
-		maxAttempts  int
+		commandID       string
+		payload         []byte
+		attemptCount    int
+		maxAttempts     int
+		taskSignature   sql.NullString
+		signedAt        sql.NullInt64
 	)
-	if err := row.Scan(&commandID, &payload, &attemptCount, &maxAttempts); err != nil {
+	if err := row.Scan(&commandID, &payload, &attemptCount, &maxAttempts, &taskSignature, &signedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			if err := tx.Commit(); err != nil {
 				return nil, "", 0, 0, fmt.Errorf("commit empty claim tx: %w", err)
@@ -241,6 +257,13 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 		if uerr := json.Unmarshal(plaintext, &task); uerr != nil {
 			return nil, "", 0, 0, fmt.Errorf("decode decrypted command payload: %w", uerr)
 		}
+	}
+
+	if taskSignature.Valid {
+		task.TaskSignature = taskSignature.String
+	}
+	if signedAt.Valid {
+		task.SignedAt = signedAt.Int64
 	}
 
 	if err := tx.Commit(); err != nil {
