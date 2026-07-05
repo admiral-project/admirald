@@ -39,6 +39,8 @@ type FleetTask struct {
 	Restore        *RestoreInfo       `json:"restore,omitempty"`
 	Storage        *StorageConfig     `json:"storage,omitempty"`
 	SetupCompleted bool               `json:"setup_completed,omitempty"`
+	TaskSignature  string             `json:"task_signature,omitempty"`
+	SignedAt       int64              `json:"signed_at,omitempty"`
 }
 
 type StorageConfig struct {
