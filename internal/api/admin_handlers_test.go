@@ -49,6 +49,26 @@ func (m *migrationTestPublisher) PublishRejectedTask(task *admiral.FleetTask, re
 	return nil
 }
 
+func (m *migrationTestPublisher) ClaimTask(nodeID string) (*admiral.FleetTask, string, int, int, error) {
+	return nil, "", 30, 0, nil
+}
+
+func (m *migrationTestPublisher) MarkRunning(commandID string) error {
+	return nil
+}
+
+func (m *migrationTestPublisher) RenewLease(commandID string) error {
+	return nil
+}
+
+func (m *migrationTestPublisher) DiscardCommand(commandID, reason string) error {
+	return nil
+}
+
+func (m *migrationTestPublisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error {
+	return nil
+}
+
 func migrationTestAppYAML() string {
 	return "name: migrate-app\n" +
 		"display_name: Migration Test App\n" +
