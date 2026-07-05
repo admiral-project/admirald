@@ -347,8 +347,18 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 		}
 	}
 
-	return NewHandlers(db, logging.New("test"), nil, nil, nil, "test-hmac-key", "test-pepper", 60, "")
+	return NewHandlers(db, logging.New("test"), &mockPublisher{}, nil, nil, "test-hmac-key", "test-pepper", 60, "")
 }
+
+type mockPublisher struct{}
+
+func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error { return nil }
+func (m *mockPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error { return nil }
+func (m *mockPublisher) ClaimTask(nodeID string) (*admiral.FleetTask, string, int, int, error) { return nil, "", 30, 0, nil }
+func (m *mockPublisher) MarkRunning(commandID string) error { return nil }
+func (m *mockPublisher) RenewLease(commandID string) error { return nil }
+func (m *mockPublisher) DiscardCommand(commandID, reason string) error { return nil }
+func (m *mockPublisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error { return nil }
 
 func seedTestAppDefinition(t *testing.T, db *database.DB) {
 	t.Helper()
