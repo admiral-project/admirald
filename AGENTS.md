@@ -22,3 +22,15 @@ Reglas:
 - operaciones largas o destructivas deben ser auditable.
 - PostgreSQL es la persistencia principal.
 - la cola duradera de tareas usa una base separada.
+
+## Pre-commit
+
+Ejecutar estos comandos antes de cada commit:
+
+```bash
+go mod tidy
+gofmt -w .
+go vet ./...
+go build ./...
+go test ./...
+```
