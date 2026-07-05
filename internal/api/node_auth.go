@@ -89,8 +89,11 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 
 		// Fleet se comunica con admirald a través de la VPN WireGuard.
 		// Verificamos que la IP origen coincida con la WireGuard IP registrada del nodo.
-		// En modo desarrollo (ADMIRAL_DEV_MODE=true) se permite localhost para --single-node.
-		if node.WireguardIP != "" && os.Getenv("ADMIRAL_DEV_MODE") != "true" {
+		// ADMIRAL_DEV_MODE=true    -> permite localhost (--dev-node, desarrollo).
+		// ADMIRAL_SINGLE_NODE=true -> permite localhost (--single-node, diseño intencional:
+		//   no es un fallo de seguridad; en single-node fleet y admirald corren en el
+		//   mismo host y se comunican por loopback; no hay VPN de por medio).
+		if node.WireguardIP != "" && os.Getenv("ADMIRAL_DEV_MODE") != "true" && os.Getenv("ADMIRAL_SINGLE_NODE") != "true" {
 			clientIPAddr := getClientIP(r, trustedProxies)
 			if clientIPAddr != node.WireguardIP {
 				limiter.Allow(key, authFailureLimit, authFailureWindow)
