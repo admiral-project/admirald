@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
+	"github.com/admiral-project/admiral/admirald/internal/queue"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"gopkg.in/yaml.v2"
 )
@@ -123,6 +125,109 @@ func handleBackupCallback(h *APIHandlers, op *database.Operation, res admiral.Ta
 	}
 }
 
+func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if req.NodeID == "" {
+		writeError(w, http.StatusBadRequest, "node_id is required")
+		return
+	}
+
+	task, commandID, attemptCount, maxAttempts, err := h.publisher.ClaimTask(req.NodeID)
+	if err != nil {
+		if errors.Is(err, queue.ErrNoCommandAvailable) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.log.Error("Task claim failed", err, map[string]interface{}{"node_id": req.NodeID})
+		writeError(w, http.StatusInternalServerError, "task claim failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"command_id":     commandID,
+		"task":           task,
+		"attempt_count":  attemptCount,
+		"max_attempts":   maxAttempts,
+	})
+}
+
+func (h *APIHandlers) HandleTaskRunning(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	commandID := extractPathParam(r.URL.Path, "/api/v1/fleet/tasks/", "/running")
+	if commandID == "" {
+		writeError(w, http.StatusBadRequest, "missing command id")
+		return
+	}
+	if err := h.publisher.MarkRunning(commandID); err != nil {
+		h.log.Error("Task mark running failed", err, map[string]interface{}{"command_id": commandID})
+		writeError(w, http.StatusInternalServerError, "failed to mark task running")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (h *APIHandlers) HandleTaskRenewLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	commandID := extractPathParam(r.URL.Path, "/api/v1/fleet/tasks/", "/renew-lease")
+	if commandID == "" {
+		writeError(w, http.StatusBadRequest, "missing command id")
+		return
+	}
+	if err := h.publisher.RenewLease(commandID); err != nil {
+		h.log.Error("Task renew lease failed", err, map[string]interface{}{"command_id": commandID})
+		writeError(w, http.StatusInternalServerError, "failed to renew lease")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (h *APIHandlers) HandleTaskDiscard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	commandID := extractPathParam(r.URL.Path, "/api/v1/fleet/tasks/", "/discard")
+	if commandID == "" {
+		writeError(w, http.StatusBadRequest, "missing command id")
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := h.publisher.DiscardCommand(commandID, req.Reason); err != nil {
+		h.log.Error("Task discard failed", err, map[string]interface{}{"command_id": commandID})
+		writeError(w, http.StatusInternalServerError, "failed to discard task")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func extractPathParam(path, prefix, suffix string) string {
+	s := strings.TrimPrefix(path, prefix)
+	if idx := strings.Index(s, suffix); idx > 0 {
+		return s[:idx]
+	}
+	return ""
+}
+
 func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -141,6 +246,10 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		"node_id":      res.NodeID,
 		"success":      res.Success,
 	})
+
+	if err := h.publisher.CompleteTask(res.TaskID, res.Success, res.Error); err != nil {
+		h.log.Error("Failed to update fleet_commands from callback", err, map[string]interface{}{"task_id": res.TaskID})
+	}
 
 	op, err := h.db.GetOperation(res.OperationID)
 	if err != nil {

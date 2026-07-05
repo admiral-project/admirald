@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -102,6 +103,18 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
 	mux.HandleFunc("/api/v1/fleet/health", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-health", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback))))
 	mux.HandleFunc("/api/v1/fleet/storage", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-storage", 30, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleStorageReport))))
+	mux.HandleFunc("/api/v1/fleet/tasks/claim", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleTaskClaim)))
+	mux.HandleFunc("/api/v1/fleet/tasks/", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/running") {
+			s.handlers.HandleTaskRunning(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/renew-lease") {
+			s.handlers.HandleTaskRenewLease(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/discard") {
+			s.handlers.HandleTaskDiscard(w, r)
+		} else {
+			writeError(w, http.StatusNotFound, "unknown task endpoint")
+		}
+	})))
 
 	// Administrative endpoints (admin session)
 	mux.HandleFunc("/api/admin/auth/login", MaxBody(jsonLimit, s.handlers.HandleAdminLogin))

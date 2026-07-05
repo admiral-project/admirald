@@ -20,6 +20,11 @@ import (
 type TaskPublisher interface {
 	PublishTask(task *admiral.FleetTask) error
 	PublishRejectedTask(task *admiral.FleetTask, reason, result string) error
+	ClaimTask(nodeID string) (*admiral.FleetTask, string, int, int, error)
+	MarkRunning(commandID string) error
+	RenewLease(commandID string) error
+	DiscardCommand(commandID, reason string) error
+	CompleteTask(taskPublicID string, success bool, errorMsg string) error
 }
 
 type APIHandlers struct {
