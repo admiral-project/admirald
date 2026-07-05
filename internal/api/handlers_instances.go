@@ -519,6 +519,10 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
 	}
+	if customerID := r.Header.Get("X-Admiral-Customer-ID"); customerID != "" && customerID != inst.CustomerID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
 
 	if appDef, aerr := h.db.GetAppDefinition(inst.AppDefinitionName); aerr == nil && appDef != nil {
 		if timeout := maxSetupTimeoutSeconds(appDef.RawYAML); timeout > 0 {
@@ -538,6 +542,10 @@ func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, 
 	}
 	if inst == nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if customerID := r.Header.Get("X-Admiral-Customer-ID"); customerID != "" && customerID != inst.CustomerID {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 	appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
