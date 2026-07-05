@@ -25,6 +25,15 @@ func ValidateRunArgs(args string) error {
 	return nil
 }
 
+var setupArgsRe = regexp.MustCompile(`[;&\` + "`" + `|]|\$\(`)
+
+func ValidateSetupArgs(args string) error {
+	if setupArgsRe.MatchString(args) {
+		return fmt.Errorf("setup_command contains unsafe shell metacharacters")
+	}
+	return nil
+}
+
 func ValidateAppDefinition(payload AppDefinitionPayload) error {
 	if payload.Name == "" {
 		return fmt.Errorf("name is required")
@@ -113,6 +122,11 @@ func ValidateAppDefinition(payload AppDefinitionPayload) error {
 		if svc.Command != "" {
 			if err := ValidateRunArgs(svc.Command); err != nil {
 				return fmt.Errorf("service %q command: %w", name, err)
+			}
+		}
+		if svc.SetupCommand != "" {
+			if err := ValidateSetupArgs(svc.SetupCommand); err != nil {
+				return fmt.Errorf("service %q setup_command: %w", name, err)
 			}
 		}
 		if svc.Backup == nil {
