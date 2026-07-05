@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type DB struct {
@@ -20,7 +20,7 @@ type DB struct {
 var ErrNodeCapacityPolicyBlocked = errors.New("node cannot receive new workload under current policy")
 
 func Connect(dbURL string) (*DB, error) {
-	driver := "postgres"
+	driver := "pgx"
 
 	db, err := sql.Open(driver, dbURL)
 	if err != nil {

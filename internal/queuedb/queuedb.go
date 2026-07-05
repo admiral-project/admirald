@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type DB struct {
@@ -16,7 +16,7 @@ type DB struct {
 }
 
 func Connect(dbURL string) (*DB, error) {
-	db, err := sql.Open("postgres", dbURL)
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("open queue db: %w", err)
 	}
