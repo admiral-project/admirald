@@ -20,6 +20,9 @@ var sensitiveKeys = []string{
 	"access_key",
 	"secret_key",
 	"session_token",
+	"private_key",
+	"encryption_key",
+	"signing_key",
 }
 
 type Logger struct {

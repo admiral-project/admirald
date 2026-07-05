@@ -25,7 +25,7 @@ func ValidateRunArgs(args string) error {
 	return nil
 }
 
-var setupArgsRe = regexp.MustCompile(`[;&\` + "`" + `|]|\$\(`)
+var setupArgsRe = regexp.MustCompile(`[;&\` + "`" + `|\n]|\$\(`)
 
 func ValidateSetupArgs(args string) error {
 	if setupArgsRe.MatchString(args) {
