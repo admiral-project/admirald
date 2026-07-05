@@ -107,10 +107,10 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			if clientIPAddr == "127.0.0.1" || clientIPAddr == "::1" {
 				log.Warn("admiral-fleet connected from localhost (wireguard IP check bypassed)",
 					map[string]interface{}{
-						"node_id":     node.ID,
-						"client_ip":   clientIPAddr,
-						"reason":      "ADMIRAL_DEV_MODE or ADMIRAL_SINGLE_NODE",
-						"wg_ip":       node.WireguardIP,
+						"node_id":   node.ID,
+						"client_ip": clientIPAddr,
+						"reason":    "ADMIRAL_DEV_MODE or ADMIRAL_SINGLE_NODE",
+						"wg_ip":     node.WireguardIP,
 					})
 			}
 		}
