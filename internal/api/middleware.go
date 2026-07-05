@@ -72,6 +72,58 @@ func AdminAuthMiddleware(log *logging.Logger, adminToken string, trustedProxies 
 	}
 }
 
+func HarborAuthMiddleware(log *logging.Logger, adminToken, harborToken string, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
+	limiter := NewRateLimiter()
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := "harbor_token:" + getClientIP(r, trustedProxies)
+		if blocked, retryAfter := limiter.IsBlocked(key, authFailureLimit, authFailureWindow); blocked {
+			seconds := int(retryAfter / time.Second)
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			logAuthFailure(log, "WARN", "harbor_token", "ip_temporarily_blocked", http.StatusTooManyRequests, r, nil)
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication failures"})
+			return
+		}
+
+		reqToken := r.Header.Get("X-Admiral-Token")
+		if reqToken == "" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				reqToken = strings.TrimPrefix(authHeader, "Bearer ")
+			}
+		}
+
+		if reqToken == "" {
+			limiter.Allow(key, authFailureLimit, authFailureWindow)
+			logAuthFailure(log, "WARN", "harbor_token", "missing_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+
+		// Allow both admin token (full access) and harbor token (customer scope)
+		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(adminToken)) == 1 {
+			limiter.Reset(key)
+			r.Header.Del("X-Admiral-Admin-User")
+			r.Header.Del("X-Admiral-Operator")
+			next(w, r)
+			return
+		}
+		if harborToken != "" && subtle.ConstantTimeCompare([]byte(reqToken), []byte(harborToken)) == 1 {
+			limiter.Reset(key)
+			r.Header.Del("X-Admiral-Admin-User")
+			r.Header.Del("X-Admiral-Operator")
+			next(w, r)
+			return
+		}
+
+		limiter.Allow(key, authFailureLimit, authFailureWindow)
+		logAuthFailure(log, "WARN", "harbor_token", "invalid_token", http.StatusUnauthorized, r, nil)
+		writeGenericAuthError(w, http.StatusUnauthorized)
+	}
+}
+
 // MaxBody wraps a handler with http.MaxBytesReader to limit request body size.
 // maxBytes: 1<<20 = 1 MiB for JSON, 5<<20 = 5 MiB for YAML.
 func MaxBody(maxBytes int64, next http.HandlerFunc) http.HandlerFunc {

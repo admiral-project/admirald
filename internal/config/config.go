@@ -21,6 +21,7 @@ type Config struct {
 	DatabaseURL       string
 	QueueDatabaseURL  string
 	AdminToken        string
+	HarborAPIToken    string
 	TokenPepper       string
 	TokenTTLMinutes   int
 	SecretsKey        string
@@ -64,6 +65,7 @@ func load(path string) (*Config, error) {
 		"database_url":               "",
 		"queue_database_url":         "",
 		"admin_token":                "",
+		"harbor_api_token":           "",
 		"token_pepper":               "",
 		"token_ttl_minutes":          "5",
 		"secrets_key":                "",
@@ -101,6 +103,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "database_url", "ADMIRAL_DATABASE_URL")
 	applyEnv(values, "queue_database_url", "ADMIRAL_QUEUE_DATABASE_URL")
 	applyEnv(values, "admin_token", "ADMIRAL_ADMIN_TOKEN")
+	applyEnv(values, "harbor_api_token", "ADMIRAL_HARBOR_API_TOKEN")
 	applyEnv(values, "token_pepper", "ADMIRAL_TOKEN_PEPPER")
 	applyEnv(values, "secrets_key", "ADMIRAL_SECRETS_KEY")
 	applyEnv(values, "signing_key", "ADMIRAL_ED25519_PRIVATE_KEY")
@@ -224,6 +227,7 @@ func load(path string) (*Config, error) {
 		DatabaseURL:              values["database_url"],
 		QueueDatabaseURL:         values["queue_database_url"],
 		AdminToken:               values["admin_token"],
+		HarborAPIToken:           values["harbor_api_token"],
 		TokenPepper:              values["token_pepper"],
 		TokenTTLMinutes:          ttl,
 		SecretsKey:               values["secrets_key"],

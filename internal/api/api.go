@@ -24,6 +24,7 @@ type Server struct {
 	handlers       *APIHandlers
 	log            *logging.Logger
 	adminToken     string
+	harborToken    string
 	tokenPepper    string
 	fleetLimiter   Limiter
 	adminLimiter   Limiter
@@ -36,7 +37,7 @@ const (
 	authFailureWindow = 5 * time.Minute
 )
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string, trustedProxies []string, devMode bool) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string, trustedProxies []string, devMode bool) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
 	// invalidates all active admin web sessions (flagship/harbor must
@@ -56,6 +57,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		handlers:       handlers,
 		log:            log,
 		adminToken:     adminToken,
+		harborToken:    harborToken,
 		tokenPepper:    tokenPepper,
 		fleetLimiter:   NewDBRateLimiter(db),
 		adminLimiter:   NewRateLimiter(),
@@ -78,9 +80,9 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/nodes/", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleNodeByID)))
 	mux.HandleFunc("/api/v1/apps", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(yamlLimit, s.handlers.HandleApps)))
 	mux.HandleFunc("/api/v1/apps/", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/customer-apps", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
-	mux.HandleFunc("/api/v1/customer-apps/", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
-	mux.HandleFunc("/api/v1/customer-apps/action", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
+	mux.HandleFunc("/api/v1/customer-apps", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
+	mux.HandleFunc("/api/v1/customer-apps/", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
+	mux.HandleFunc("/api/v1/customer-apps/action", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
 	mux.HandleFunc("/api/v1/operations", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleOperations)))
 	mux.HandleFunc("/api/v1/routes", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
 	mux.HandleFunc("/api/v1/routes/", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleRoutes)))
