@@ -25,8 +25,8 @@ type Server struct {
 	log            *logging.Logger
 	adminToken     string
 	tokenPepper    string
-	fleetLimiter   *RateLimiter
-	adminLimiter   *RateLimiter
+	fleetLimiter   Limiter
+	adminLimiter   Limiter
 	trustedProxies []string
 	devMode        bool
 }
@@ -57,7 +57,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		log:            log,
 		adminToken:     adminToken,
 		tokenPepper:    tokenPepper,
-		fleetLimiter:   NewRateLimiter(),
+		fleetLimiter:   NewDBRateLimiter(db),
 		adminLimiter:   NewRateLimiter(),
 		trustedProxies: trustedProxies,
 		devMode:        devMode,

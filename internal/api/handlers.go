@@ -37,7 +37,7 @@ type APIHandlers struct {
 	hmacKey           string
 	tokenPepper       string
 	configTokenTTL    int
-	loginLimiter      *RateLimiter
+	loginLimiter      Limiter
 	knowHostPath      string
 	taskEncryptionKey string // shared AES-256-GCM key served to authenticated worker nodes
 }

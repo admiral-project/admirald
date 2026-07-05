@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
 
@@ -139,7 +140,41 @@ func (rl *RateLimiter) Reset(key string) {
 	delete(rl.buckets, key)
 }
 
-func RateLimit(limiter *RateLimiter, key string, maxAttempts int, window time.Duration, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
+type Limiter interface {
+	Allow(key string, maxAttempts int, window time.Duration) bool
+	IsBlocked(key string, maxAttempts int, window time.Duration) (bool, time.Duration)
+	Reset(key string)
+}
+
+type DBRateLimiter struct {
+	db *database.DB
+}
+
+func NewDBRateLimiter(db *database.DB) *DBRateLimiter {
+	return &DBRateLimiter{db: db}
+}
+
+func (rl *DBRateLimiter) Allow(key string, maxAttempts int, window time.Duration) bool {
+	allowed, _, err := rl.db.CheckRateLimit(key, maxAttempts, window.Seconds())
+	if err != nil {
+		return true
+	}
+	return allowed
+}
+
+func (rl *DBRateLimiter) IsBlocked(key string, maxAttempts int, window time.Duration) (bool, time.Duration) {
+	allowed, remaining, err := rl.db.CheckRateLimit(key, maxAttempts, window.Seconds())
+	if err != nil {
+		return false, 0
+	}
+	return !allowed, time.Duration(remaining) * time.Second
+}
+
+func (rl *DBRateLimiter) Reset(key string) {
+	_ = rl.db.ResetRateLimit(key)
+}
+
+func RateLimit(limiter Limiter, key string, maxAttempts int, window time.Duration, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := getClientIP(r, trustedProxies)
 		fullKey := key + ":" + ip
