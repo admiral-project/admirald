@@ -38,12 +38,6 @@ func (m *Manager) deriveKey(salt []byte) []byte {
 	return key
 }
 
-// legacyKey derives the key using raw SHA256 (old format, no salt).
-func (m *Manager) legacyKey() []byte {
-	sum := sha256.Sum256(m.masterKey)
-	return sum[:]
-}
-
 func (m *Manager) encryptWithKey(key []byte, plaintext string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -110,18 +104,17 @@ func (m *Manager) Decrypt(encoded string) (string, error) {
 		return "", fmt.Errorf("ciphertext too short")
 	}
 
-	// Try new format (salt || nonce || ciphertext).
-	if len(data) > saltLen {
-		salt := data[:saltLen]
-		ct := data[saltLen:]
-		key := m.deriveKey(salt)
-		plaintext, err := m.decryptWithKey(key, ct)
-		if err == nil {
-			return plaintext, nil
-		}
+	// New format (salt || nonce || ciphertext) — REQUIRED.
+	// Legacy format (no salt, raw SHA256 key derivation) was removed
+	// for security: silent fallback from AES-GCM to SHA256 allowed
+	// ciphertext substitution attacks.
+	if len(data) <= saltLen {
+		return "", fmt.Errorf("ciphertext too short for current encryption format; " +
+			"data may be from a removed legacy format")
 	}
 
-	// Fall back to old format (no salt, raw SHA256 key derivation).
-	key := m.legacyKey()
-	return m.decryptWithKey(key, data)
+	salt := data[:saltLen]
+	ct := data[saltLen:]
+	key := m.deriveKey(salt)
+	return m.decryptWithKey(key, ct)
 }

@@ -300,6 +300,13 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 	switch r.Method {
 	case http.MethodGet:
 		customerID := r.URL.Query().Get("customer_id")
+		if customerID == "" {
+			customerID = r.Header.Get("X-Admiral-Customer-ID")
+		}
+		if customerID == "" {
+			writeError(w, http.StatusBadRequest, "customer_id is required")
+			return
+		}
 		apps, err := h.db.GetCustomerApps(customerID)
 		if err != nil {
 			h.log.Error("Get customer apps failed", err, nil)
@@ -519,7 +526,12 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
 	}
-	if customerID := r.Header.Get("X-Admiral-Customer-ID"); customerID != "" && customerID != inst.CustomerID {
+	customerID := r.Header.Get("X-Admiral-Customer-ID")
+	if customerID == "" {
+		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
+		return
+	}
+	if customerID != inst.CustomerID {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
@@ -544,7 +556,12 @@ func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
 	}
-	if customerID := r.Header.Get("X-Admiral-Customer-ID"); customerID != "" && customerID != inst.CustomerID {
+	customerID := r.Header.Get("X-Admiral-Customer-ID")
+	if customerID == "" {
+		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
+		return
+	}
+	if customerID != inst.CustomerID {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
