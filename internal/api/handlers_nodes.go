@@ -19,9 +19,10 @@ import (
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
-	"github.com/admiral-project/admiral/admirald/internal/logging"
+	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/hkdf"
+	"gopkg.in/yaml.v2"
 )
 
 func nextKnownHostAssignment(nodes []database.Node, role string) knownHostBootstrapAssignment {
