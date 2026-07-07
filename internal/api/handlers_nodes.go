@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
-	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"github.com/admiral-project/admiral/admirald/internal/logging"
 	"golang.org/x/crypto/bcrypt"
-	"gopkg.in/yaml.v2"
+	"golang.org/x/crypto/hkdf"
 )
 
 func nextKnownHostAssignment(nodes []database.Node, role string) knownHostBootstrapAssignment {
@@ -114,8 +114,23 @@ func (h *APIHandlers) syncKnownHostInventory() error {
 	return nil
 }
 
+// deriveEncryptionKey derives an AES-256-GCM key from pepper using HKDF with
+// a distinct context label ("node-token-encryption-v1") so that the same
+// pepper material is not shared between hashing (nodeTokenIdentifier) and
+// encryption. This prevents one-use key exposure from compromising the other.
+func deriveEncryptionKey(pepper string) []byte {
+	salt := []byte("admiral-node-tok-enc-v1")
+	prk := hkdf.Extract(sha256.New, []byte(pepper), salt)
+	r := hkdf.Expand(sha256.New, prk, []byte("node-token-encryption-key"))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(r, key); err != nil {
+		panic(fmt.Sprintf("hkdf key derivation for node token encryption failed: %v", err))
+	}
+	return key
+}
+
 func encryptTokenValue(rawToken, pepper string) (string, error) {
-	key := sha256Key(pepper)
+	key := deriveEncryptionKey(pepper)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)
@@ -130,11 +145,6 @@ func encryptTokenValue(rawToken, pepper string) (string, error) {
 	}
 	ciphertext := aesGCM.Seal(nonce, nonce, []byte(rawToken), nil)
 	return hex.EncodeToString(ciphertext), nil
-}
-
-func sha256Key(pepper string) []byte {
-	h := sha256.Sum256([]byte(pepper))
-	return h[:]
 }
 
 func generateNodeToken(pepper string, ttlMinutes int) (rawToken, identifier, hash, encryptedValue, claimID string, expiresAt time.Time, err error) {
