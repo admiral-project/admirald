@@ -39,6 +39,16 @@ type Manager struct {
 	Secrets *secrets.Manager
 }
 
+func (m *Manager) runtimeNodeAddress(node *database.Node) (string, error) {
+	if os.Getenv("ADMIRAL_SINGLE_NODE") == "true" || (m.Config != nil && m.Config.DevMode) {
+		return "127.0.0.1", nil
+	}
+	if node.WireguardIP == "" {
+		return "", fmt.Errorf("node %q has no WireGuard address; refusing public or general-interface routing", node.ID)
+	}
+	return node.WireguardIP, nil
+}
+
 func NewManager(db *database.DB, cfg *config.Config, log *logging.Logger, secretManager *secrets.Manager) (*Manager, error) {
 	caddy, err := NewCaddyAdminClient(cfg.CaddyAdminURL)
 	if err != nil {
@@ -174,6 +184,10 @@ func (m *Manager) CreateInstanceRoutes(instanceID string, appDef admiral.AppDefi
 	if publicServiceName == "" {
 		return nil, nil
 	}
+	targetHost, err := m.runtimeNodeAddress(node)
+	if err != nil {
+		return nil, err
+	}
 
 	hostname, err := m.generateHostname(appDef.Name)
 	if err != nil {
@@ -189,9 +203,9 @@ func (m *Manager) CreateInstanceRoutes(instanceID string, appDef admiral.AppDefi
 		NodeID:           &node.ID,
 		ServiceName:      publicServiceName,
 		TargetScheme:     "http",
-		TargetHost:       node.IP,
+		TargetHost:       targetHost,
 		TargetPort:       publicService.Port,
-		TargetURL:        fmt.Sprintf("http://%s:%d", node.IP, publicService.Port),
+		TargetURL:        fmt.Sprintf("http://%s:%d", targetHost, publicService.Port),
 		RouteKind:        string(admiral.RouteKindInstance),
 		TLSMode:          "auto",
 		Status:           string(admiral.RouteStatusPending),
@@ -238,14 +252,18 @@ func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string,
 			}
 			continue
 		}
-		targetHost := node.IP
+		targetHost, err := m.runtimeNodeAddress(node)
+		if err != nil {
+			route.Status = string(admiral.RouteStatusFailed)
+			route.LastError = err.Error()
+			if updateErr := m.DB.UpdatePublicRoute(&route); updateErr != nil {
+				return updateErr
+			}
+			continue
+		}
 		targetPort := svc.Port
 		if len(hostPorts) > 0 && hostPorts[0] != nil {
 			if hostPort, ok := hostPorts[0][route.ServiceName]; ok && hostPort > 0 {
-				targetHost = node.WireguardIP
-				if targetHost == "" {
-					targetHost = node.IP
-				}
 				targetPort = hostPort
 			}
 		}
