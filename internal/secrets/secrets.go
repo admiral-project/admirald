@@ -28,14 +28,14 @@ func NewManager(masterKey string) *Manager {
 }
 
 // deriveKey derives an AES-256 key from the master key using HKDF with a salt.
-func (m *Manager) deriveKey(salt []byte) []byte {
+func (m *Manager) deriveKey(salt []byte) ([]byte, error) {
 	prk := hkdf.Extract(sha256.New, m.masterKey, salt)
 	r := hkdf.Expand(sha256.New, prk, []byte("admiral-secrets-key-v1"))
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(r, key); err != nil {
-		panic(fmt.Sprintf("hkdf key derivation failed: %v", err))
+		return nil, fmt.Errorf("derive key: %w", err)
 	}
-	return key
+	return key, nil
 }
 
 func (m *Manager) encryptWithKey(key []byte, plaintext string) ([]byte, error) {
@@ -81,7 +81,10 @@ func (m *Manager) Encrypt(plaintext string) (string, error) {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
 
-	key := m.deriveKey(salt)
+	key, err := m.deriveKey(salt)
+	if err != nil {
+		return "", err
+	}
 	ct, err := m.encryptWithKey(key, plaintext)
 	if err != nil {
 		return "", err
@@ -115,6 +118,9 @@ func (m *Manager) Decrypt(encoded string) (string, error) {
 
 	salt := data[:saltLen]
 	ct := data[saltLen:]
-	key := m.deriveKey(salt)
+	key, err := m.deriveKey(salt)
+	if err != nil {
+		return "", err
+	}
 	return m.decryptWithKey(key, ct)
 }

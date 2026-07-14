@@ -6,7 +6,6 @@ package api
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -298,11 +297,10 @@ func (s *Server) StartNodeHealthMonitor(ctx context.Context) {
 	defer ticker.Stop()
 	s.log.Info("Node health monitor started", nil)
 
-	portalClient := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
+	portalClient, err := internalHTTPClient(5*time.Second, s.devMode)
+	if err != nil {
+		s.log.Error("Node health monitor could not configure internal TLS", err, nil)
+		return
 	}
 
 	for {

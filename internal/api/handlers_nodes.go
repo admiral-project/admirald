@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -119,19 +118,22 @@ func (h *APIHandlers) syncKnownHostInventory() error {
 // a distinct context label ("node-token-encryption-v1") so that the same
 // pepper material is not shared between hashing (nodeTokenIdentifier) and
 // encryption. This prevents one-use key exposure from compromising the other.
-func deriveEncryptionKey(pepper string) []byte {
+func deriveEncryptionKey(pepper string) ([]byte, error) {
 	salt := []byte("admiral-node-tok-enc-v1")
 	prk := hkdf.Extract(sha256.New, []byte(pepper), salt)
 	r := hkdf.Expand(sha256.New, prk, []byte("node-token-encryption-key"))
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(r, key); err != nil {
-		panic(fmt.Sprintf("hkdf key derivation for node token encryption failed: %v", err))
+		return nil, fmt.Errorf("derive node token encryption key: %w", err)
 	}
-	return key
+	return key, nil
 }
 
 func encryptTokenValue(rawToken, pepper string) (string, error) {
-	key := deriveEncryptionKey(pepper)
+	key, err := deriveEncryptionKey(pepper)
+	if err != nil {
+		return "", err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)
@@ -527,8 +529,10 @@ func (h *APIHandlers) handleNodeReady(w http.ResponseWriter, nodeID string) {
 		}
 		readyURL = fmt.Sprintf("%s://%s:5001/ready", scheme, addr)
 		if scheme == "https" {
-			client.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			client, err = internalHTTPClient(10*time.Second, h.server.devMode)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("Configure internal TLS: %v", err))
+				return
 			}
 		}
 	default:
