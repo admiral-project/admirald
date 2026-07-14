@@ -502,15 +502,15 @@ func (h *APIHandlers) handleNodeReady(w http.ResponseWriter, nodeID string) {
 		return
 	}
 
-	addr := node.PublicIP
-	if addr == "" {
-		addr = node.IP
-	}
-	if addr == "" {
+	addr := node.WireguardIP
+	if h.server.devMode || os.Getenv("ADMIRAL_SINGLE_NODE") == "true" {
 		addr = node.WireguardIP
+		if addr == "" {
+			addr = "127.0.0.1"
+		}
 	}
 	if addr == "" {
-		writeError(w, http.StatusBadRequest, "Node has no reachable address")
+		writeError(w, http.StatusBadRequest, "Node has no WireGuard address; refusing non-VPN readiness check")
 		return
 	}
 

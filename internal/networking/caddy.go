@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -385,11 +386,19 @@ func reverseProxyRoute(match []interface{}, upstream string) map[string]interfac
 			}
 		}
 		if scheme == "https" {
+			tlsConfig := map[string]interface{}{}
+			if caFile := os.Getenv("ADMIRAL_TLS_CA_FILE"); caFile != "" {
+				tlsConfig["ca"] = []interface{}{caFile}
+			} else if os.Getenv("ADMIRAL_DEV_MODE") == "true" {
+				tlsConfig["insecure_skip_verify"] = true
+			} else {
+				// Production must authenticate private HTTPS upstreams. Caddy's
+				// system trust store is used when no Admiral CA is configured.
+				tlsConfig["insecure_skip_verify"] = false
+			}
 			transport = map[string]interface{}{
 				"protocol": "http",
-				"tls": map[string]interface{}{
-					"insecure_skip_verify": true,
-				},
+				"tls":      tlsConfig,
 			}
 		}
 		upstreams = append(upstreams, map[string]interface{}{"dial": dial})
