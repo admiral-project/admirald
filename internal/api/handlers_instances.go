@@ -37,6 +37,9 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, "Customer application instance not found")
 		return
 	}
+	if !requireCustomerOwnership(w, r, inst.CustomerID) {
+		return
+	}
 
 	if inst.NodeID == nil || *inst.NodeID == "" {
 		writeError(w, http.StatusServiceUnavailable, "Application is not scheduled on any active node")
@@ -326,6 +329,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, "app_definition_name, tier_name, and customer_id are required")
 			return
 		}
+		if !requireCustomerOwnership(w, r, req.CustomerID) {
+			return
+		}
 
 		appDef, err := h.db.GetAppDefinition(req.AppDefinitionName)
 		if err != nil {
@@ -495,6 +501,19 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func requireCustomerOwnership(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	requestCustomerID := strings.TrimSpace(r.Header.Get("X-Admiral-Customer-ID"))
+	if requestCustomerID == "" {
+		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
+		return false
+	}
+	if requestCustomerID != customerID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return false
+	}
+	return true
 }
 
 func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Request) {

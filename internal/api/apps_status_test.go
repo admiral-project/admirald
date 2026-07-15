@@ -81,6 +81,7 @@ func TestHandleCustomerAppsRejectsInactiveDefinition(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps", bytes.NewReader(body))
+	req.Header.Set("X-Admiral-Customer-ID", "cust_inactive_001")
 	rec := httptest.NewRecorder()
 	h.HandleCustomerApps(rec, req)
 

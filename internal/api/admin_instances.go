@@ -471,6 +471,7 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 			}
 			jsonBody, _ := json.Marshal(bodyMap)
 			r.Body = io.NopCloser(bytes.NewReader(jsonBody))
+			r.Header.Set("X-Admiral-Customer-ID", inst.CustomerID)
 			h.HandleCustomerAppAction(w, r)
 			return
 		}

@@ -159,6 +159,7 @@ func TestHandleCustomerAppActionRejectsInitializingPause(t *testing.T) {
 
 	reqBody := bytes.NewReader([]byte(`{"instance_id":"inst_001","action":"pause"}`))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/action", reqBody)
+	req.Header.Set("X-Admiral-Customer-ID", "cust_001")
 	rec := httptest.NewRecorder()
 	h.HandleCustomerAppAction(rec, req)
 
