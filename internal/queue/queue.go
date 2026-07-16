@@ -115,7 +115,10 @@ func (p *Publisher) sealPayload(plaintext []byte) ([]byte, error) {
 }
 
 func (p *Publisher) persistTask(task *admiral.FleetTask, storePayload []byte, status admiral.FleetCommandStatus, maxAttempts int, lastError, result, sig string, signedAt int64) error {
-	commandID := newUUID()
+	commandID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate command ID: %w", err)
+	}
 	operationUUID := nameUUID(task.OperationID)
 	idempotencyKey := task.TaskID
 	availableAt := time.Now().UTC()
@@ -137,7 +140,7 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, storePayload []byte, st
 	if signedAt > 0 {
 		signedAtValue = signedAt
 	}
-	_, err := p.db.Exec(`
+	_, err = p.db.Exec(`
 		INSERT INTO fleet_commands (
 			id,
 			operation_id,
@@ -407,8 +410,12 @@ func backoff(attempt int) time.Duration {
 
 func (p *Publisher) Close() {}
 
-func newUUID() string {
-	return nameUUID(fmt.Sprintf("%d-%s", time.Now().UnixNano(), randomHex(16)))
+func newUUID() (string, error) {
+	randomValue, err := randomHex(16)
+	if err != nil {
+		return "", err
+	}
+	return nameUUID(fmt.Sprintf("%d-%s", time.Now().UnixNano(), randomValue)), nil
 }
 
 func nameUUID(seed string) string {
@@ -419,12 +426,12 @@ func nameUUID(seed string) string {
 	return formatUUID(b)
 }
 
-func randomHex(n int) string {
+func randomHex(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		return "", fmt.Errorf("read random bytes: %w", err)
 	}
-	return hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
 }
 
 func formatUUID(b []byte) string {

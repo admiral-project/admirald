@@ -2,9 +2,11 @@ package queue
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -26,7 +28,10 @@ func TestNameUUIDIsDeterministicAndWellFormed(t *testing.T) {
 }
 
 func TestRandomHexLength(t *testing.T) {
-	got := randomHex(16)
+	got, err := randomHex(16)
+	if err != nil {
+		t.Fatalf("randomHex failed: %v", err)
+	}
 	if len(got) != 32 {
 		t.Fatalf("expected 32 hex chars, got %d (%q)", len(got), got)
 	}
@@ -34,6 +39,23 @@ func TestRandomHexLength(t *testing.T) {
 		t.Fatalf("expected valid hex string, got %q: %v", got, err)
 	}
 }
+
+func TestRandomHexPropagatesReaderError(t *testing.T) {
+	original := rand.Reader
+	rand.Reader = failingReader{}
+	t.Cleanup(func() { rand.Reader = original })
+
+	_, err := randomHex(16)
+	if !errors.Is(err, errRandomReader) {
+		t.Fatalf("expected random reader error, got %v", err)
+	}
+}
+
+var errRandomReader = errors.New("random reader failed")
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errRandomReader }
 
 func TestSignPayloadProducesVerifiableSignature(t *testing.T) {
 	seed := make([]byte, ed25519.SeedSize)
