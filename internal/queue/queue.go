@@ -28,6 +28,8 @@ const (
 	defaultLeaseSeconds = 300
 )
 
+var randomReader io.Reader = rand.Reader
+
 var ErrNoCommandAvailable = errors.New("no command available")
 
 type Publisher struct {
@@ -428,7 +430,7 @@ func nameUUID(seed string) string {
 
 func randomHex(n int) (string, error) {
 	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
+	if _, err := io.ReadFull(randomReader, buf); err != nil {
 		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 	return hex.EncodeToString(buf), nil

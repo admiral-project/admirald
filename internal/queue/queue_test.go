@@ -2,7 +2,6 @@ package queue
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -41,9 +40,9 @@ func TestRandomHexLength(t *testing.T) {
 }
 
 func TestRandomHexPropagatesReaderError(t *testing.T) {
-	original := rand.Reader
-	rand.Reader = failingReader{}
-	t.Cleanup(func() { rand.Reader = original })
+	original := randomReader
+	randomReader = failingReader{}
+	t.Cleanup(func() { randomReader = original })
 
 	_, err := randomHex(16)
 	if !errors.Is(err, errRandomReader) {
