@@ -462,6 +462,11 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 				h.HandleMigrateInstance(w, r)
 				return
 			}
+			inst, _ := h.db.GetCustomerApp(instanceID)
+			if inst == nil {
+				writeError(w, http.StatusNotFound, "Instance not found")
+				return
+			}
 
 			// Reuse HandleCustomerAppAction, passing tier query param if present
 			tierParam := r.URL.Query().Get("tier")
