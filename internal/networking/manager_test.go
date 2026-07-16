@@ -89,7 +89,7 @@ func TestCreateInstanceRoutesGeneratesPersistentHostname(t *testing.T) {
 	if stored == nil {
 		t.Fatal("expected stored public route")
 	}
-	if stored.TargetHost != "10.0.0.8" || stored.TargetPort != 8080 {
+	if stored.TargetHost != "10.99.0.8" || stored.TargetPort != 8080 {
 		t.Fatalf("unexpected target: %+v", stored)
 	}
 }
