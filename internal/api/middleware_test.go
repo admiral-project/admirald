@@ -188,3 +188,89 @@ func TestAdminAuthMiddlewareResetsFailureCounterAfterSuccess(t *testing.T) {
 		t.Fatalf("expected counter reset after success, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestHarborAuthMiddleware(t *testing.T) {
+	adminToken := "admin-secret"
+	harborToken := "harbor-secret"
+	handler := HarborAuthMiddleware(logging.New("test"), adminToken, harborToken, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	tests := []struct {
+		name       string
+		token      string
+		header     string
+		wantStatus int
+	}{
+		{
+			name:       "harbor token in Authorization Bearer",
+			token:      "Bearer " + harborToken,
+			header:     "Authorization",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "harbor token in X-Admiral-Token",
+			token:      harborToken,
+			header:     "X-Admiral-Token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "admin token also accepted",
+			token:      adminToken,
+			header:     "X-Admiral-Token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "wrong token rejected",
+			token:      "wrong-token",
+			header:     "X-Admiral-Token",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "missing token rejected",
+			token:      "",
+			header:     "X-Admiral-Token",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/harbor_ping", nil)
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.token)
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("expected status %d, got %d", tt.wantStatus, rr.Code)
+			}
+			if rr.Code == http.StatusUnauthorized && rr.Body.String() != "{\"error\":\"unauthorized\"}\n" {
+				t.Fatalf("expected generic unauthorized body, got %q", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestHarborAuthMiddlewareAcceptsHarborTokenForPing(t *testing.T) {
+	adminToken := "admin-secret"
+	harborToken := "harbor-secret"
+	handler := HarborAuthMiddleware(logging.New("test"), adminToken, harborToken, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	req := httptest.NewRequest("GET", "/api/v1/harbor_ping", nil)
+	req.Header.Set("Authorization", "Bearer "+harborToken)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != `{"status":"ok"}` {
+		t.Fatalf("expected ok body, got %q", rr.Body.String())
+	}
+}

@@ -48,8 +48,9 @@ Configuration can also be provided via `/etc/admirald.ini`.
 - `GET /health` — Health check (admin auth)
 - `/api/v1/*` — Platform API (admin token or node token auth)
     - `/api/v1/nodes` — Node registration and management
-    - `/api/v1/apps` — Application definition management
-    - `/api/v1/customer-apps` — Instance lifecycle management
+    - `/api/v1/apps` — Application definition management (harbor token)
+    - `/api/v1/customer-apps` — Instance lifecycle management (harbor token)
+    - `/api/v1/harbor_ping` — Harbor connectivity check (harbor token)
     - `/api/v1/fleet/*` — Worker node callbacks and health reporting
 - `/api/admin/*` — Administrative API (session auth)
     - `/api/admin/auth/*` — Session management and password changes
