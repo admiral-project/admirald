@@ -27,7 +27,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestCreateInstanceRoutesGeneratesPersistentHostname(t *testing.T) {
 	db := openTestDB(t)
-	if err := db.RegisterNode("node_1", "worker", "10.0.0.8", "", "worker", "", "linux", "5.0.0"); err != nil {
+	if err := db.RegisterNode("node_1", "worker", "10.0.0.8", "10.99.0.8", "worker", "", "linux", "5.0.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestCreateInstanceRoutesGeneratesPersistentHostname(t *testing.T) {
 	if stored == nil {
 		t.Fatal("expected stored public route")
 	}
-	if stored.TargetHost != "10.0.0.8" || stored.TargetPort != 8080 {
+	if stored.TargetHost != "10.99.0.8" || stored.TargetPort != 8080 {
 		t.Fatalf("unexpected target: %+v", stored)
 	}
 }
