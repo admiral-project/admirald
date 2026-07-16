@@ -504,6 +504,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 }
 
 func requireCustomerOwnership(w http.ResponseWriter, r *http.Request, customerID string) bool {
+	if isSystemPrincipal(r) {
+		return true
+	}
 	requestCustomerID := strings.TrimSpace(r.Header.Get("X-Admiral-Customer-ID"))
 	if requestCustomerID == "" {
 		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
@@ -545,6 +548,10 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
 	}
+	if isSystemPrincipal(r) {
+		writeJSON(w, http.StatusOK, inst)
+		return
+	}
 	customerID := r.Header.Get("X-Admiral-Customer-ID")
 	if customerID == "" {
 		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
@@ -575,12 +582,12 @@ func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusNotFound, "Instance not found")
 		return
 	}
-	customerID := r.Header.Get("X-Admiral-Customer-ID")
-	if customerID == "" {
+	if isSystemPrincipal(r) {
+		// System principals may read credentials for operator workflows.
+	} else if strings.TrimSpace(r.Header.Get("X-Admiral-Customer-ID")) == "" {
 		writeError(w, http.StatusBadRequest, "X-Admiral-Customer-ID header is required")
 		return
-	}
-	if customerID != inst.CustomerID {
+	} else if r.Header.Get("X-Admiral-Customer-ID") != inst.CustomerID {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}

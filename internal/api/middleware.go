@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strconv"
@@ -14,6 +15,19 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
 )
+
+type authPrincipalContextKey struct{}
+
+const systemAuthPrincipal = "system"
+
+func withAuthPrincipal(r *http.Request, principal string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), authPrincipalContextKey{}, principal))
+}
+
+func isSystemPrincipal(r *http.Request) bool {
+	principal, _ := r.Context().Value(authPrincipalContextKey{}).(string)
+	return principal == systemAuthPrincipal
+}
 
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +121,7 @@ func HarborAuthMiddleware(log *logging.Logger, adminToken, harborToken string, t
 			limiter.Reset(key)
 			r.Header.Del("X-Admiral-Admin-User")
 			r.Header.Del("X-Admiral-Operator")
-			next(w, r)
+			next(w, withAuthPrincipal(r, systemAuthPrincipal))
 			return
 		}
 		if harborToken != "" && subtle.ConstantTimeCompare([]byte(reqToken), []byte(harborToken)) == 1 {

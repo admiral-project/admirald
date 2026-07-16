@@ -274,3 +274,25 @@ func TestHarborAuthMiddlewareAcceptsHarborTokenForPing(t *testing.T) {
 		t.Fatalf("expected ok body, got %q", rr.Body.String())
 	}
 }
+
+func TestHarborAuthMiddlewareMarksAdminAsSystemPrincipal(t *testing.T) {
+	called := false
+	handler := HarborAuthMiddleware(logging.New("test"), "admin-secret", "harbor-secret", nil, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if !isSystemPrincipal(r) {
+			t.Fatal("expected admin token to create system principal")
+		}
+		if r.Header.Get("X-Admiral-Customer-ID") != "" {
+			t.Fatal("admin request should not need a customer header")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/api/v1/customer-apps/inst-1", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !called {
+		t.Fatalf("expected system-authenticated request, got status %d", rr.Code)
+	}
+}
