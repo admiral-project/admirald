@@ -136,6 +136,9 @@ func (d *DB) GetPublicRoutes() ([]PublicRoute, error) {
 		}
 		routes = append(routes, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate public routes: %w", err)
+	}
 	return routes, nil
 }
 
@@ -180,6 +183,9 @@ func (d *DB) GetRoutesByInstance(instanceID string) ([]PublicRoute, error) {
 			r.LastHealthCheckedAt = &t
 		}
 		routes = append(routes, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate routes by instance %q: %w", instanceID, err)
 	}
 	return routes, nil
 }

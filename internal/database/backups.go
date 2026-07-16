@@ -125,6 +125,9 @@ func (d *DB) GetBackupRecordsPage(instanceID string, limit, offset int) ([]admir
 		}
 		records = append(records, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate backup records: %w", err)
+	}
 	return records, total, nil
 }
 
@@ -196,6 +199,9 @@ func (d *DB) GetSucceededS3Backups() ([]admiral.BackupRecord, error) {
 			r.VerifiedAt = verifiedAt.Time.Format(time.RFC3339)
 		}
 		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate succeeded s3 backups: %w", err)
 	}
 	return records, nil
 }

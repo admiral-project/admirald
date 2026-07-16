@@ -90,6 +90,9 @@ func (d *DB) GetNodes() ([]Node, error) {
 		}
 		nodes = append(nodes, n)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate nodes: %w", err)
+	}
 	return nodes, nil
 }
 
@@ -137,6 +140,9 @@ func (d *DB) MarkNodesOffline(timeout time.Duration) ([]string, error) {
 			return nil, fmt.Errorf("scan offline node id: %w", err)
 		}
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate offline node IDs: %w", err)
 	}
 	return ids, nil
 }
@@ -194,6 +200,9 @@ func (d *DB) GetPortalNodes() ([]Node, error) {
 			return nil, fmt.Errorf("scan portal node row: %w", err)
 		}
 		nodes = append(nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate portal nodes: %w", err)
 	}
 	return nodes, nil
 }
@@ -346,6 +355,9 @@ func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
 			return nil, fmt.Errorf("scan expired node id: %w", err)
 		}
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expired node IDs: %w", err)
 	}
 	return ids, nil
 }

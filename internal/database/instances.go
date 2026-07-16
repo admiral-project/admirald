@@ -225,6 +225,9 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 		}
 		apps = append(apps, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate customer apps: %w", err)
+	}
 	return apps, total, nil
 }
 

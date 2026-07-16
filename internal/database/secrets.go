@@ -47,6 +47,9 @@ func (d *DB) GetInstanceSecrets(instanceID string) ([]InstanceSecret, error) {
 		}
 		secrets = append(secrets, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate instance secrets: %w", err)
+	}
 	return secrets, nil
 }
 
@@ -64,6 +67,9 @@ func (d *DB) GetExposedInstanceSecrets(instanceID string) ([]InstanceSecret, err
 			return nil, fmt.Errorf("scan exposed instance secret row: %w", err)
 		}
 		secrets = append(secrets, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate exposed instance secrets: %w", err)
 	}
 	return secrets, nil
 }

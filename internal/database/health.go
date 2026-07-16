@@ -82,6 +82,9 @@ func (d *DB) GetExpiredGracePeriodApps() ([]CustomerApp, error) {
 		}
 		apps = append(apps, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expired grace period apps: %w", err)
+	}
 	return apps, nil
 }
 
@@ -158,6 +161,9 @@ func (d *DB) GetInconsistentInstances() ([]CustomerApp, error) {
 			return nil, fmt.Errorf("scan inconsistent instance: %w", err)
 		}
 		apps = append(apps, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate inconsistent instances: %w", err)
 	}
 	return apps, nil
 }

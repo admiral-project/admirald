@@ -126,6 +126,9 @@ func (d *DB) GetOperationsPage(limit, offset int) ([]Operation, int, error) {
 		}
 		ops = append(ops, *o)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate operations: %w", err)
+	}
 	return ops, total, nil
 }
 

@@ -139,6 +139,9 @@ func (d *DB) GetAppDefinitions() ([]AppDefinition, error) {
 		}
 		apps = append(apps, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate app definitions: %w", err)
+	}
 	return apps, nil
 }
 
@@ -174,6 +177,9 @@ func (d *DB) GetAppTiers(appName string) ([]AppTier, error) {
 			}
 		}
 		tiers = append(tiers, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate app tiers: %w", err)
 	}
 	return tiers, nil
 }

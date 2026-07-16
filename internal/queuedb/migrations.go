@@ -70,6 +70,9 @@ func getAppliedMigrations(db *sql.DB) (map[int]bool, error) {
 		}
 		applied[version] = true
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate applied queue migrations: %w", err)
+	}
 	return applied, nil
 }
 
