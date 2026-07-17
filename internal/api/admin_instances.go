@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -75,9 +76,9 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		if targetNode == nil {
 			return fmt.Errorf("target node %q not found for route reconciliation", nodeID)
 		}
-		targetHost := targetNode.WireguardIP
-		if targetHost == "" {
-			targetHost = targetNode.IP
+		targetHost, err := h.runtimeNodeAddress(targetNode)
+		if err != nil {
+			return err
 		}
 		for _, route := range routes {
 			route.NodeID = &nodeID
@@ -238,6 +239,19 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 	setStep("completed")
 	_ = h.db.UpdateOperation(opID, "succeeded", "")
 	h.log.Info("Migration completed successfully", map[string]interface{}{"operation_id": opID, "instance_id": instID, "cutover_complete": cutoverComplete})
+}
+
+// runtimeNodeAddress returns the only address Admiral may use for node-local
+// workload routing. General-interface addresses are deliberately rejected in
+// production because they bypass the authenticated WireGuard network.
+func (h *APIHandlers) runtimeNodeAddress(node *database.Node) (string, error) {
+	if h.server != nil && (h.server.devMode || os.Getenv("ADMIRAL_SINGLE_NODE") == "true") {
+		return "127.0.0.1", nil
+	}
+	if node.WireguardIP == "" {
+		return "", fmt.Errorf("node %q has no WireGuard address; refusing general-interface routing", node.ID)
+	}
+	return node.WireguardIP, nil
 }
 
 func (h *APIHandlers) HandleMigrateInstance(w http.ResponseWriter, r *http.Request) {
