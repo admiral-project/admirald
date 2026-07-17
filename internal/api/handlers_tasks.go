@@ -196,6 +196,7 @@ func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, t
 			DatabaseType:   bk.DatabaseType,
 			Service:        target.ServiceName,
 			ChecksumSHA256: bk.ChecksumSHA256,
+			VerifyChecksum: true,
 		},
 	}
 
