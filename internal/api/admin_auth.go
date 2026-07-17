@@ -315,6 +315,19 @@ func (h *APIHandlers) HandleAdminChangePassword(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "Failed to update password")
 		return
 	}
+	currentToken := r.Header.Get("X-Admiral-Admin-Token")
+	if currentToken == "" {
+		if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			currentToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+	if currentToken != "" {
+		if err := h.db.DeleteOtherAdminSessions(username, h.hashToken(currentToken)); err != nil {
+			h.log.Error("Failed to invalidate other admin sessions", err, map[string]interface{}{"username": username})
+			writeError(w, http.StatusInternalServerError, "Failed to invalidate other sessions")
+			return
+		}
+	}
 
 	h.log.Info("Admin password changed", map[string]interface{}{"username": username})
 	writeJSON(w, http.StatusOK, admiral.AdminChangePasswordResponse{Success: true})

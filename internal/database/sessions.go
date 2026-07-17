@@ -58,4 +58,18 @@ func (d *DB) DeleteAdminSession(tokenHash string) error {
 	return nil
 }
 
+// DeleteOtherAdminSessions invalidates every session for a user except the
+// session currently being used to change the password.
+func (d *DB) DeleteOtherAdminSessions(username, currentTokenHash string) error {
+	_, err := d.Exec(
+		"DELETE FROM admin_sessions WHERE username = $1 AND token_hash <> $2",
+		username,
+		currentTokenHash,
+	)
+	if err != nil {
+		return fmt.Errorf("delete other admin sessions: %w", err)
+	}
+	return nil
+}
+
 // --- Backup Storage Config CRUD ---

@@ -211,6 +211,42 @@ func TestHandleAdminChangePasswordUsesAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestHandleAdminChangePasswordInvalidatesOtherSessions(t *testing.T) {
+	h := newAdminLoginTestHandler(t)
+	now := time.Now()
+	currentToken := "current-session-token"
+	otherToken := "other-session-token"
+	if err := h.db.CreateAdminSession(h.hashToken(currentToken), "admin", now.Add(time.Hour), now); err != nil {
+		t.Fatalf("create current session: %v", err)
+	}
+	if err := h.db.CreateAdminSession(h.hashToken(otherToken), "admin", now.Add(time.Hour), now); err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+
+	body, _ := json.Marshal(admiral.AdminChangePasswordRequest{
+		CurrentPassword: "super-secret-password",
+		NewPassword:     "new-super-secret-password",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/auth/change-password", bytes.NewReader(body))
+	req.Header.Set("X-Admiral-Admin-User", "admin")
+	req.Header.Set("X-Admiral-Admin-Token", currentToken)
+	rec := httptest.NewRecorder()
+	h.HandleAdminChangePassword(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if username, _, _, err := h.db.GetAdminSession(h.hashToken(otherToken)); err != nil {
+		t.Fatalf("lookup other session: %v", err)
+	} else if username != "" {
+		t.Fatal("expected other admin session to be invalidated")
+	}
+	if username, _, _, err := h.db.GetAdminSession(h.hashToken(currentToken)); err != nil {
+		t.Fatalf("lookup current session: %v", err)
+	} else if username != "admin" {
+		t.Fatal("expected current admin session to remain active")
+	}
+}
+
 func TestHandleAdminLogoutRequiresToken(t *testing.T) {
 	h := newAdminLoginTestHandler(t)
 
