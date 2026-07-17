@@ -30,7 +30,7 @@ export ADMIRAL_TLS_CERT_FILE=/etc/admiral/tls/admirald.pem
 export ADMIRAL_TLS_KEY_FILE=/etc/admiral/tls/admirald-key.pem
 export ADMIRAL_QUEUE_DATABASE_URL=postgres://queue:password@localhost:5432/admiral_queue?sslmode=require
 export ADMIRAL_ED25519_PRIVATE_KEY=$(cat /etc/admiral/signing.key)
-export ADMIRAL_TASK_ENCRYPTION_KEY=32-character-random-string
+export ADMIRAL_TASK_ENCRYPTION_KEY=64-character-random-hex-string
 
 admirald
 ```
