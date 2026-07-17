@@ -14,6 +14,7 @@ import (
 )
 
 const defaultConfigPath = "/etc/admirald.ini"
+const configCredentialName = "admirald.ini"
 
 type Config struct {
 	Port               string
@@ -56,7 +57,15 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	return load(defaultConfigPath)
+	return load(configPath())
+}
+
+func configPath() string {
+	path := defaultConfigPath
+	if credentialsDir := os.Getenv("CREDENTIALS_DIRECTORY"); credentialsDir != "" {
+		path = filepath.Join(credentialsDir, configCredentialName)
+	}
+	return path
 }
 
 func load(path string) (*Config, error) {

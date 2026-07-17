@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+func TestConfigPathUsesSystemdCredential(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "/run/credentials/admirald.service")
+
+	want := "/run/credentials/admirald.service/admirald.ini"
+	if got := configPath(); got != want {
+		t.Fatalf("configPath() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadRequiresAdminToken(t *testing.T) {
 	setEnv(t, "ADMIRAL_ADMIN_TOKEN", "")
 	setEnv(t, "ADMIRAL_SECRETS_KEY", "")
