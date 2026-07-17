@@ -317,8 +317,13 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "node_id is required")
 		return
 	}
+	authenticatedNodeID, ok := NodeIDFromContext(r.Context())
+	if !ok || authenticatedNodeID != req.NodeID {
+		writeError(w, http.StatusForbidden, "node_id does not match authenticated node")
+		return
+	}
 
-	node, err := h.db.GetNode(req.NodeID)
+	node, err := h.db.GetNode(authenticatedNodeID)
 	if err != nil {
 		h.log.Error("Get node failed on heartbeat", err, map[string]interface{}{"node_id": req.NodeID})
 		writeError(w, http.StatusInternalServerError, "Failed checking node registration")

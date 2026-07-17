@@ -142,8 +142,13 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "node_id is required")
 		return
 	}
+	authenticatedNodeID, ok := NodeIDFromContext(r.Context())
+	if !ok || authenticatedNodeID != req.NodeID {
+		writeError(w, http.StatusForbidden, "node_id does not match authenticated node")
+		return
+	}
 
-	task, commandID, attemptCount, maxAttempts, err := h.publisher.ClaimTask(req.NodeID)
+	task, commandID, attemptCount, maxAttempts, err := h.publisher.ClaimTask(authenticatedNodeID)
 	if err != nil {
 		if errors.Is(err, queue.ErrNoCommandAvailable) {
 			w.WriteHeader(http.StatusNoContent)

@@ -1130,6 +1130,19 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK on matching WireGuard IP, got %d (body=%s)", rec2.Code, rec2.Body.String())
 	}
+
+	// A valid node token must not be able to update a different node by
+	// changing the node_id in the authenticated request body.
+	forged := admiral.HeartbeatRequest{NodeID: "node_002", Status: "active"}
+	forgedBody, _ := json.Marshal(forged)
+	forgedReq := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(forgedBody))
+	forgedReq.Header.Set("X-Admiral-Token", token)
+	forgedReq.RemoteAddr = "10.99.0.2:51820"
+	forgedRec := httptest.NewRecorder()
+	wrapped(forgedRec, forgedReq)
+	if forgedRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for node identity mismatch, got %d", forgedRec.Code)
+	}
 }
 
 func TestHandleFleetCallbackIPValidation(t *testing.T) {

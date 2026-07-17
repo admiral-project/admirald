@@ -93,7 +93,14 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 		// ADMIRAL_SINGLE_NODE=true -> permite localhost (--single-node, diseño intencional:
 		//   no es un fallo de seguridad; en single-node fleet y admirald corren en el
 		//   mismo host y se comunican por loopback; no hay VPN de por medio).
-		if node.WireguardIP != "" && os.Getenv("ADMIRAL_DEV_MODE") != "true" && os.Getenv("ADMIRAL_SINGLE_NODE") != "true" {
+		devBypass := os.Getenv("ADMIRAL_DEV_MODE") == "true" || os.Getenv("ADMIRAL_SINGLE_NODE") == "true"
+		if !devBypass && node.WireguardIP == "" {
+			limiter.Allow(key, authFailureLimit, authFailureWindow)
+			logAuthFailure(log, "WARN", "node_token", "wireguard_ip_missing", http.StatusForbidden, r, nil)
+			writeGenericAuthError(w, http.StatusForbidden)
+			return
+		}
+		if !devBypass {
 			clientIPAddr := getClientIP(r, trustedProxies)
 			if clientIPAddr != node.WireguardIP {
 				limiter.Allow(key, authFailureLimit, authFailureWindow)
