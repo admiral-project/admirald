@@ -197,7 +197,13 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "App definition not found")
 				return
 			}
-			writeJSON(w, http.StatusOK, app)
+			redacted, err := redactAppDefinition(*app)
+			if err != nil {
+				h.log.Error("Redact app definition failed", err, map[string]interface{}{"app_name": appID})
+				writeError(w, http.StatusInternalServerError, "Failed to fetch application")
+				return
+			}
+			writeJSON(w, http.StatusOK, redacted)
 			return
 		}
 
@@ -207,7 +213,13 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "Failed to fetch applications")
 			return
 		}
-		writeJSON(w, http.StatusOK, apps)
+		redacted, err := redactAppDefinitions(apps)
+		if err != nil {
+			h.log.Error("Redact app definitions failed", err, nil)
+			writeError(w, http.StatusInternalServerError, "Failed to fetch applications")
+			return
+		}
+		writeJSON(w, http.StatusOK, redacted)
 
 	case http.MethodPost:
 		yamlContent, err := readAppDefinitionBody(w, r)
@@ -224,6 +236,10 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 
 		if err := admiral.ValidateAppDefinition(payload); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("application definition validation failed: %v", err))
+			return
+		}
+		if err := rejectLiteralAppSecrets(payload); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 

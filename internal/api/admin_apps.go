@@ -29,9 +29,14 @@ func (h *APIHandlers) HandleAdminApps(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusNotFound, "App not found")
 					return
 				}
+				redacted, err := redactAppDefinitionYAML(app.RawYAML)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "Failed to fetch app definition")
+					return
+				}
 				w.Header().Set("Content-Type", "application/x-yaml")
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(app.RawYAML))
+				_, _ = w.Write([]byte(redacted))
 				return
 			}
 			if len(parts) >= 5 && parts[4] == "versions" {
@@ -49,7 +54,12 @@ func (h *APIHandlers) HandleAdminApps(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "App not found")
 				return
 			}
-			writeJSON(w, http.StatusOK, app)
+			redacted, err := redactAppDefinition(*app)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to fetch app definition")
+				return
+			}
+			writeJSON(w, http.StatusOK, redacted)
 			return
 		}
 
@@ -58,7 +68,12 @@ func (h *APIHandlers) HandleAdminApps(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, apps)
+		redacted, err := redactAppDefinitions(apps)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch applications")
+			return
+		}
+		writeJSON(w, http.StatusOK, redacted)
 
 	case http.MethodPost, http.MethodPut:
 		// Sub-routes logic for tiers
