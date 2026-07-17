@@ -60,7 +60,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		harborToken:    harborToken,
 		tokenPepper:    tokenPepper,
 		fleetLimiter:   NewDBRateLimiter(db),
-		adminLimiter:   NewRateLimiter(),
+		adminLimiter:   NewDBRateLimiter(db),
 		trustedProxies: trustedProxies,
 		devMode:        devMode,
 	}

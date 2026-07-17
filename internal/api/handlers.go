@@ -83,7 +83,7 @@ func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secret
 		hmacKey:           hmacKey,
 		tokenPepper:       tokenPepper,
 		configTokenTTL:    tokenTTL,
-		loginLimiter:      NewRateLimiter(),
+		loginLimiter:      NewDBRateLimiter(db),
 		knowHostPath:      "/var/lib/admiral/know_host.yaml",
 		taskEncryptionKey: taskEncryptionKey,
 	}
