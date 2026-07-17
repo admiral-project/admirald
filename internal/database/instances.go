@@ -243,6 +243,7 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		COALESCE(ca.storage_exceeded, FALSE),
 		COALESCE(pr.hostname, ''),
 		COALESCE(ca.logical_instance_id, ''),
+		COALESCE(ca.inspect_data, ''),
 		COALESCE(ca.setup_completed, FALSE)
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
@@ -255,6 +256,7 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		&a.StorageExceeded,
 		&a.Hostname,
 		&a.LogicalInstanceID,
+		&a.InspectData,
 		&a.SetupCompleted,
 	)
 	if err == sql.ErrNoRows {

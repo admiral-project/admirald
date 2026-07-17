@@ -402,6 +402,7 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 				writeError(w, http.StatusInternalServerError, "Failed to parse stored inspect data")
 				return
 			}
+			redactInspectEnvironment(inspectResult)
 			writeJSON(w, http.StatusOK, inspectResult)
 			return
 		}
@@ -497,6 +498,31 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusBadRequest)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func redactInspectEnvironment(value interface{}) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, child := range typed {
+			if strings.EqualFold(key, "Env") {
+				if env, ok := child.([]interface{}); ok {
+					for i, entry := range env {
+						if text, ok := entry.(string); ok {
+							if name, _, found := strings.Cut(text, "="); found {
+								env[i] = name + "=[REDACTED]"
+							}
+						}
+					}
+					continue
+				}
+			}
+			redactInspectEnvironment(child)
+		}
+	case []interface{}:
+		for _, child := range typed {
+			redactInspectEnvironment(child)
+		}
 	}
 }
 
