@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -20,16 +21,35 @@ const (
 )
 
 type Manager struct {
-	masterKey []byte
+	currentKey []byte
+	previous   [][]byte
 }
 
 func NewManager(masterKey string) *Manager {
-	return &Manager{masterKey: []byte(masterKey)}
+	return NewManagerWithKeys(masterKey, nil)
+}
+
+// NewManagerWithKeys creates a manager with one active key and optional old
+// keys kept during a rotation window. New ciphertext always uses the active
+// key; old ciphertext remains decryptable while its key is configured.
+func NewManagerWithKeys(current string, previous []string) *Manager {
+	manager := &Manager{currentKey: []byte(current)}
+	for _, key := range previous {
+		if strings.TrimSpace(key) != "" {
+			manager.previous = append(manager.previous, []byte(strings.TrimSpace(key)))
+		}
+	}
+	return manager
+}
+
+func keyID(key []byte) string {
+	digest := sha256.Sum256(key)
+	return fmt.Sprintf("%x", digest[:8])
 }
 
 // deriveKey derives an AES-256 key from the master key using HKDF with a salt.
-func (m *Manager) deriveKey(salt []byte) ([]byte, error) {
-	prk := hkdf.Extract(sha256.New, m.masterKey, salt)
+func deriveKey(masterKey, salt []byte) ([]byte, error) {
+	prk := hkdf.Extract(sha256.New, masterKey, salt)
 	r := hkdf.Expand(sha256.New, prk, []byte("admiral-secrets-key-v1"))
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(r, key); err != nil {
@@ -81,7 +101,7 @@ func (m *Manager) Encrypt(plaintext string) (string, error) {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
 
-	key, err := m.deriveKey(salt)
+	key, err := deriveKey(m.currentKey, salt)
 	if err != nil {
 		return "", err
 	}
@@ -90,14 +110,45 @@ func (m *Manager) Encrypt(plaintext string) (string, error) {
 		return "", err
 	}
 
-	// Format: salt(16) || nonce(12) || ciphertext
+	// Format: v2:<key-id>:<base64(salt || nonce || ciphertext)>. The key ID
+	// lets rotation select the correct decryption key without trial-decrypting.
 	out := make([]byte, 0, saltLen+len(ct))
 	out = append(out, salt...)
 	out = append(out, ct...)
-	return base64.StdEncoding.EncodeToString(out), nil
+	return "v2:" + keyID(m.currentKey) + ":" + base64.StdEncoding.EncodeToString(out), nil
 }
 
 func (m *Manager) Decrypt(encoded string) (string, error) {
+	if strings.HasPrefix(encoded, "v2:") {
+		parts := strings.SplitN(encoded, ":", 3)
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			return "", fmt.Errorf("invalid versioned ciphertext")
+		}
+		keys := append([][]byte{m.currentKey}, m.previous...)
+		for _, key := range keys {
+			if keyID(key) != parts[1] {
+				continue
+			}
+			return m.decryptPayload(parts[2], key)
+		}
+		return "", fmt.Errorf("ciphertext key %q is not configured", parts[1])
+	}
+
+	// Support the pre-rotation format during migration. New writes are always
+	// versioned, so data is gradually upgraded as values are replaced.
+	keys := append([][]byte{m.currentKey}, m.previous...)
+	var lastErr error
+	for _, key := range keys {
+		plain, err := m.decryptPayload(encoded, key)
+		if err == nil {
+			return plain, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func (m *Manager) decryptPayload(encoded string, key []byte) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", fmt.Errorf("decode ciphertext: %w", err)
@@ -118,9 +169,9 @@ func (m *Manager) Decrypt(encoded string) (string, error) {
 
 	salt := data[:saltLen]
 	ct := data[saltLen:]
-	key, err := m.deriveKey(salt)
+	derivedKey, err := deriveKey(key, salt)
 	if err != nil {
 		return "", err
 	}
-	return m.decryptWithKey(key, ct)
+	return m.decryptWithKey(derivedKey, ct)
 }

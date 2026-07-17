@@ -30,3 +30,25 @@ func TestManagerDecryptRejectsInvalidCiphertext(t *testing.T) {
 		t.Fatal("expected invalid ciphertext to fail")
 	}
 }
+
+func TestKeyRotationKeepsPreviousCiphertextReadable(t *testing.T) {
+	oldManager := NewManager("old-master-key")
+	ciphertext, err := oldManager.Encrypt("rotation-secret")
+	if err != nil {
+		t.Fatalf("encrypt with old key: %v", err)
+	}
+
+	rotated := NewManagerWithKeys("new-master-key", []string{"old-master-key"})
+	plaintext, err := rotated.Decrypt(ciphertext)
+	if err != nil || plaintext != "rotation-secret" {
+		t.Fatalf("decrypt with previous key: plaintext=%q err=%v", plaintext, err)
+	}
+
+	newCiphertext, err := rotated.Encrypt("new-secret")
+	if err != nil {
+		t.Fatalf("encrypt with current key: %v", err)
+	}
+	if _, err := NewManager("old-master-key").Decrypt(newCiphertext); err == nil {
+		t.Fatal("expected old key to reject ciphertext written after rotation")
+	}
+}

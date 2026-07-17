@@ -16,18 +16,19 @@ import (
 const defaultConfigPath = "/etc/admirald.ini"
 
 type Config struct {
-	Port              string
-	ListenAddress     string
-	DatabaseURL       string
-	QueueDatabaseURL  string
-	AdminToken        string
-	HarborAPIToken    string
-	TokenPepper       string
-	TokenTTLMinutes   int
-	SecretsKey        string
-	SigningKey        string
-	TaskEncryptionKey string
-	SessionHMACKey    string // HMAC key for admin session tokens. If empty, a volatile
+	Port               string
+	ListenAddress      string
+	DatabaseURL        string
+	QueueDatabaseURL   string
+	AdminToken         string
+	HarborAPIToken     string
+	TokenPepper        string
+	TokenTTLMinutes    int
+	SecretsKey         string
+	SecretsKeyPrevious []string
+	SigningKey         string
+	TaskEncryptionKey  string
+	SessionHMACKey     string // HMAC key for admin session tokens. If empty, a volatile
 	// ephemeral key is generated in memory at startup. This
 	// means a restart invalidates all active admin sessions.
 	FlagshipAdminUser        string
@@ -69,6 +70,7 @@ func load(path string) (*Config, error) {
 		"token_pepper":               "",
 		"token_ttl_minutes":          "5",
 		"secrets_key":                "",
+		"secrets_key_previous":       "",
 		"signing_key":                "",
 		"task_encryption_key":        "",
 		"session_hmac_key":           "",
@@ -106,6 +108,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "harbor_api_token", "ADMIRAL_HARBOR_API_TOKEN")
 	applyEnv(values, "token_pepper", "ADMIRAL_TOKEN_PEPPER")
 	applyEnv(values, "secrets_key", "ADMIRAL_SECRETS_KEY")
+	applyEnv(values, "secrets_key_previous", "ADMIRAL_SECRETS_KEY_PREVIOUS")
 	applyEnv(values, "signing_key", "ADMIRAL_ED25519_PRIVATE_KEY")
 	applyEnv(values, "task_encryption_key", "ADMIRAL_TASK_ENCRYPTION_KEY")
 	applyEnv(values, "session_hmac_key", "ADMIRAL_SESSION_HMAC_KEY")
@@ -220,6 +223,12 @@ func load(path string) (*Config, error) {
 		fmt.Println("NOTICE: an admirald restart. Set ADMIRAL_SESSION_HMAC_KEY to a persistent")
 		fmt.Println("NOTICE: 64-character hex string to avoid this.")
 	}
+	var previousSecretsKeys []string
+	for _, key := range strings.Split(values["secrets_key_previous"], ",") {
+		if key = strings.TrimSpace(key); key != "" {
+			previousSecretsKeys = append(previousSecretsKeys, key)
+		}
+	}
 
 	return &Config{
 		Port:                     values["port"],
@@ -231,6 +240,7 @@ func load(path string) (*Config, error) {
 		TokenPepper:              values["token_pepper"],
 		TokenTTLMinutes:          ttl,
 		SecretsKey:               values["secrets_key"],
+		SecretsKeyPrevious:       previousSecretsKeys,
 		SigningKey:               values["signing_key"],
 		TaskEncryptionKey:        values["task_encryption_key"],
 		SessionHMACKey:           values["session_hmac_key"],

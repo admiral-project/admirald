@@ -37,7 +37,7 @@ func main() {
 	// Initialize logger
 	logger := logging.New("admirald")
 	logger.Info("Initializing Admiral Control Plane (admirald)", map[string]interface{}{"version": Version})
-	secretManager := secrets.NewManager(cfg.SecretsKey)
+	secretManager := secrets.NewManagerWithKeys(cfg.SecretsKey, cfg.SecretsKeyPrevious)
 
 	// Connect to Database
 	logger.Info("Connecting to database...", map[string]interface{}{"url": config.RedactURL(cfg.DatabaseURL)})
