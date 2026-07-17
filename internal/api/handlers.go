@@ -28,18 +28,17 @@ type TaskPublisher interface {
 }
 
 type APIHandlers struct {
-	db                *database.DB
-	log               *logging.Logger
-	publisher         TaskPublisher
-	secrets           *secrets.Manager
-	networking        *networking.Manager
-	server            *Server
-	hmacKey           string
-	tokenPepper       string
-	configTokenTTL    int
-	loginLimiter      Limiter
-	knowHostPath      string
-	taskEncryptionKey string // shared AES-256-GCM key served to authenticated worker nodes
+	db             *database.DB
+	log            *logging.Logger
+	publisher      TaskPublisher
+	secrets        *secrets.Manager
+	networking     *networking.Manager
+	server         *Server
+	hmacKey        string
+	tokenPepper    string
+	configTokenTTL int
+	loginLimiter   Limiter
+	knowHostPath   string
 }
 
 func (h *APIHandlers) auditEvent(eventType string, fields map[string]interface{}) {
@@ -73,19 +72,18 @@ type blockedProvisioningAuditDetail struct {
 	NodeEvaluations        []admiral.NodeProvisioningEvaluation `json:"node_evaluations,omitempty"`
 }
 
-func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey, tokenPepper string, tokenTTL int, taskEncryptionKey string) *APIHandlers {
+func NewHandlers(db *database.DB, log *logging.Logger, pub TaskPublisher, secretManager *secrets.Manager, networkingManager *networking.Manager, hmacKey, tokenPepper string, tokenTTL int) *APIHandlers {
 	return &APIHandlers{
-		db:                db,
-		log:               log,
-		publisher:         pub,
-		secrets:           secretManager,
-		networking:        networkingManager,
-		hmacKey:           hmacKey,
-		tokenPepper:       tokenPepper,
-		configTokenTTL:    tokenTTL,
-		loginLimiter:      NewDBRateLimiter(db),
-		knowHostPath:      "/var/lib/admiral/know_host.yaml",
-		taskEncryptionKey: taskEncryptionKey,
+		db:             db,
+		log:            log,
+		publisher:      pub,
+		secrets:        secretManager,
+		networking:     networkingManager,
+		hmacKey:        hmacKey,
+		tokenPepper:    tokenPepper,
+		configTokenTTL: tokenTTL,
+		loginLimiter:   NewDBRateLimiter(db),
+		knowHostPath:   "/var/lib/admiral/know_host.yaml",
 	}
 }
 

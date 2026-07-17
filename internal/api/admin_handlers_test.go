@@ -383,7 +383,7 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 		}
 	}
 
-	return NewHandlers(db, logging.New("test"), &mockPublisher{}, nil, nil, "test-hmac-key", "test-pepper", 60, "")
+	return NewHandlers(db, logging.New("test"), &mockPublisher{}, nil, nil, "test-hmac-key", "test-pepper", 60)
 }
 
 type mockPublisher struct{}

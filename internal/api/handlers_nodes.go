@@ -270,37 +270,6 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleTaskEncryptionKey serves the shared AES-256-GCM task encryption key
-// to authenticated worker nodes. The key is used to decrypt task payloads
-// from the queue. Only nodes authenticated via per-node token and matching
-// their registered WireGuard IP may retrieve it.
-func (h *APIHandlers) HandleTaskEncryptionKey(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	nodeID, ok := NodeIDFromContext(r.Context())
-	if !ok || nodeID == "" {
-		writeError(w, http.StatusUnauthorized, "node authentication required")
-		return
-	}
-	reqNodeID := r.URL.Query().Get("node_id")
-	if reqNodeID == "" {
-		writeError(w, http.StatusBadRequest, "node_id query parameter is required")
-		return
-	}
-	if reqNodeID != nodeID {
-		h.log.Error("TaskEncryptionKey node_id mismatch",
-			fmt.Errorf("authenticated node %q does not match requested node %q", nodeID, reqNodeID),
-			map[string]interface{}{"authenticated_node": nodeID, "requested_node": reqNodeID})
-		writeError(w, http.StatusForbidden, "node_id does not match authenticated node")
-		return
-	}
-	h.log.Info("TaskEncryptionKey served",
-		map[string]interface{}{"node_id": nodeID})
-	writeJSON(w, http.StatusOK, map[string]string{"task_encryption_key": h.taskEncryptionKey})
-}
-
 func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)

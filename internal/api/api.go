@@ -37,7 +37,7 @@ const (
 	authFailureWindow = 5 * time.Minute
 )
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, taskEncryptionKey string, trustedProxies []string, devMode bool) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, trustedProxies []string, devMode bool) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
 	// invalidates all active admin web sessions (flagship/harbor must
@@ -52,7 +52,7 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		sessionHMACKey = hex.EncodeToString(key[:])
 		log.Info("Using volatile ephemeral session HMAC key. Admin sessions will not survive a restart.", nil)
 	}
-	handlers := NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL, taskEncryptionKey)
+	handlers := NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL)
 	server := &Server{
 		handlers:       handlers,
 		log:            log,
@@ -103,7 +103,6 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 
 	// Node-authenticated routes (heartbeat and claim use node auth middleware)
 	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))
-	mux.HandleFunc("/api/v1/nodes/task-encryption-key", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleTaskEncryptionKey)))
 
 	// Fleet worker routes (worker token required)
 	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
