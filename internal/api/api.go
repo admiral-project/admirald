@@ -99,6 +99,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/status", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, s.handlers.HandleStatus))
 	mux.HandleFunc("/api/v1/rate-limit/check", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleRateLimitCheck)))
 	mux.HandleFunc("/api/v1/rate-limit/reset", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleRateLimitReset)))
+	mux.HandleFunc("/api/v1/secrets/rotate", AdminAuthMiddleware(s.log, s.adminToken, s.trustedProxies, s.handlers.HandleSecretRotation))
 
 	// Node-authenticated routes (heartbeat and claim use node auth middleware)
 	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))

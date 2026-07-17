@@ -51,4 +51,11 @@ func TestKeyRotationKeepsPreviousCiphertextReadable(t *testing.T) {
 	if _, err := NewManager("old-master-key").Decrypt(newCiphertext); err == nil {
 		t.Fatal("expected old key to reject ciphertext written after rotation")
 	}
+	if !rotated.IsCurrent(newCiphertext) || rotated.IsCurrent(ciphertext) {
+		t.Fatal("expected current-key detection to be idempotent")
+	}
+	reencrypted, err := rotated.Reencrypt(ciphertext)
+	if err != nil || !rotated.IsCurrent(reencrypted) {
+		t.Fatalf("reencrypt old ciphertext: value=%q err=%v", reencrypted, err)
+	}
 }

@@ -148,6 +148,22 @@ func (m *Manager) Decrypt(encoded string) (string, error) {
 	return "", lastErr
 }
 
+func (m *Manager) IsCurrent(encoded string) bool {
+	parts := strings.SplitN(encoded, ":", 3)
+	return len(parts) == 3 && parts[0] == "v2" && parts[1] == keyID(m.currentKey)
+}
+
+func (m *Manager) Reencrypt(encoded string) (string, error) {
+	if m.IsCurrent(encoded) {
+		return encoded, nil
+	}
+	plaintext, err := m.Decrypt(encoded)
+	if err != nil {
+		return "", err
+	}
+	return m.Encrypt(plaintext)
+}
+
 func (m *Manager) decryptPayload(encoded string, key []byte) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
