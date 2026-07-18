@@ -60,7 +60,7 @@ Configuration can also be provided via `/etc/admirald.ini`.
 
 ## Dependencies
 
-- Go 1.21+
+- Go 1.26.5+
 - PostgreSQL 16 for persistent state
 - PostgreSQL-backed durable queue for async task dispatch
 - Caddy with admin API for public HTTP routing

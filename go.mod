@@ -1,6 +1,6 @@
 module github.com/admiral-project/admiral/admirald
 
-go 1.25.0
+go 1.26.5
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
