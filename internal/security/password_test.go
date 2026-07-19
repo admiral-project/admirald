@@ -41,6 +41,7 @@ func TestValidateInitialAdminPassword(t *testing.T) {
 		{name: "secret", username: "admin", password: "secret", wantErr: true},
 		{name: "admin", username: "admin", password: "admin", wantErr: true},
 		{name: "same as user", username: "bootstrap", password: "bootstrap", wantErr: true},
+		{name: "same as user long", username: "correct-horse-battery", password: "correct-horse-battery", wantErr: true},
 		{name: "trimmed", username: "admin", password: "  surrounding-space  ", wantErr: true},
 	}
 
@@ -55,4 +56,76 @@ func TestValidateInitialAdminPassword(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyPasswordEdgeAndErrorCases(t *testing.T) {
+	t.Run("invalid argon2 hash format count", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=65536,t=3,p=4$salt")
+		if err == nil || err.Error() != "invalid argon2 hash format" {
+			t.Fatalf("expected format error, got %v", err)
+		}
+	})
+
+	t.Run("unsupported argon2 prefix", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2i$v=19$m=65536,t=3,p=4$salt$hash")
+		if err == nil || err.Error() != "unsupported argon2 hash format" {
+			t.Fatalf("expected unsupported format error, got %v", err)
+		}
+	})
+
+	t.Run("unsupported argon2 version", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=18$m=65536,t=3,p=4$salt$hash")
+		if err == nil || err.Error() != "unsupported argon2 hash format" {
+			t.Fatalf("expected unsupported format error, got %v", err)
+		}
+	})
+
+	t.Run("invalid argon2 parameters count", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=65536,t=3$salt$hash")
+		if err == nil || err.Error() != "invalid argon2 parameters" {
+			t.Fatalf("expected invalid parameters error, got %v", err)
+		}
+	})
+
+	t.Run("invalid prefix name in parameter", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$x=65536,t=3,p=4$salt$hash")
+		if err == nil {
+			t.Fatal("expected error for wrong parameter prefix 'x'")
+		}
+	})
+
+	t.Run("missing equals in parameter", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m65536,t=3,p=4$salt$hash")
+		if err == nil {
+			t.Fatal("expected error for missing equals")
+		}
+	})
+
+	t.Run("non-integer parameter value", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=abc,t=3,p=4$salt$hash")
+		if err == nil {
+			t.Fatal("expected error for non-integer value")
+		}
+	})
+
+	t.Run("parameter value zero", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=0,t=3,p=4$salt$hash")
+		if err == nil {
+			t.Fatal("expected error for value of zero")
+		}
+	})
+
+	t.Run("invalid base64 decode of salt", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=65536,t=3,p=4$invalid_salt!$hash")
+		if err == nil {
+			t.Fatal("expected error for invalid salt base64")
+		}
+	})
+
+	t.Run("invalid base64 decode of hash", func(t *testing.T) {
+		_, err := VerifyPassword("pw", "argon2id$v=19$m=65536,t=3,p=4$salt$invalid_hash!")
+		if err == nil {
+			t.Fatal("expected error for invalid hash base64")
+		}
+	})
 }
