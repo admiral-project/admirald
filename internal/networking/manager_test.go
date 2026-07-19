@@ -5,12 +5,19 @@ package networking
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/config"
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -342,37 +349,77 @@ func TestShouldReplaceSeededStaticRoute(t *testing.T) {
 	tests := []struct {
 		name     string
 		existing *database.PublicRoute
+		desired  database.PublicRoute
 		want     bool
 	}{
 		{
 			name:     "nil existing",
 			existing: nil,
+			desired:  desired,
 			want:     false,
 		},
 		{
 			name:     "different kind",
 			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindAdmin)},
+			desired:  desired,
 			want:     true,
 		},
 		{
 			name:     "default portal target",
 			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: defaultLocalPortalTarget},
+			desired:  desired,
 			want:     true,
 		},
 		{
 			name:     "custom portal target",
 			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: "https://custom:5001"},
+			desired:  desired,
+			want:     false,
+		},
+		{
+			name:     "not portal route desired",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindAdmin)},
+			desired:  database.PublicRoute{RouteKind: string(admiral.RouteKindAdmin), TargetURL: "https://admin:3000"},
+			want:     false,
+		},
+		{
+			name:     "desired target empty",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: defaultLocalPortalTarget},
+			desired:  database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: ""},
+			want:     false,
+		},
+		{
+			name:     "desired target equal existing",
+			existing: &database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: "https://10.99.0.100:5001"},
+			desired:  database.PublicRoute{RouteKind: string(admiral.RouteKindPortal), TargetURL: "https://10.99.0.100:5001"},
 			want:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldReplaceSeededStaticRoute(tt.existing, desired); got != tt.want {
+			if got := shouldReplaceSeededStaticRoute(tt.existing, tt.desired); got != tt.want {
 				t.Errorf("shouldReplaceSeededStaticRoute() = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+func TestRouteNodeID(t *testing.T) {
+	t.Run("nil NodeID", func(t *testing.T) {
+		route := database.PublicRoute{NodeID: nil}
+		if got := routeNodeID(route); got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+	})
+
+	t.Run("non-nil NodeID", func(t *testing.T) {
+		nodeID := "node-abc"
+		route := database.PublicRoute{NodeID: &nodeID}
+		if got := routeNodeID(route); got != "node-abc" {
+			t.Errorf("expected 'node-abc', got %q", got)
+		}
+	})
 }
 
 func TestRandomDigits(t *testing.T) {
@@ -409,4 +456,356 @@ func openTestDB(t *testing.T) *database.DB {
 		t.Fatalf("truncate tables: %v", err)
 	}
 	return db
+}
+
+func generateTestCert(t *testing.T, notBefore, notAfter time.Time) string {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate private key: %v", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "test.example.com",
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+		DNSNames:  []string{"test.example.com"},
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "test_cert_*.pem")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer tmpFile.Close()
+
+	err = pem.Encode(tmpFile, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	if err != nil {
+		t.Fatalf("failed to pem encode cert: %v", err)
+	}
+
+	return tmpFile.Name()
+}
+
+func TestManagerRuntimeNodeAddress(t *testing.T) {
+	t.Run("single node mode", func(t *testing.T) {
+		t.Setenv("ADMIRAL_SINGLE_NODE", "true")
+		mgr := &Manager{}
+		node := &database.Node{ID: "node1"}
+		addr, err := mgr.runtimeNodeAddress(node)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if addr != "127.0.0.1" {
+			t.Errorf("expected 127.0.0.1, got %q", addr)
+		}
+	})
+
+	t.Run("dev mode config", func(t *testing.T) {
+		t.Setenv("ADMIRAL_SINGLE_NODE", "false")
+		mgr := &Manager{
+			Config: &config.Config{DevMode: true},
+		}
+		node := &database.Node{ID: "node1"}
+		addr, err := mgr.runtimeNodeAddress(node)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if addr != "127.0.0.1" {
+			t.Errorf("expected 127.0.0.1, got %q", addr)
+		}
+	})
+
+	t.Run("production empty wireguard IP", func(t *testing.T) {
+		t.Setenv("ADMIRAL_SINGLE_NODE", "false")
+		mgr := &Manager{
+			Config: &config.Config{DevMode: false},
+		}
+		node := &database.Node{ID: "node1", WireguardIP: ""}
+		_, err := mgr.runtimeNodeAddress(node)
+		if err == nil {
+			t.Fatal("expected error for empty wireguard IP in production")
+		}
+	})
+
+	t.Run("production valid wireguard IP", func(t *testing.T) {
+		t.Setenv("ADMIRAL_SINGLE_NODE", "false")
+		mgr := &Manager{
+			Config: &config.Config{DevMode: false},
+		}
+		node := &database.Node{ID: "node1", WireguardIP: "10.99.0.5"}
+		addr, err := mgr.runtimeNodeAddress(node)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if addr != "10.99.0.5" {
+			t.Errorf("expected 10.99.0.5, got %q", addr)
+		}
+	})
+}
+
+func TestCheckRouteHealthOffline(t *testing.T) {
+	mgr := &Manager{}
+
+	t.Run("disabled route", func(t *testing.T) {
+		health, lastErr := mgr.checkRouteHealth(database.PublicRoute{
+			Status: "disabled",
+		}, nil)
+		if health != "disabled" || lastErr != "" {
+			t.Errorf("expected disabled health, got %q (%q)", health, lastErr)
+		}
+	})
+
+	t.Run("static route kinds", func(t *testing.T) {
+		kinds := []string{"admin", "portal", "apps_root", "flagship", "cockpit"}
+		for _, k := range kinds {
+			health, lastErr := mgr.checkRouteHealth(database.PublicRoute{
+				RouteKind: k,
+			}, nil)
+			if health != "healthy" || lastErr != "" {
+				t.Errorf("expected healthy for %q, got %q (%q)", k, health, lastErr)
+			}
+		}
+	})
+
+	t.Run("missing target", func(t *testing.T) {
+		health, lastErr := mgr.checkRouteHealth(database.PublicRoute{
+			RouteKind: "instance",
+		}, nil)
+		if health != "unhealthy" || lastErr != "missing target" {
+			t.Errorf("expected missing target error, got %q (%q)", health, lastErr)
+		}
+	})
+
+	t.Run("build target from host and port", func(t *testing.T) {
+		mgrWithCaddy := &Manager{
+			Caddy: &CaddyAdminClient{
+				HTTP: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(strings.NewReader("ok")),
+						}, nil
+					}),
+				},
+			},
+		}
+		// target is empty but Host/Port is filled
+		health, lastErr := mgrWithCaddy.checkRouteHealth(database.PublicRoute{
+			RouteKind:  "instance",
+			TargetHost: "127.0.0.1",
+			TargetPort: 8080,
+			Hostname:   "test.example.com",
+		}, nil)
+		if health != "healthy" {
+			t.Errorf("expected healthy, got %q (%q)", health, lastErr)
+		}
+	})
+
+	t.Run("http healthcheck path doesn't start with slash", func(t *testing.T) {
+		mgrWithCaddy := &Manager{
+			Caddy: &CaddyAdminClient{
+				HTTP: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						if req.URL.Path != "/status" {
+							t.Errorf("expected path /status, got %q", req.URL.Path)
+						}
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Body:       io.NopCloser(strings.NewReader("ok")),
+						}, nil
+					}),
+				},
+			},
+		}
+		appDef := &admiral.AppDefinitionPayload{
+			Services: map[string]admiral.YAMLService{
+				"web": {
+					HealthCheck: &admiral.YAMLHealthCheck{
+						Type: "http",
+						Path: "status", // no leading slash
+					},
+				},
+			},
+		}
+		health, lastErr := mgrWithCaddy.checkRouteHealth(database.PublicRoute{
+			RouteKind:   "instance",
+			TargetURL:   "http://127.0.0.1:8080",
+			Hostname:    "test.example.com",
+			ServiceName: "web",
+		}, appDef)
+		if health != "healthy" {
+			t.Errorf("expected healthy, got %q (%q)", health, lastErr)
+		}
+	})
+
+	t.Run("unexpected status code", func(t *testing.T) {
+		mgrWithCaddy := &Manager{
+			Caddy: &CaddyAdminClient{
+				HTTP: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: http.StatusInternalServerError,
+							Body:       io.NopCloser(strings.NewReader("error")),
+						}, nil
+					}),
+				},
+			},
+		}
+		health, lastErr := mgrWithCaddy.checkRouteHealth(database.PublicRoute{
+			RouteKind: "instance",
+			TargetURL: "http://127.0.0.1:8080",
+			Hostname:  "test.example.com",
+		}, nil)
+		if health != "unhealthy" || !strings.Contains(lastErr, "returned HTTP 500") {
+			t.Errorf("expected unhealthy with status mismatch, got %q (%q)", health, lastErr)
+		}
+	})
+}
+
+func TestManagerCertificateInfoAndWarnings(t *testing.T) {
+	// Generate a cert valid from 10 days ago to 30 days from now
+	notBefore := time.Now().AddDate(0, 0, -10)
+	notAfter := time.Now().AddDate(0, 0, 30)
+	certPath := generateTestCert(t, notBefore, notAfter)
+	defer os.Remove(certPath)
+
+	mgr := &Manager{
+		Config: &config.Config{
+			NetworkingTLSCertFile: certPath,
+		},
+		Log: logging.New("test-networking"),
+	}
+
+	info, err := mgr.CertificateInfo()
+	if err != nil {
+		t.Fatalf("unexpected error parsing cert: %v", err)
+	}
+
+	if info.Subject != "test.example.com" {
+		t.Errorf("expected common name 'test.example.com', got %q", info.Subject)
+	}
+
+	// Verify warnings run without crashing
+	mgr.WarnExpiringCert()
+
+	// Test with certificate almost expired (expired in 2 days)
+	expiringNotBefore := time.Now().AddDate(0, 0, -88)
+	expiringNotAfter := time.Now().AddDate(0, 0, 2)
+	expiringCertPath := generateTestCert(t, expiringNotBefore, expiringNotAfter)
+	defer os.Remove(expiringCertPath)
+
+	mgrExpiring := &Manager{
+		Config: &config.Config{
+			NetworkingTLSCertFile: expiringCertPath,
+		},
+		Log: logging.New("test-networking"),
+	}
+
+	mgrExpiring.WarnExpiringCert()
+}
+
+func TestNewManager(t *testing.T) {
+	cfg := &config.Config{CaddyAdminURL: "http://localhost:2019"}
+	log := logging.New("test")
+	sec := secrets.NewManager("secret")
+	mgr, err := NewManager(nil, cfg, log, sec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mgr == nil {
+		t.Fatal("expected non-nil manager")
+	}
+
+	// Invalid URL should cause NewManager to fail
+	badCfg := &config.Config{CaddyAdminURL: ":%abc"}
+	_, err = NewManager(nil, badCfg, log, sec)
+	if err == nil {
+		t.Fatal("expected error for invalid CaddyAdminURL")
+	}
+}
+
+func TestManagerCertificateInfoErrors(t *testing.T) {
+	log := logging.New("test-networking")
+
+	t.Run("empty cert path", func(t *testing.T) {
+		mgr := &Manager{Config: &config.Config{}, Log: log}
+		_, err := mgr.CertificateInfo()
+		if err == nil {
+			t.Fatal("expected error for empty certificate path")
+		}
+	})
+
+	t.Run("unsafe cert path", func(t *testing.T) {
+		mgr := &Manager{Config: &config.Config{NetworkingTLSCertFile: "../unsafe/path"}, Log: log}
+		_, err := mgr.CertificateInfo()
+		if err == nil {
+			t.Fatal("expected error for unsafe certificate path")
+		}
+	})
+
+	t.Run("non-existent cert path", func(t *testing.T) {
+		mgr := &Manager{Config: &config.Config{NetworkingTLSCertFile: "/tmp/nonexistent-file-123456"}, Log: log}
+		_, err := mgr.CertificateInfo()
+		if err == nil {
+			t.Fatal("expected error for non-existent certificate file")
+		}
+	})
+
+	t.Run("no PEM block in cert file", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "invalid_pem_*.pem")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(tmpFile.Name())
+		defer tmpFile.Close()
+
+		_, _ = tmpFile.WriteString("not a pem certificate")
+
+		mgr := &Manager{
+			Config: &config.Config{NetworkingTLSCertFile: tmpFile.Name()},
+			Log:    log,
+		}
+		_, err = mgr.CertificateInfo()
+		if err == nil {
+			t.Fatal("expected error for invalid PEM block")
+		}
+		// Also triggers error in WarnExpiringCert
+		mgr.WarnExpiringCert()
+	})
+
+	t.Run("invalid certificate bytes", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "invalid_cert_*.pem")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(tmpFile.Name())
+		defer tmpFile.Close()
+
+		err = pem.Encode(tmpFile, &pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid bytes")})
+		if err != nil {
+			t.Fatalf("failed to pem encode: %v", err)
+		}
+
+		mgr := &Manager{
+			Config: &config.Config{NetworkingTLSCertFile: tmpFile.Name()},
+			Log:    log,
+		}
+		_, err = mgr.CertificateInfo()
+		if err == nil {
+			t.Fatal("expected error for invalid certificate bytes")
+		}
+	})
 }
