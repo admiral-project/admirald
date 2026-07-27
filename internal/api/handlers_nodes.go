@@ -480,10 +480,10 @@ func (h *APIHandlers) handleNodeReady(w http.ResponseWriter, nodeID string) {
 
 	addr := node.WireguardIP
 	if h.server.devMode || os.Getenv("ADMIRAL_SINGLE_NODE") == "true" {
-		addr = node.WireguardIP
-		if addr == "" {
-			addr = "127.0.0.1"
-		}
+		// Single-node and dev installs have no WireGuard interface; both
+		// fleet and harbor bind to loopback, and nodes are registered with
+		// a placeholder VPN address that must not be dialed.
+		addr = "127.0.0.1"
 	}
 	if addr == "" {
 		writeError(w, http.StatusBadRequest, "Node has no WireGuard address; refusing non-VPN readiness check")
