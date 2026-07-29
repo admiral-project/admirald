@@ -102,7 +102,7 @@ func load(path string) (*Config, error) {
 		"networking_flagship_target": "https://127.0.0.1:5000",
 		"networking_cockpit_host":    "",
 		"networking_cockpit_target":  "http://127.0.0.1:9090",
-		"caddy_admin_url":            "http://127.0.0.1:2019",
+		"caddy_admin_url":            "unix:///run/caddy/admin.sock",
 		"trusted_proxies":            "",
 	}
 
@@ -188,7 +188,7 @@ func load(path string) (*Config, error) {
 		values["networking_tls_provider"] = "letsencrypt"
 	}
 	if values["caddy_admin_url"] == "" {
-		values["caddy_admin_url"] = "http://127.0.0.1:2019"
+		values["caddy_admin_url"] = "unix:///run/caddy/admin.sock"
 	}
 
 	var trustedProxies []string

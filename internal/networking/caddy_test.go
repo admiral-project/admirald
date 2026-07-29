@@ -17,13 +17,13 @@ import (
 )
 
 func TestNewCaddyAdminClient(t *testing.T) {
-	// 1. empty URL defaults to http://127.0.0.1:2019
+	// 1. empty URL defaults to the restricted Unix socket
 	c1, err := NewCaddyAdminClient("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c1.BaseURL != "http://127.0.0.1:2019" {
-		t.Errorf("expected default BaseURL, got %q", c1.BaseURL)
+	if c1.UnixSocket != "/run/caddy/admin.sock" {
+		t.Errorf("expected default Unix socket, got %q", c1.UnixSocket)
 	}
 
 	// 2. Loopback remains http
@@ -44,7 +44,16 @@ func TestNewCaddyAdminClient(t *testing.T) {
 		t.Errorf("expected non-loopback BaseURL to be updated to https, got %q", c3.BaseURL)
 	}
 
-	// 4. Invalid URL returns error
+	// 4. Unix socket URLs use a local HTTP transport.
+	c4, err := NewCaddyAdminClient("unix:///run/caddy/custom.sock")
+	if err != nil {
+		t.Fatalf("unexpected Unix socket URL error: %v", err)
+	}
+	if c4.BaseURL != "http://caddy-admin" || c4.UnixSocket != "/run/caddy/custom.sock" {
+		t.Fatalf("unexpected Unix socket client: %#v", c4)
+	}
+
+	// 5. Invalid URL returns error
 	_, err = NewCaddyAdminClient(":%abc")
 	if err == nil {
 		t.Fatal("expected error for invalid URL")

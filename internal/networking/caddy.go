@@ -21,17 +21,35 @@ import (
 )
 
 type CaddyAdminClient struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL    string
+	UnixSocket string
+	HTTP       *http.Client
 }
 
 func NewCaddyAdminClient(baseURL string) (*CaddyAdminClient, error) {
 	if baseURL == "" {
-		baseURL = "http://127.0.0.1:2019"
+		baseURL = "unix:///run/caddy/admin.sock"
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse caddy admin url %q: %w", baseURL, err)
+	}
+	if u.Scheme == "unix" {
+		if u.Path == "" || u.Host != "" {
+			return nil, fmt.Errorf("unix caddy admin URL must be unix:///absolute/path")
+		}
+		return &CaddyAdminClient{
+			BaseURL:    "http://caddy-admin",
+			UnixSocket: u.Path,
+			HTTP: &http.Client{
+				Timeout: 10 * time.Second,
+				Transport: &http.Transport{
+					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+						return (&net.Dialer{}).DialContext(ctx, "unix", u.Path)
+					},
+				},
+			},
+		}, nil
 	}
 	if u.Scheme == "http" {
 		host := u.Hostname()
@@ -49,7 +67,7 @@ func NewCaddyAdminClient(baseURL string) (*CaddyAdminClient, error) {
 }
 
 func (c *CaddyAdminClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/config/", nil)
+	req, err := c.newRequest(ctx, http.MethodGet, "/config/", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create caddy config request: %w", err)
 	}
@@ -74,7 +92,7 @@ func (c *CaddyAdminClient) ValidateConfig(ctx context.Context, cfg map[string]in
 	if err != nil {
 		return fmt.Errorf("marshal caddy config: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/load", bytes.NewReader(payload))
+	req, err := c.newRequest(ctx, http.MethodPost, "/load", bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create caddy validate request: %w", err)
 	}
@@ -161,7 +179,7 @@ func (c *CaddyAdminClient) load(ctx context.Context, cfg map[string]interface{})
 	if err != nil {
 		return fmt.Errorf("marshal caddy load payload: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/load", bytes.NewReader(payload))
+	req, err := c.newRequest(ctx, http.MethodPost, "/load", bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create caddy load request: %w", err)
 	}
@@ -176,6 +194,10 @@ func (c *CaddyAdminClient) load(ctx context.Context, cfg map[string]interface{})
 		return fmt.Errorf("load caddy config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func (c *CaddyAdminClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	return http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
 }
 
 func (c *CaddyAdminClient) client() *http.Client {
@@ -252,7 +274,7 @@ func ensureBootstrapConfig(cfg map[string]interface{}, routeCfg RouteConfig) map
 func bootstrapConfig(routeCfg RouteConfig, email string) map[string]interface{} {
 	cfg := ensureBootstrapConfig(map[string]interface{}{}, routeCfg)
 	cfg["admin"] = map[string]interface{}{
-		"listen": "127.0.0.1:2019",
+		"listen": "unix//run/caddy/admin.sock",
 	}
 	tlsApps := cfg["apps"].(map[string]interface{})["tls"].(map[string]interface{})
 	tlsApps["automation"] = map[string]interface{}{
