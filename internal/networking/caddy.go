@@ -28,7 +28,7 @@ type CaddyAdminClient struct {
 
 func NewCaddyAdminClient(baseURL string) (*CaddyAdminClient, error) {
 	if baseURL == "" {
-		baseURL = "unix:///run/caddy/admin.sock"
+		baseURL = "http://127.0.0.1:2019"
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -274,7 +274,7 @@ func ensureBootstrapConfig(cfg map[string]interface{}, routeCfg RouteConfig) map
 func bootstrapConfig(routeCfg RouteConfig, email string) map[string]interface{} {
 	cfg := ensureBootstrapConfig(map[string]interface{}{}, routeCfg)
 	cfg["admin"] = map[string]interface{}{
-		"listen": "unix//run/caddy/admin.sock",
+		"listen": "127.0.0.1:2019",
 	}
 	tlsApps := cfg["apps"].(map[string]interface{})["tls"].(map[string]interface{})
 	tlsApps["automation"] = map[string]interface{}{

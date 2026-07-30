@@ -17,13 +17,13 @@ import (
 )
 
 func TestNewCaddyAdminClient(t *testing.T) {
-	// 1. empty URL defaults to the restricted Unix socket
+	// 1. empty URL defaults to the local loopback API.
 	c1, err := NewCaddyAdminClient("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c1.UnixSocket != "/run/caddy/admin.sock" {
-		t.Errorf("expected default Unix socket, got %q", c1.UnixSocket)
+	if c1.BaseURL != "http://127.0.0.1:2019" || c1.UnixSocket != "" {
+		t.Errorf("expected default loopback client, got %#v", c1)
 	}
 
 	// 2. Loopback remains http
