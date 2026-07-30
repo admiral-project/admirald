@@ -32,6 +32,17 @@ type Server struct {
 	devMode        bool
 }
 
+// singleNodeMode is the single source of truth for local node routing. The
+// environment override is intentionally kept for systemd and development
+// profiles, while devMode remains part of the loaded server configuration.
+func singleNodeMode(devMode bool) bool {
+	return devMode || os.Getenv("ADMIRAL_SINGLE_NODE") == "true"
+}
+
+func (s *Server) singleNodeMode() bool {
+	return s != nil && singleNodeMode(s.devMode)
+}
+
 const (
 	authFailureLimit  = 10
 	authFailureWindow = 5 * time.Minute
@@ -338,7 +349,7 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 			continue
 		}
 		candidates := []string{portal.WireguardIP}
-		if s.devMode || os.Getenv("ADMIRAL_SINGLE_NODE") == "true" {
+		if s.singleNodeMode() {
 			candidates = append(candidates, "127.0.0.1")
 		}
 		var ok bool

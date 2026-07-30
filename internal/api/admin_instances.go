@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -245,7 +244,7 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 // workload routing. General-interface addresses are deliberately rejected in
 // production because they bypass the authenticated WireGuard network.
 func (h *APIHandlers) runtimeNodeAddress(node *database.Node) (string, error) {
-	if os.Getenv("ADMIRAL_SINGLE_NODE") == "true" || (h.server != nil && h.server.devMode) {
+	if singleNodeMode(h.server != nil && h.server.devMode) {
 		return "127.0.0.1", nil
 	}
 	if node.WireguardIP == "" {
