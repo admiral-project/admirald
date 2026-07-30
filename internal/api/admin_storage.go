@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"github.com/admiral-project/admiral/admirald/pkg/admiral/storage"
 )
 
 func (h *APIHandlers) HandleAdminSettingsStorage(w http.ResponseWriter, r *http.Request) {
@@ -39,11 +40,9 @@ func (h *APIHandlers) HandleAdminSettingsStorage(w http.ResponseWriter, r *http.
 			return
 		}
 
-		if req.Backend == "s3" && !strings.HasPrefix(req.Endpoint, "https://") {
-			if req.Endpoint != "http://localhost" &&
-				!strings.HasPrefix(req.Endpoint, "http://127.0.0.1") &&
-				!strings.HasPrefix(req.Endpoint, "http://[::1]") {
-				writeError(w, http.StatusBadRequest, "S3 endpoint must use HTTPS for non-localhost endpoints")
+		if req.Backend == "s3" {
+			if err := storage.ValidateEndpoint(req.Endpoint); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}

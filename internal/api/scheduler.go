@@ -507,6 +507,10 @@ func (s *Server) RunBackupVerifierIteration() {
 	if cfg.Backend != "s3" {
 		return
 	}
+	if err := storage.ValidateEndpoint(cfg.Endpoint); err != nil {
+		s.log.Error("Backup verifier: invalid S3 endpoint", err, nil)
+		return
+	}
 
 	accessKey := osGetenv("ADMIRAL_S3_ACCESS_KEY_ID")
 	secretKey := osGetenv("ADMIRAL_S3_SECRET_ACCESS_KEY")
