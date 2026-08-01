@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// exitFn is overridable in tests to avoid killing the test process.
+var exitFn = os.Exit
+
 var sensitiveKeys = []string{
 	"password",
 	"passwd",
@@ -60,7 +63,7 @@ func (l *Logger) Fatal(message string, err error, fields map[string]interface{})
 		fields["error"] = err.Error()
 	}
 	l.log("FATAL", message, fields)
-	os.Exit(1)
+	exitFn(1)
 }
 
 func (l *Logger) log(level, message string, fields map[string]interface{}) {

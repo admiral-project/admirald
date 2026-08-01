@@ -93,13 +93,17 @@ func TestLogger(t *testing.T) {
 }
 
 func TestLoggerFatal(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("The code did not panic")
-		}
-	}()
+	var exitCode int
+	originalExit := exitFn
+	defer func() { exitFn = originalExit }()
+	exitFn = func(code int) {
+		exitCode = code
+	}
 	l := New("test")
 	l.Fatal("fatal error", fmt.Errorf("boom"), nil)
+	if exitCode != 1 {
+		t.Errorf("exitFn called with code %d, want 1", exitCode)
+	}
 }
 
 func TestIsSensitiveKey(t *testing.T) {
