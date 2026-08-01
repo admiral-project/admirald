@@ -53,15 +53,15 @@ func (m *migrationTestPublisher) ClaimTask(nodeID string) (*admiral.FleetTask, s
 	return nil, "", 30, 0, nil
 }
 
-func (m *migrationTestPublisher) MarkRunning(commandID string) error {
+func (m *migrationTestPublisher) MarkRunningForNode(commandID, nodeID string) error {
 	return nil
 }
 
-func (m *migrationTestPublisher) RenewLease(commandID string) error {
+func (m *migrationTestPublisher) RenewLeaseForNode(commandID, nodeID string) error {
 	return nil
 }
 
-func (m *migrationTestPublisher) DiscardCommand(commandID, reason string) error {
+func (m *migrationTestPublisher) DiscardCommandForNode(commandID, nodeID, reason string) error {
 	return nil
 }
 
@@ -395,9 +395,9 @@ func (m *mockPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, res
 func (m *mockPublisher) ClaimTask(nodeID string) (*admiral.FleetTask, string, int, int, error) {
 	return nil, "", 30, 0, nil
 }
-func (m *mockPublisher) MarkRunning(commandID string) error            { return nil }
-func (m *mockPublisher) RenewLease(commandID string) error             { return nil }
-func (m *mockPublisher) DiscardCommand(commandID, reason string) error { return nil }
+func (m *mockPublisher) MarkRunningForNode(commandID, nodeID string) error            { return nil }
+func (m *mockPublisher) RenewLeaseForNode(commandID, nodeID string) error             { return nil }
+func (m *mockPublisher) DiscardCommandForNode(commandID, nodeID, reason string) error { return nil }
 func (m *mockPublisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error {
 	return nil
 }

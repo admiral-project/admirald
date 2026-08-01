@@ -177,7 +177,16 @@ func (h *APIHandlers) HandleTaskRunning(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing command id")
 		return
 	}
-	if err := h.publisher.MarkRunning(commandID); err != nil {
+	nodeID, ok := NodeIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusForbidden, "missing node identity")
+		return
+	}
+	if err := h.publisher.MarkRunningForNode(commandID, nodeID); err != nil {
+		if errors.Is(err, queue.ErrCommandNotOwned) {
+			writeError(w, http.StatusForbidden, "command does not belong to node")
+			return
+		}
 		h.log.Error("Task mark running failed", err, map[string]interface{}{"command_id": commandID})
 		writeError(w, http.StatusInternalServerError, "failed to mark task running")
 		return
@@ -195,7 +204,16 @@ func (h *APIHandlers) HandleTaskRenewLease(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "missing command id")
 		return
 	}
-	if err := h.publisher.RenewLease(commandID); err != nil {
+	nodeID, ok := NodeIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusForbidden, "missing node identity")
+		return
+	}
+	if err := h.publisher.RenewLeaseForNode(commandID, nodeID); err != nil {
+		if errors.Is(err, queue.ErrCommandNotOwned) {
+			writeError(w, http.StatusForbidden, "command does not belong to node")
+			return
+		}
 		h.log.Error("Task renew lease failed", err, map[string]interface{}{"command_id": commandID})
 		writeError(w, http.StatusInternalServerError, "failed to renew lease")
 		return
@@ -217,7 +235,16 @@ func (h *APIHandlers) HandleTaskDiscard(w http.ResponseWriter, r *http.Request) 
 		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if err := h.publisher.DiscardCommand(commandID, req.Reason); err != nil {
+	nodeID, ok := NodeIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusForbidden, "missing node identity")
+		return
+	}
+	if err := h.publisher.DiscardCommandForNode(commandID, nodeID, req.Reason); err != nil {
+		if errors.Is(err, queue.ErrCommandNotOwned) {
+			writeError(w, http.StatusForbidden, "command does not belong to node")
+			return
+		}
 		h.log.Error("Task discard failed", err, map[string]interface{}{"command_id": commandID})
 		writeError(w, http.StatusInternalServerError, "failed to discard task")
 		return

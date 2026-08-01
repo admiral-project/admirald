@@ -31,6 +31,7 @@ const (
 var randomReader io.Reader = rand.Reader
 
 var ErrNoCommandAvailable = errors.New("no command available")
+var ErrCommandNotOwned = errors.New("command is not owned by node")
 
 type Publisher struct {
 	db            *queuedb.DB
@@ -278,43 +279,65 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 	return &task, commandID, attemptCount, maxAttempts, nil
 }
 
-func (p *Publisher) MarkRunning(commandID string) error {
-	_, err := p.db.Exec(`
+func (p *Publisher) MarkRunningForNode(commandID, nodeID string) error {
+	result, err := p.db.Exec(`
 		UPDATE fleet_commands
 		SET status = $1,
 			started_at = CURRENT_TIMESTAMP
 		WHERE id = $2
-	`, string(admiral.CommandRunning), commandID)
+		  AND node_id = $3
+		  AND status IN ($4, $5)
+	`, string(admiral.CommandRunning), commandID, nodeID,
+		string(admiral.CommandLeased), string(admiral.CommandRunning))
 	if err != nil {
 		return fmt.Errorf("mark running: %w", err)
 	}
-	return nil
-}
-
-func (p *Publisher) RenewLease(commandID string) error {
-	_, err := p.db.Exec(`
-		UPDATE fleet_commands
-		SET leased_until = CURRENT_TIMESTAMP + ($1 * INTERVAL '1 second')
-		WHERE id = $2
-		  AND status = $3
-	`, defaultLeaseSeconds, commandID, string(admiral.CommandRunning))
-	if err != nil {
-		return fmt.Errorf("renew lease: %w", err)
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check marked command ownership: %w", err)
+	} else if affected == 0 {
+		return ErrCommandNotOwned
 	}
 	return nil
 }
 
-func (p *Publisher) DiscardCommand(commandID, reason string) error {
-	_, err := p.db.Exec(`
+func (p *Publisher) RenewLeaseForNode(commandID, nodeID string) error {
+	result, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET leased_until = CURRENT_TIMESTAMP + ($1 * INTERVAL '1 second')
+		WHERE id = $2
+		  AND node_id = $3
+		  AND status = $4
+	`, defaultLeaseSeconds, commandID, nodeID, string(admiral.CommandRunning))
+	if err != nil {
+		return fmt.Errorf("renew lease: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check renewed command ownership: %w", err)
+	} else if affected == 0 {
+		return ErrCommandNotOwned
+	}
+	return nil
+}
+
+func (p *Publisher) DiscardCommandForNode(commandID, nodeID, reason string) error {
+	result, err := p.db.Exec(`
 		UPDATE fleet_commands
 		SET status = $1,
 			last_error = $2,
 			completed_at = CURRENT_TIMESTAMP,
 			leased_until = NULL
 		WHERE id = $3
-	`, string(admiral.CommandFailed), reason, commandID)
+		  AND node_id = $4
+		  AND status NOT IN ($5, $6)
+	`, string(admiral.CommandFailed), reason, commandID, nodeID,
+		string(admiral.CommandSucceeded), string(admiral.CommandFailed))
 	if err != nil {
 		return fmt.Errorf("discard command: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check discarded command ownership: %w", err)
+	} else if affected == 0 {
+		return ErrCommandNotOwned
 	}
 	return nil
 }
