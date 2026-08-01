@@ -480,8 +480,13 @@ func (s *Server) StartBackupVerifier(ctx context.Context) {
 
 	// Run an initial verification pass shortly after startup.
 	go func() {
-		time.Sleep(1 * time.Minute)
-		s.RunBackupVerifierIteration()
+		timer := time.NewTimer(1 * time.Minute)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+			s.RunBackupVerifierIteration()
+		}
 	}()
 
 	for {
