@@ -102,7 +102,8 @@ func (h *APIHandlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.db.DB.Ping(); err != nil {
 		status["status"] = "degraded"
-		status["database"] = err.Error()
+		h.log.Error("database status check failed", err, nil)
+		status["database"] = "unavailable"
 	}
 	writeJSON(w, http.StatusOK, status)
 }

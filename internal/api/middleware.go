@@ -161,6 +161,7 @@ func (rl *RateLimiter) Allow(key string, maxAttempts int, window time.Duration) 
 	defer rl.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-window)
+	rl.removeExpiredLocked(cutoff)
 	entries := rl.buckets[key]
 	var recent []time.Time
 	for _, t := range entries {
@@ -182,6 +183,7 @@ func (rl *RateLimiter) IsBlocked(key string, maxAttempts int, window time.Durati
 	defer rl.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-window)
+	rl.removeExpiredLocked(cutoff)
 	entries := rl.buckets[key]
 	var recent []time.Time
 	for _, t := range entries {
@@ -198,6 +200,22 @@ func (rl *RateLimiter) IsBlocked(key string, maxAttempts int, window time.Durati
 		retryAfter = time.Second
 	}
 	return true, retryAfter
+}
+
+func (rl *RateLimiter) removeExpiredLocked(cutoff time.Time) {
+	for key, entries := range rl.buckets {
+		kept := entries[:0]
+		for _, entry := range entries {
+			if entry.After(cutoff) {
+				kept = append(kept, entry)
+			}
+		}
+		if len(kept) == 0 {
+			delete(rl.buckets, key)
+		} else {
+			rl.buckets[key] = kept
+		}
+	}
 }
 
 func (rl *RateLimiter) Reset(key string) {

@@ -6,6 +6,7 @@ package logging
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -59,7 +60,7 @@ func (l *Logger) Fatal(message string, err error, fields map[string]interface{})
 		fields["error"] = err.Error()
 	}
 	l.log("FATAL", message, fields)
-	panic("fatal: " + message)
+	os.Exit(1)
 }
 
 func (l *Logger) log(level, message string, fields map[string]interface{}) {
