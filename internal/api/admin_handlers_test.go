@@ -487,10 +487,10 @@ func TestClientIP(t *testing.T) {
 			want:           "203.0.113.2",
 		},
 		{
-			name:       "Localhost trusted by default",
+			name:       "Localhost does not trust forwarded headers by default",
 			remoteAddr: "127.0.0.1:1234",
 			headers:    map[string]string{"X-Forwarded-For": "203.0.113.5"},
-			want:       "203.0.113.5",
+			want:       "127.0.0.1",
 		},
 		{
 			name:           "X-Forwarded-For takes precedence over X-Real-IP (trusted)",

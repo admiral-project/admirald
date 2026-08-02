@@ -68,9 +68,6 @@ func getClientIP(r *http.Request, trustedProxies []string) string {
 				break
 			}
 		}
-	} else if remoteAddr == "127.0.0.1" || remoteAddr == "::1" {
-		// By default trust localhost if no proxies are defined
-		isTrusted = true
 	}
 
 	if isTrusted {

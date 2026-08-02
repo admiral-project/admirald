@@ -4,23 +4,51 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sort"
 )
 
+type migrationDB interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+type migrationConn struct{ conn *sql.Conn }
+
+func (c migrationConn) Exec(query string, args ...any) (sql.Result, error) {
+	return c.conn.ExecContext(context.Background(), query, args...)
+}
+
+func (c migrationConn) Query(query string, args ...any) (*sql.Rows, error) {
+	return c.conn.QueryContext(context.Background(), query, args...)
+}
+
 type Migration struct {
 	Version int
 	Name    string
-	Up      func(*sql.DB) error
+	Up      func(migrationDB) error
 }
 
 func RunMigrations(db *sql.DB) error {
-	if err := ensureMigrationTable(db); err != nil {
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Close()
+	const lockID int64 = 847291
+	if _, err := conn.ExecContext(context.Background(), "SELECT pg_advisory_lock($1)", lockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", lockID) }()
+	lockedDB := migrationConn{conn: conn}
+
+	if err := ensureMigrationTable(lockedDB); err != nil {
 		return err
 	}
 
-	applied, err := getAppliedMigrations(db)
+	applied, err := getAppliedMigrations(lockedDB)
 	if err != nil {
 		return err
 	}
@@ -33,10 +61,10 @@ func RunMigrations(db *sql.DB) error {
 	for _, m := range migrations {
 		if !applied[m.Version] {
 			fmt.Printf("Applying migration %04d_%s\n", m.Version, m.Name)
-			if err := m.Up(db); err != nil {
+			if err := m.Up(lockedDB); err != nil {
 				return fmt.Errorf("migration %04d_%s failed: %w", m.Version, m.Name, err)
 			}
-			if err := recordMigration(db, m.Version); err != nil {
+			if err := recordMigration(lockedDB, m.Version); err != nil {
 				return err
 			}
 		}
@@ -45,7 +73,7 @@ func RunMigrations(db *sql.DB) error {
 	return nil
 }
 
-func ensureMigrationTable(db *sql.DB) error {
+func ensureMigrationTable(db migrationDB) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS schema_migrations (
 		version BIGINT PRIMARY KEY,
@@ -55,7 +83,7 @@ func ensureMigrationTable(db *sql.DB) error {
 	return err
 }
 
-func getAppliedMigrations(db *sql.DB) (map[int]bool, error) {
+func getAppliedMigrations(db migrationDB) (map[int]bool, error) {
 	rows, err := db.Query("SELECT version FROM schema_migrations")
 	if err != nil {
 		return nil, err
@@ -76,7 +104,7 @@ func getAppliedMigrations(db *sql.DB) (map[int]bool, error) {
 	return applied, nil
 }
 
-func recordMigration(db *sql.DB, version int) error {
+func recordMigration(db migrationDB, version int) error {
 	_, err := db.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", version)
 	return err
 }
@@ -86,7 +114,7 @@ func getMigrations() []Migration {
 		{
 			Version: 1,
 			Name:    "initial_schema",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec(initialSchema)
 				return err
 			},
@@ -94,7 +122,7 @@ func getMigrations() []Migration {
 		{
 			Version: 2,
 			Name:    "add_app_catalog_fields",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				queries := []string{
 					"ALTER TABLE app_definitions ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'available'",
 					"ALTER TABLE app_definitions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 0",
@@ -111,7 +139,7 @@ func getMigrations() []Migration {
 		{
 			Version: 3,
 			Name:    "add_availability_reason",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE app_definitions ADD COLUMN IF NOT EXISTS last_availability_reason TEXT NOT NULL DEFAULT ''")
 				return err
 			},
@@ -119,7 +147,7 @@ func getMigrations() []Migration {
 		{
 			Version: 4,
 			Name:    "add_is_free_to_tiers",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE app_tiers ADD COLUMN IF NOT EXISTS is_free BOOLEAN NOT NULL DEFAULT FALSE")
 				return err
 			},
@@ -127,7 +155,7 @@ func getMigrations() []Migration {
 		{
 			Version: 5,
 			Name:    "add_multinode_fields",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				queries := []string{
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS wireguard_ip TEXT NOT NULL DEFAULT ''",
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_role TEXT NOT NULL DEFAULT 'worker'",
@@ -144,7 +172,7 @@ func getMigrations() []Migration {
 		{
 			Version: 6,
 			Name:    "add_logical_instance_id",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				queries := []string{
 					"ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS logical_instance_id TEXT NOT NULL DEFAULT ''",
 					"UPDATE customer_apps SET logical_instance_id = id WHERE logical_instance_id = ''",
@@ -160,7 +188,7 @@ func getMigrations() []Migration {
 		{
 			Version: 7,
 			Name:    "add_operation_metadata",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE operations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'")
 				if err != nil {
 					return fmt.Errorf("migration 7 failed: %w", err)
@@ -171,7 +199,7 @@ func getMigrations() []Migration {
 		{
 			Version: 8,
 			Name:    "add_inspect_data",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS inspect_data TEXT DEFAULT ''")
 				if err != nil {
 					return fmt.Errorf("migration 8 failed: %w", err)
@@ -182,7 +210,7 @@ func getMigrations() []Migration {
 		{
 			Version: 9,
 			Name:    "add_node_token_columns",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				queries := []string{
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_type TEXT NOT NULL DEFAULT 'worker'",
 					"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_status TEXT NOT NULL DEFAULT 'pending'",
@@ -213,7 +241,7 @@ func getMigrations() []Migration {
 		{
 			Version: 10,
 			Name:    "add_rate_limits_table",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec(`
 					CREATE TABLE IF NOT EXISTS rate_limits (
 						identifier TEXT PRIMARY KEY,
@@ -227,7 +255,7 @@ func getMigrations() []Migration {
 		{
 			Version: 11,
 			Name:    "add_node_tokens_table",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec(`
 					CREATE TABLE IF NOT EXISTS node_tokens (
 						node_id TEXT NOT NULL,
@@ -267,7 +295,7 @@ func getMigrations() []Migration {
 		{
 			Version: 12,
 			Name:    "add_backup_verified_at",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP")
 				if err != nil {
 					return fmt.Errorf("migration 12 failed: %w", err)
@@ -278,7 +306,7 @@ func getMigrations() []Migration {
 		{
 			Version: 13,
 			Name:    "add_setup_completed",
-			Up: func(db *sql.DB) error {
+			Up: func(db migrationDB) error {
 				_, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS setup_completed BOOLEAN NOT NULL DEFAULT FALSE")
 				if err != nil {
 					return fmt.Errorf("migration 13 failed: %w", err)
