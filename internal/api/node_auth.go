@@ -68,6 +68,12 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
+		if node.ManualDisabled {
+			limiter.Allow(key, authFailureLimit, authFailureWindow)
+			logAuthFailure(log, "WARN", "node_token", "node_manual_disabled", http.StatusForbidden, r, nil)
+			writeGenericAuthError(w, http.StatusForbidden)
+			return
+		}
 		if nodeToken.TokenStatus != "active" && nodeToken.TokenStatus != "consumed" {
 			limiter.Allow(key, authFailureLimit, authFailureWindow)
 			logAuthFailure(log, "WARN", "node_token", "inactive_token", http.StatusUnauthorized, r, nil)

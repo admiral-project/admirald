@@ -246,7 +246,11 @@ func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "Failed to generate node token")
 				return
 			}
-			if err := h.db.UpsertNodeToken(req.NodeID, identifier, hash, tokenType, "available", encryptedValue, &expiresAt, claimID); err != nil {
+			// The generated token is returned once in this response. It is already
+			// held by the enrolling operator/fleet, so it must be usable immediately.
+			// "available" tokens are reserved for an unclaimed one-shot flow and
+			// cannot authenticate through NodeAuthMiddleware.
+			if err := h.db.UpsertNodeToken(req.NodeID, identifier, hash, tokenType, "active", encryptedValue, &expiresAt, claimID); err != nil {
 				h.log.Error("Failed to store generated node token", err, map[string]interface{}{"node_id": req.NodeID})
 				writeError(w, http.StatusInternalServerError, "Failed to store node token")
 				return
