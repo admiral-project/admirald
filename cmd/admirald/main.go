@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"log/slog"
 	"os"
@@ -81,7 +82,7 @@ func main() {
 	}
 
 	seed, err := hex.DecodeString(cfg.SigningKey)
-	if err != nil {
+	if err != nil || len(seed) != ed25519.SeedSize {
 		logger.Fatal("invalid signing key (ADMIRAL_ED25519_PRIVATE_KEY must be 64 hex chars)", err, nil)
 	}
 	var encKey []byte
