@@ -41,7 +41,10 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 func AdminAuthMiddleware(log *logging.Logger, adminToken string, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
-	limiter := NewRateLimiter()
+	return AdminAuthMiddlewareWithLimiter(log, adminToken, trustedProxies, NewRateLimiter(), next)
+}
+
+func AdminAuthMiddlewareWithLimiter(log *logging.Logger, adminToken string, trustedProxies []string, limiter Limiter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := "admin_token:" + getClientIP(r, trustedProxies)
 		if blocked, retryAfter := limiter.IsBlocked(key, authFailureLimit, authFailureWindow); blocked {
