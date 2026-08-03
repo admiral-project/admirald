@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -165,6 +166,45 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		"attempt_count": attemptCount,
 		"max_attempts":  maxAttempts,
 	})
+}
+
+// HandleOCIImages returns the unique OCI image references used by active app
+// definitions. Fleet uses this small authenticated endpoint for conservative
+// background pre-pulls; credentials and application definitions never leave
+// the control plane.
+func (h *APIHandlers) HandleOCIImages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	apps, err := h.db.GetAppDefinitions()
+	if err != nil {
+		h.log.Error("Get app definitions for OCI image list failed", err, nil)
+		writeError(w, http.StatusInternalServerError, "failed to list OCI images")
+		return
+	}
+	images := make(map[string]struct{})
+	for _, app := range apps {
+		if app.Status != "active" {
+			continue
+		}
+		var payload admiral.AppDefinitionPayload
+		if err := yaml.Unmarshal([]byte(app.RawYAML), &payload); err != nil {
+			h.log.Warn("Skipping invalid app definition in OCI image list", map[string]interface{}{"app_name": app.Name, "error": err.Error()})
+			continue
+		}
+		for _, service := range payload.Services {
+			if image := strings.TrimSpace(service.Image); image != "" {
+				images[image] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(images))
+	for image := range images {
+		result = append(result, image)
+	}
+	slices.Sort(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *APIHandlers) HandleTaskRunning(w http.ResponseWriter, r *http.Request) {

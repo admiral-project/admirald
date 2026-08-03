@@ -117,6 +117,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 
 	// Node-authenticated routes (heartbeat and claim use node auth middleware)
 	mux.HandleFunc("/api/v1/nodes/heartbeat", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleNodeHeartbeat)))
+	mux.HandleFunc("/api/v1/fleet/oci_images", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, s.handlers.HandleOCIImages))
 
 	// Fleet worker routes (worker token required)
 	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
