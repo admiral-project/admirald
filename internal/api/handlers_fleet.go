@@ -82,6 +82,12 @@ func validateRestartImageEvidence(h *APIHandlers, instanceID, metadata string) e
 		return fmt.Errorf("parse app definition for image verification: %w", err)
 	}
 	for name, service := range payload.Services {
+		// setup_command services use a transient helper container that is
+		// removed after provisioning; there is no running container to
+		// verify during a later restart.
+		if strings.TrimSpace(service.SetupCommand) != "" {
+			continue
+		}
 		evidence, ok := callback.Images[name]
 		if !ok {
 			return fmt.Errorf("Fleet did not verify image for service %q", name)
