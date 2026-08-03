@@ -80,6 +80,12 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
+		if nodeToken.TokenExpiresAt != nil && !nodeToken.TokenExpiresAt.After(time.Now()) {
+			limiter.Allow(key, authFailureLimit, authFailureWindow)
+			logAuthFailure(log, "WARN", "node_token", "expired_token", http.StatusUnauthorized, r, nil)
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
 		if expectedTokenType != "" && nodeToken.TokenType != expectedTokenType {
 			limiter.Allow(key, authFailureLimit, authFailureWindow)
 			logAuthFailure(log, "WARN", "node_token", "token_type_mismatch", http.StatusForbidden, r, nil)

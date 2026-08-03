@@ -422,6 +422,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		"node_id":      res.NodeID,
 		"success":      res.Success,
 	})
+	authenticatedNodeID, ok := NodeIDFromContext(r.Context())
+	if ok && (authenticatedNodeID == "" || res.NodeID != authenticatedNodeID) {
+		h.failFleetCallbackTask(res.TaskID, "callback node_id does not match authenticated node")
+		writeError(w, http.StatusForbidden, "Callback node_id does not match authenticated node")
+		return
+	}
 
 	op, err := h.db.GetOperation(res.OperationID)
 	if err != nil {

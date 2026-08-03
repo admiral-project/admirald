@@ -169,7 +169,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{
 		Addr:           addr + ":" + port,
-		Handler:        SecurityHeadersMiddleware(mux),
+		Handler:        RecoveryMiddleware(SecurityHeadersMiddleware(mux)),
 		TLSConfig:      tlsconfig.NewServerConfig(),
 		ReadTimeout:    15 * time.Second,
 		WriteTimeout:   15 * time.Second,

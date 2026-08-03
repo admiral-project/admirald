@@ -302,6 +302,12 @@ func (d *DB) RemoveNode(id string, force bool) error {
 		return fmt.Errorf("remove node %q: begin tx: %w", id, err)
 	}
 	defer tx.Rollback()
+	var existing string
+	if err := tx.QueryRow("SELECT id FROM nodes WHERE id = $1 FOR UPDATE", id).Scan(&existing); err == sql.ErrNoRows {
+		return fmt.Errorf("remove node %q: node not found", id)
+	} else if err != nil {
+		return fmt.Errorf("remove node %q: lock node: %w", id, err)
+	}
 
 	if !force {
 		var count int
@@ -365,7 +371,7 @@ func (d *DB) DeleteExpiredPendingNodes() ([]string, error) {
 func (d *DB) ReapExpiredNodeTokens() (int64, error) {
 	res, err := d.Exec(`
 		DELETE FROM node_tokens
-		WHERE token_status = 'available'
+		WHERE token_status IN ('available', 'pending', 'active', 'consumed')
 		  AND token_expires_at < NOW()
 	`)
 	if err != nil {

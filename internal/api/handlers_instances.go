@@ -310,6 +310,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, "customer_id is required")
 			return
 		}
+		if !requireCustomerOwnership(w, r, customerID) {
+			return
+		}
 		apps, err := h.db.GetCustomerApps(customerID)
 		if err != nil {
 			h.log.Error("Get customer apps failed", err, nil)

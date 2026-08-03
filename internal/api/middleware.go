@@ -40,6 +40,17 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recover() != nil {
+				writeError(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 func AdminAuthMiddleware(log *logging.Logger, adminToken string, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
 	return AdminAuthMiddlewareWithLimiter(log, adminToken, trustedProxies, NewRateLimiter(), next)
 }
@@ -80,10 +91,14 @@ func AdminAuthMiddlewareWithLimiter(log *logging.Logger, adminToken string, trus
 		}
 		limiter.Reset(key)
 
-		// Strip client-supplied admin-user header to prevent audit trail forgery.
-		// Only AdminAuthMiddleware is authorized to set this header.
+		operator := r.Header.Get("X-Admiral-Operator")
+		// Strip client-supplied admin-user header to prevent audit trail forgery,
+		// while preserving the authenticated operator attribution.
 		r.Header.Del("X-Admiral-Admin-User")
 		r.Header.Del("X-Admiral-Operator")
+		if operator != "" {
+			r.Header.Set("X-Admiral-Operator", operator)
+		}
 
 		next(w, r)
 	}
@@ -122,15 +137,23 @@ func HarborAuthMiddleware(log *logging.Logger, adminToken, harborToken string, t
 		// Allow both admin token (full access) and harbor token (customer scope)
 		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(adminToken)) == 1 {
 			limiter.Reset(key)
+			operator := r.Header.Get("X-Admiral-Operator")
 			r.Header.Del("X-Admiral-Admin-User")
 			r.Header.Del("X-Admiral-Operator")
+			if operator != "" {
+				r.Header.Set("X-Admiral-Operator", operator)
+			}
 			next(w, withAuthPrincipal(r, systemAuthPrincipal))
 			return
 		}
 		if harborToken != "" && subtle.ConstantTimeCompare([]byte(reqToken), []byte(harborToken)) == 1 {
 			limiter.Reset(key)
+			operator := r.Header.Get("X-Admiral-Operator")
 			r.Header.Del("X-Admiral-Admin-User")
 			r.Header.Del("X-Admiral-Operator")
+			if operator != "" {
+				r.Header.Set("X-Admiral-Operator", operator)
+			}
 			next(w, r)
 			return
 		}

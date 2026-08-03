@@ -342,6 +342,22 @@ func (p *Publisher) DiscardCommandForNode(commandID, nodeID, reason string) erro
 	return nil
 }
 
+// DiscardTasksForNode prevents durable commands from surviving node removal.
+func (p *Publisher) DiscardTasksForNode(nodeID string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET status = $1,
+			last_error = $2,
+			completed_at = CURRENT_TIMESTAMP,
+			leased_until = NULL,
+			leased_by = NULL
+		WHERE node_id = $3
+		  AND status IN ($4, $5, $6)
+	`, string(admiral.CommandFailed), "node removed", nodeID,
+		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning))
+	return err
+}
+
 func (p *Publisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error {
 	if success {
 		_, err := p.db.Exec(`

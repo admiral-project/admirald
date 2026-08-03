@@ -370,6 +370,13 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 {
 		if r.Method == http.MethodDelete {
 			force := r.URL.Query().Get("force") == "true"
+			if reaper, ok := h.publisher.(interface{ DiscardTasksForNode(string) error }); ok {
+				if err := reaper.DiscardTasksForNode(nodeID); err != nil {
+					h.log.Error("Discard node tasks failed", err, map[string]interface{}{"node_id": nodeID})
+					writeError(w, http.StatusInternalServerError, "Failed to discard node tasks")
+					return
+				}
+			}
 			if err := h.db.RemoveNode(nodeID, force); err != nil {
 				if strings.Contains(err.Error(), "has active instance") {
 					writeError(w, http.StatusConflict, err.Error())
