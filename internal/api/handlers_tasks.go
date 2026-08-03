@@ -60,6 +60,15 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 		Services:      services,
 		SharedVolumes: buildSharedVolumeInfos(payload),
 	}
+	if action == admiral.ActionStartApp || action == admiral.ActionResumeApp || action == admiral.ActionReactivateApp {
+		inst, ierr := h.db.GetCustomerApp(instID)
+		if ierr != nil {
+			h.log.Error("Failed to load restart state for image verification", ierr, map[string]interface{}{"instance_id": instID, "operation_id": opID})
+			_ = h.db.UpdateOperation(opID, "failed", "failed to load restart state")
+			return
+		}
+		task.VerifyImages = inst != nil && inst.NeedRestarting
+	}
 
 	// Populate setup_completed from the DB so fleet can skip setup
 	// if it has already been executed successfully (e.g. on a retry

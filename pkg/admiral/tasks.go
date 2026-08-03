@@ -39,8 +39,12 @@ type FleetTask struct {
 	Restore        *RestoreInfo       `json:"restore,omitempty"`
 	Storage        *StorageConfig     `json:"storage,omitempty"`
 	SetupCompleted bool               `json:"setup_completed,omitempty"`
-	TaskSignature  string             `json:"task_signature,omitempty"`
-	SignedAt       int64              `json:"signed_at,omitempty"`
+	// VerifyImages requires Fleet to report the effective image reference and
+	// immutable image ID after a start-like action. Admiral sets it only when
+	// the instance has need_restarting=true.
+	VerifyImages  bool   `json:"verify_images,omitempty"`
+	TaskSignature string `json:"task_signature,omitempty"`
+	SignedAt      int64  `json:"signed_at,omitempty"`
 }
 
 type StorageConfig struct {
