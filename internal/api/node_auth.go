@@ -4,9 +4,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -134,6 +137,22 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			}
 		}
 		limiter.Reset(key)
+		if r.URL.Path == "/api/v1/fleet/callback" {
+			body, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			provided, decodeErr := hex.DecodeString(r.Header.Get("X-Admiral-Task-Signature"))
+			mac := hmac.New(sha256.New, []byte(reqToken))
+			_, _ = mac.Write(body)
+			if decodeErr != nil || !hmac.Equal(provided, mac.Sum(nil)) {
+				logAuthFailure(log, "WARN", "node_callback", "invalid_signature", http.StatusUnauthorized, r, nil)
+				writeGenericAuthError(w, http.StatusUnauthorized)
+				return
+			}
+		}
 
 		ctx := context.WithValue(r.Context(), contextKeyNodeID, node.ID)
 		ctx = context.WithValue(ctx, contextKeyTokenType, nodeToken.TokenType)
