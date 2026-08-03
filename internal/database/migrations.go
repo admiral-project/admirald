@@ -314,6 +314,17 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 14,
+			Name:    "add_instance_restart_required",
+			Up: func(db migrationDB) error {
+				_, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS need_restarting BOOLEAN NOT NULL DEFAULT FALSE")
+				if err != nil {
+					return fmt.Errorf("migration 14 failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -397,6 +408,7 @@ CREATE TABLE IF NOT EXISTS customer_apps (
     grace_period_ends_at TIMESTAMP,
     emergency_limit_bytes BIGINT NOT NULL DEFAULT 0,
     logical_instance_id TEXT NOT NULL DEFAULT '',
+    need_restarting BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

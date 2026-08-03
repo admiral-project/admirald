@@ -41,6 +41,13 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 		return fmt.Errorf("start transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var previousYAML string
+	err = tx.QueryRow("SELECT raw_yaml FROM app_definitions WHERE name = $1 FOR UPDATE", name).Scan(&previousYAML)
+	existing := err == nil
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check existing app definition: %w", err)
+	}
+	definitionChanged := existing && previousYAML != rawYAML
 
 	queryApp := `
 		INSERT INTO app_definitions (name, display_name, description, raw_yaml, status)
@@ -74,6 +81,15 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 		}
 		if _, err := tx.Exec(queryTier, name, tier.Name, tier.CPU, tier.Memory, tier.Storage, tier.PriceMonthly, tier.Free, envJSON, tier.BackupPolicyJSON); err != nil {
 			return fmt.Errorf("insert tier %q: %w", tier.Name, err)
+		}
+	}
+	if definitionChanged {
+		if _, err := tx.Exec(`
+			UPDATE customer_apps
+			SET need_restarting = TRUE
+			WHERE app_definition_name = $1
+			  AND technical_status NOT IN ('deprovisioning', 'deprovisioned')`, name); err != nil {
+			return fmt.Errorf("mark instances for restart after app definition update: %w", err)
 		}
 	}
 

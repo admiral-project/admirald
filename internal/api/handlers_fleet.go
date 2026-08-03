@@ -380,6 +380,9 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			}
 		case string(admiral.ActionStartApp), string(admiral.ActionResumeApp), string(admiral.ActionReactivateApp):
 			nextTechStatus = "running"
+			if uerr := h.db.ClearCustomerAppRestartRequired(op.InstanceID); uerr != nil {
+				h.log.Error("Failed to clear instance restart requirement", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+			}
 			if h.networking != nil {
 				hostPorts := parseHostPortsFromMetadata(res.Metadata)
 				if err := h.networking.ActivateInstanceRoutes(r.Context(), op.InstanceID, hostPorts); err != nil {
