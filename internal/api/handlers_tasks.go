@@ -68,6 +68,26 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 			return
 		}
 		task.VerifyImages = inst != nil && inst.NeedRestarting
+		if task.VerifyImages {
+			imageDefinitions := make(map[string]string)
+			for _, service := range services {
+				if strings.TrimSpace(service.SetupCommand) == "" {
+					imageDefinitions[service.Name] = service.Image
+				}
+			}
+			if op, oerr := h.db.GetOperation(opID); oerr == nil && op != nil {
+				metadata := op.Metadata
+				if metadata == nil {
+					metadata = &database.OperationMetadata{}
+				}
+				metadata.ImageDefinitions = imageDefinitions
+				if uerr := h.db.UpdateOperationMetadata(opID, metadata); uerr != nil {
+					h.log.Error("Failed to persist restart image snapshot", uerr, map[string]interface{}{"operation_id": opID})
+				}
+			} else if oerr != nil {
+				h.log.Error("Failed to load operation for restart image snapshot", oerr, map[string]interface{}{"operation_id": opID})
+			}
+		}
 	}
 
 	// Populate setup_completed from the DB so fleet can skip setup

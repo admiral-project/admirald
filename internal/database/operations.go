@@ -11,13 +11,14 @@ import (
 )
 
 type OperationMetadata struct {
-	TargetNodeID      string   `json:"target_node_id,omitempty"`
-	SourceNodeID      string   `json:"source_node_id,omitempty"`
-	LogicalInstanceID string   `json:"logical_instance_id,omitempty"`
-	MigrationStep     string   `json:"migration_step,omitempty"`
-	BackupRecordIDs   []string `json:"backup_record_ids,omitempty"`
-	NewInstanceID     string   `json:"new_instance_id,omitempty"`
-	SourceAction      string   `json:"source_action,omitempty"`
+	TargetNodeID      string            `json:"target_node_id,omitempty"`
+	SourceNodeID      string            `json:"source_node_id,omitempty"`
+	LogicalInstanceID string            `json:"logical_instance_id,omitempty"`
+	MigrationStep     string            `json:"migration_step,omitempty"`
+	BackupRecordIDs   []string          `json:"backup_record_ids,omitempty"`
+	NewInstanceID     string            `json:"new_instance_id,omitempty"`
+	SourceAction      string            `json:"source_action,omitempty"`
+	ImageDefinitions  map[string]string `json:"image_definitions,omitempty"`
 }
 
 type Operation struct {

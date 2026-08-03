@@ -53,8 +53,8 @@ type restartImageEvidence struct {
 	ContainerID  string `json:"container_id"`
 }
 
-func validateRestartImageEvidence(h *APIHandlers, instanceID, metadata string) error {
-	inst, err := h.db.GetCustomerApp(instanceID)
+func validateRestartImageEvidence(h *APIHandlers, op *database.Operation, metadata string) error {
+	inst, err := h.db.GetCustomerApp(op.InstanceID)
 	if err != nil {
 		return fmt.Errorf("load instance restart state: %w", err)
 	}
@@ -70,30 +70,37 @@ func validateRestartImageEvidence(h *APIHandlers, instanceID, metadata string) e
 	if len(callback.Images) == 0 {
 		return fmt.Errorf("Fleet did not provide image verification metadata")
 	}
-	definition, err := h.db.GetAppDefinition(inst.AppDefinitionName)
-	if err != nil {
-		return fmt.Errorf("load app definition for image verification: %w", err)
-	}
-	if definition == nil {
-		return fmt.Errorf("app definition %q not found for image verification", inst.AppDefinitionName)
-	}
-	var payload admiral.AppDefinitionPayload
-	if err := yaml.Unmarshal([]byte(definition.RawYAML), &payload); err != nil {
-		return fmt.Errorf("parse app definition for image verification: %w", err)
-	}
-	for name, service := range payload.Services {
-		// setup_command services use a transient helper container that is
-		// removed after provisioning; there is no running container to
-		// verify during a later restart.
-		if strings.TrimSpace(service.SetupCommand) != "" {
-			continue
+	expectedImages := map[string]string{}
+	if op.Metadata != nil {
+		for name, image := range op.Metadata.ImageDefinitions {
+			expectedImages[name] = image
 		}
+	}
+	if len(expectedImages) == 0 {
+		definition, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+		if err != nil {
+			return fmt.Errorf("load app definition for image verification: %w", err)
+		}
+		if definition == nil {
+			return fmt.Errorf("app definition %q not found for image verification", inst.AppDefinitionName)
+		}
+		var payload admiral.AppDefinitionPayload
+		if err := yaml.Unmarshal([]byte(definition.RawYAML), &payload); err != nil {
+			return fmt.Errorf("parse app definition for image verification: %w", err)
+		}
+		for name, service := range payload.Services {
+			if strings.TrimSpace(service.SetupCommand) == "" {
+				expectedImages[name] = service.Image
+			}
+		}
+	}
+	for name, expectedImage := range expectedImages {
 		evidence, ok := callback.Images[name]
 		if !ok {
 			return fmt.Errorf("Fleet did not verify image for service %q", name)
 		}
-		if !imageReferencesEqual(evidence.ImageRef, service.Image) {
-			return fmt.Errorf("service %q started with image %q, expected %q", name, evidence.ImageRef, service.Image)
+		if !admiral.ImageReferencesEqual(evidence.ImageRef, expectedImage) {
+			return fmt.Errorf("service %q started with image %q, expected %q", name, evidence.ImageRef, expectedImage)
 		}
 		if !strings.HasPrefix(strings.TrimSpace(evidence.ImageID), "sha256:") {
 			return fmt.Errorf("service %q did not report an immutable image ID", name)
@@ -103,30 +110,6 @@ func validateRestartImageEvidence(h *APIHandlers, instanceID, metadata string) e
 		}
 	}
 	return nil
-}
-
-func imageReferencesEqual(actual, expected string) bool {
-	actual = canonicalImageReference(actual)
-	expected = canonicalImageReference(expected)
-	return actual != "" && actual == expected
-}
-
-func canonicalImageReference(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.Contains(value, "@sha256:") {
-		return value
-	}
-	first := value
-	if slash := strings.IndexByte(value, '/'); slash >= 0 {
-		first = value[:slash]
-	}
-	if !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost" {
-		if strings.Contains(value, "/") {
-			return "docker.io/" + value
-		}
-		return "docker.io/library/" + value
-	}
-	return value
 }
 
 // PATCH /api/v1/apps/{id}/availability — change app availability
@@ -267,8 +250,29 @@ func (h *APIHandlers) HandleOCIImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	images := make(map[string]struct{})
+	appNames := make(map[string]struct{})
+	if nodeID := strings.TrimSpace(r.URL.Query().Get("node_id")); nodeID != "" {
+		instances, ierr := h.db.GetCustomerApps("")
+		if ierr != nil {
+			h.log.Error("Get node instances for OCI image list failed", ierr, map[string]interface{}{"node_id": nodeID})
+			writeError(w, http.StatusInternalServerError, "failed to list node OCI images")
+			return
+		}
+		for _, instance := range instances {
+			if instance.NodeID != nil && *instance.NodeID == nodeID && instance.TechnicalStatus != "deprovisioned" {
+				appNames[instance.AppDefinitionName] = struct{}{}
+			}
+		}
+	}
 	for _, app := range apps {
 		if app.Status != "active" {
+			continue
+		}
+		if len(appNames) > 0 {
+			if _, ok := appNames[app.Name]; !ok {
+				continue
+			}
+		} else if strings.TrimSpace(r.URL.Query().Get("node_id")) != "" {
 			continue
 		}
 		var payload admiral.AppDefinitionPayload
@@ -383,6 +387,15 @@ func extractPathParam(path, prefix, suffix string) string {
 	return ""
 }
 
+func (h *APIHandlers) failFleetCallbackTask(taskID, reason string) {
+	if taskID == "" {
+		return
+	}
+	if err := h.publisher.CompleteTask(taskID, false, reason); err != nil {
+		h.log.Error("Failed to settle fleet task after rejected callback", err, map[string]interface{}{"task_id": taskID})
+	}
+}
+
 func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -407,6 +420,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		h.log.Error("Failed to get operation from callback", err, map[string]interface{}{"operation_id": res.OperationID})
 	}
 	if op == nil {
+		h.failFleetCallbackTask(res.TaskID, "callback references an unknown operation")
 		writeError(w, http.StatusNotFound, "Operation not found for callback")
 		return
 	}
@@ -417,6 +431,8 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			"expected_node": op.NodeID,
 			"received_node": res.NodeID,
 		})
+		h.failFleetCallbackTask(op.TaskID, "callback node_id does not match operation")
+		_ = h.db.UpdateOperation(op.ID, "failed", "callback node_id does not match operation")
 		writeError(w, http.StatusForbidden, "Callback node_id does not match operation")
 		return
 	}
@@ -427,12 +443,14 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			"expected_task": op.TaskID,
 			"received_task": res.TaskID,
 		})
+		h.failFleetCallbackTask(op.TaskID, "callback task_id does not match operation")
+		_ = h.db.UpdateOperation(op.ID, "failed", "callback task_id does not match operation")
 		writeError(w, http.StatusForbidden, "Callback task_id does not match operation")
 		return
 	}
 
 	if res.Success && (op.Action == string(admiral.ActionStartApp) || op.Action == string(admiral.ActionResumeApp) || op.Action == string(admiral.ActionReactivateApp)) {
-		if err := validateRestartImageEvidence(h, op.InstanceID, res.Metadata); err != nil {
+		if err := validateRestartImageEvidence(h, op, res.Metadata); err != nil {
 			res.Success = false
 			res.Error = err.Error()
 			h.log.Error("Fleet image verification failed", err, map[string]interface{}{"operation_id": res.OperationID, "instance_id": op.InstanceID})
