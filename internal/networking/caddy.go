@@ -208,16 +208,18 @@ func (c *CaddyAdminClient) client() *http.Client {
 }
 
 type RouteConfig struct {
-	ServerName     string
-	AdminHostname  string
-	PortalHostname string
-	AppsHostname   string
-	AppsRedirectTo string
-	TLSCertFile    string
-	TLSKeyFile     string
+	ServerName      string
+	AdminHostname   string
+	PortalHostname  string
+	AppsHostname    string
+	AppsRedirectTo  string
+	TLSCertFile     string
+	TLSKeyFile      string
+	RemovedHostname string
 }
 
 func (r RouteConfig) WithRemovedHostname(hostname string) RouteConfig {
+	r.RemovedHostname = hostname
 	return r
 }
 
@@ -301,6 +303,9 @@ func buildServerConfig(routes []database.PublicRoute, cfg RouteConfig) map[strin
 	}
 	caddyRoutes := make([]interface{}, 0, len(routes))
 	for _, route := range routes {
+		if route.Hostname == cfg.RemovedHostname {
+			continue
+		}
 		if route.Status == string(admiral.RouteStatusDeleting) || route.Status == string(admiral.RouteStatusDeleted) {
 			continue
 		}

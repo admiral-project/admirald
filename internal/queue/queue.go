@@ -197,14 +197,14 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE fleet_commands
-		SET status = $1,
+		SET status = CASE WHEN attempt_count >= max_attempts THEN $5 ELSE $1 END,
 			leased_until = NULL,
 			leased_by = NULL
 		WHERE node_id = $2
 		  AND status IN ($3, $4)
 		  AND leased_until IS NOT NULL
 		  AND leased_until < CURRENT_TIMESTAMP
-	`, string(admiral.CommandPending), nodeID, string(admiral.CommandLeased), string(admiral.CommandRunning)); err != nil {
+	`, string(admiral.CommandPending), nodeID, string(admiral.CommandLeased), string(admiral.CommandRunning), string(admiral.CommandDeadLetter)); err != nil {
 		return nil, "", 0, 0, fmt.Errorf("reset expired leases: %w", err)
 	}
 

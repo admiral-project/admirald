@@ -243,6 +243,16 @@ func (h *APIHandlers) HandleOCIImages(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	authenticatedNodeID, ok := NodeIDFromContext(r.Context())
+	if !ok || strings.TrimSpace(authenticatedNodeID) == "" {
+		writeError(w, http.StatusForbidden, "missing node identity")
+		return
+	}
+	requestedNodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
+	if requestedNodeID != "" && requestedNodeID != authenticatedNodeID {
+		writeError(w, http.StatusForbidden, "node_id does not match authenticated node")
+		return
+	}
 	apps, err := h.db.GetAppDefinitions()
 	if err != nil {
 		h.log.Error("Get app definitions for OCI image list failed", err, nil)
@@ -251,7 +261,7 @@ func (h *APIHandlers) HandleOCIImages(w http.ResponseWriter, r *http.Request) {
 	}
 	images := make(map[string]struct{})
 	appNames := make(map[string]struct{})
-	if nodeID := strings.TrimSpace(r.URL.Query().Get("node_id")); nodeID != "" {
+	if nodeID := authenticatedNodeID; nodeID != "" {
 		instances, ierr := h.db.GetCustomerApps("")
 		if ierr != nil {
 			h.log.Error("Get node instances for OCI image list failed", ierr, map[string]interface{}{"node_id": nodeID})
@@ -272,8 +282,6 @@ func (h *APIHandlers) HandleOCIImages(w http.ResponseWriter, r *http.Request) {
 			if _, ok := appNames[app.Name]; !ok {
 				continue
 			}
-		} else if strings.TrimSpace(r.URL.Query().Get("node_id")) != "" {
-			continue
 		}
 		var payload admiral.AppDefinitionPayload
 		if err := yaml.Unmarshal([]byte(app.RawYAML), &payload); err != nil {

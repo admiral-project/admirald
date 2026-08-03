@@ -317,6 +317,26 @@ func TestBuildCaddyRouteCases(t *testing.T) {
 	})
 }
 
+func TestBuildServerConfigRemovesOnlyRequestedHostname(t *testing.T) {
+	routes := []database.PublicRoute{
+		{Hostname: "keep.example.com", Status: "active"},
+		{Hostname: "remove.example.com", Status: "active"},
+	}
+	server := buildServerConfig(routes, RouteConfig{
+		ServerName:      "admiral-public",
+		RemovedHostname: "remove.example.com",
+	})
+	got := server["routes"].([]interface{})
+	if len(got) != 1 {
+		t.Fatalf("expected one remaining route, got %d", len(got))
+	}
+	match := got[0].(map[string]interface{})["match"].([]interface{})[0].(map[string]interface{})
+	hosts := match["host"].([]interface{})
+	if hosts[0] != "keep.example.com" {
+		t.Fatalf("unexpected remaining route: %#v", hosts)
+	}
+}
+
 func TestReverseProxyRouteUsesTLSTransportForHTTPSUpstreams(t *testing.T) {
 	t.Setenv("ADMIRAL_DEV_MODE", "true")
 	route := reverseProxyRoute(nil, "https://127.0.0.1:5000")
