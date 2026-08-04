@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+func seedUpdateTypeTestNode(t *testing.T, db *DB) {
+	t.Helper()
+	if err := db.RegisterNode("node_ut", "worker-ut", "10.0.0.99", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register test node: %v", err)
+	}
+}
+
 func TestSaveAppDefinitionWithUpdateType(t *testing.T) {
 	db := OpenTestDB(t)
 	t.Cleanup(func() {
@@ -15,22 +22,21 @@ func TestSaveAppDefinitionWithUpdateType(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "updatetype-app")
 	})
 
-	// Save app definition first (FK requires app_definitions to exist)
+	seedUpdateTypeTestNode(t, db)
+
 	if err := db.SaveAppDefinition("updatetype-app", "Update Type App", "Test", "name: updatetype-app", nil, "security_critical"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 
-	// Create a customer app
-	if err := db.CreateCustomerApp("inst_ut1", "cust_1", "updatetype-app", "small", "node_1", "{}"); err != nil {
+	if err := db.CreateCustomerApp("inst_ut1", "cust_1", "updatetype-app", "small", "node_ut", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 
-	// Re-save to trigger definitionChanged path (propagates update_type to instances)
+	// Re-save to trigger definitionChanged path
 	if err := db.SaveAppDefinition("updatetype-app", "Update Type App", "Test", "name: updatetype-app-v2", nil, "security_critical"); err != nil {
 		t.Fatalf("re-save app definition: %v", err)
 	}
 
-	// Verify the instance was marked with the correct update_type
 	inst, err := db.GetCustomerApp("inst_ut1")
 	if err != nil {
 		t.Fatalf("get customer app: %v", err)
@@ -53,14 +59,15 @@ func TestSaveAppDefinitionDefaultUpdateType(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "default-app")
 	})
 
+	seedUpdateTypeTestNode(t, db)
+
 	if err := db.SaveAppDefinition("default-app", "Default App", "Test", "name: default-app", nil, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
-	if err := db.CreateCustomerApp("inst_def1", "cust_1", "default-app", "small", "node_1", "{}"); err != nil {
+	if err := db.CreateCustomerApp("inst_def1", "cust_1", "default-app", "small", "node_ut", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 
-	// Re-save with "improvement" to trigger propagation
 	if err := db.SaveAppDefinition("default-app", "Default App", "Test", "name: default-app-v2", nil, "improvement"); err != nil {
 		t.Fatalf("re-save app definition: %v", err)
 	}
@@ -81,25 +88,24 @@ func TestClearCustomerAppRestartRequiredClearsUpdateType(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "clear-app")
 	})
 
+	seedUpdateTypeTestNode(t, db)
+
 	if err := db.SaveAppDefinition("clear-app", "Clear App", "Test", "name: clear-app", nil, "security"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
-	if err := db.CreateCustomerApp("inst_clr1", "cust_1", "clear-app", "small", "node_1", "{}"); err != nil {
+	if err := db.CreateCustomerApp("inst_clr1", "cust_1", "clear-app", "small", "node_ut", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 
-	// Re-save to trigger propagation
 	if err := db.SaveAppDefinition("clear-app", "Clear App", "Test", "name: clear-app-v2", nil, "security"); err != nil {
 		t.Fatalf("re-save app definition: %v", err)
 	}
 
-	// Verify marked
 	inst, _ := db.GetCustomerApp("inst_clr1")
 	if !inst.NeedRestarting {
 		t.Fatal("expected need_restarting to be true before clear")
 	}
 
-	// Clear
 	if err := db.ClearCustomerAppRestartRequired("inst_clr1"); err != nil {
 		t.Fatalf("clear restart required: %v", err)
 	}
@@ -123,11 +129,13 @@ func TestGetCustomerAppsPageFiltered(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name IN ('filt-app1', 'filt-app2')")
 	})
 
+	seedUpdateTypeTestNode(t, db)
+
 	_ = db.SaveAppDefinition("filt-app1", "Filter App 1", "", "name: filt-app1", nil, "security_critical")
 	_ = db.SaveAppDefinition("filt-app2", "Filter App 2", "", "name: filt-app2", nil, "bugfix")
-	_ = db.CreateCustomerApp("inst_f1", "cust_1", "filt-app1", "small", "node_1", "{}")
-	_ = db.CreateCustomerApp("inst_f2", "cust_1", "filt-app2", "small", "node_1", "{}")
-	_ = db.CreateCustomerApp("inst_f3", "cust_2", "filt-app1", "small", "node_1", "{}")
+	_ = db.CreateCustomerApp("inst_f1", "cust_1", "filt-app1", "small", "node_ut", "{}")
+	_ = db.CreateCustomerApp("inst_f2", "cust_1", "filt-app2", "small", "node_ut", "{}")
+	_ = db.CreateCustomerApp("inst_f3", "cust_2", "filt-app1", "small", "node_ut", "{}")
 
 	// Filter by need_restarting only
 	apps, total, err := db.GetCustomerAppsPageFiltered(100, 0, "", true, "")
@@ -180,10 +188,11 @@ func TestFlagOverdueInstances(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "overdue-app")
 	})
 
-	_ = db.SaveAppDefinition("overdue-app", "Overdue App", "", "name: overdue-app", nil, "security_critical")
-	_ = db.CreateCustomerApp("inst_od1", "cust_1", "overdue-app", "small", "node_1", "{}")
+	seedUpdateTypeTestNode(t, db)
 
-	// Set update_started_at to 3 hours ago (over threshold of 2h)
+	_ = db.SaveAppDefinition("overdue-app", "Overdue App", "", "name: overdue-app", nil, "security_critical")
+	_ = db.CreateCustomerApp("inst_od1", "cust_1", "overdue-app", "small", "node_ut", "{}")
+
 	_, err := db.Exec(`UPDATE customer_apps SET update_started_at = $1 WHERE id = 'inst_od1'`,
 		time.Now().Add(-3*time.Hour))
 	if err != nil {
@@ -214,10 +223,11 @@ func TestFlagOverdueInstancesSkipsNonSecurity(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "nonsec-app")
 	})
 
-	_ = db.SaveAppDefinition("nonsec-app", "NonSec App", "", "name: nonsec-app", nil, "bugfix")
-	_ = db.CreateCustomerApp("inst_ns1", "cust_1", "nonsec-app", "small", "node_1", "{}")
+	seedUpdateTypeTestNode(t, db)
 
-	// Set update_started_at to 3 hours ago but update_type is bugfix (not security_critical)
+	_ = db.SaveAppDefinition("nonsec-app", "NonSec App", "", "name: nonsec-app", nil, "bugfix")
+	_ = db.CreateCustomerApp("inst_ns1", "cust_1", "nonsec-app", "small", "node_ut", "{}")
+
 	_, err := db.Exec(`UPDATE customer_apps SET update_started_at = $1 WHERE id = 'inst_ns1'`,
 		time.Now().Add(-3*time.Hour))
 	if err != nil {
