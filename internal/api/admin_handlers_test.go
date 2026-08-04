@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1233,6 +1234,36 @@ func TestHandleFleetCallbackIPValidation(t *testing.T) {
 	wrapped(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d (body=%s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestFleetCallbackDedicatedSignatureRequiresFreshTimestamp(t *testing.T) {
+	h := newTestHandler(t, false)
+	token := "test-token-dedicated-callback"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token)
+	next := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
+	wrapped := NodeAuthMiddleware(logging.New("test"), h.db, "test-pepper", "worker", nil, next, "callback-key")
+	body := []byte(`{"task_id":"task_1"}`)
+
+	makeRequest := func(timestamp string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+		req.Header.Set("X-Admiral-Token", token)
+		req.Header.Set("X-Admiral-Task-Timestamp", timestamp)
+		mac := hmac.New(sha256.New, []byte("callback-key"))
+		_, _ = mac.Write([]byte(timestamp + "."))
+		_, _ = mac.Write(body)
+		req.Header.Set("X-Admiral-Task-Signature", hex.EncodeToString(mac.Sum(nil)))
+		req.RemoteAddr = "10.99.0.2:51820"
+		rec := httptest.NewRecorder()
+		wrapped(rec, req)
+		return rec
+	}
+
+	if rec := makeRequest(strconv.FormatInt(time.Now().Add(-16*time.Minute).Unix(), 10)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected stale callback signature to be rejected, got %d", rec.Code)
+	}
+	if rec := makeRequest(strconv.FormatInt(time.Now().Unix(), 10)); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected fresh callback signature to pass, got %d", rec.Code)
 	}
 }
 

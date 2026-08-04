@@ -144,13 +144,30 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
-			provided, decodeErr := hex.DecodeString(r.Header.Get("X-Admiral-Task-Signature"))
 			callbackKey := reqToken
 			if len(callbackKeys) > 0 && strings.TrimSpace(callbackKeys[0]) != "" {
 				callbackKey = callbackKeys[0]
 			}
+			signingInput := body
+			timestamp := r.Header.Get("X-Admiral-Task-Timestamp")
+			if len(callbackKeys) > 0 && strings.TrimSpace(callbackKeys[0]) != "" {
+				signedAt, err := strconv.ParseInt(timestamp, 10, 64)
+				if err != nil || signedAt <= 0 {
+					logAuthFailure(log, "WARN", "node_callback", "invalid_signature_timestamp", http.StatusUnauthorized, r, nil)
+					writeGenericAuthError(w, http.StatusUnauthorized)
+					return
+				}
+				const callbackSignatureWindow = 15 * time.Minute
+				if delta := time.Since(time.Unix(signedAt, 0)); delta > callbackSignatureWindow || delta < -callbackSignatureWindow {
+					logAuthFailure(log, "WARN", "node_callback", "stale_signature_timestamp", http.StatusUnauthorized, r, nil)
+					writeGenericAuthError(w, http.StatusUnauthorized)
+					return
+				}
+				signingInput = append([]byte(timestamp+"."), body...)
+			}
+			provided, decodeErr := hex.DecodeString(r.Header.Get("X-Admiral-Task-Signature"))
 			mac := hmac.New(sha256.New, []byte(callbackKey))
-			_, _ = mac.Write(body)
+			_, _ = mac.Write(signingInput)
 			if decodeErr != nil || !hmac.Equal(provided, mac.Sum(nil)) {
 				logAuthFailure(log, "WARN", "node_callback", "invalid_signature", http.StatusUnauthorized, r, nil)
 				writeGenericAuthError(w, http.StatusUnauthorized)
