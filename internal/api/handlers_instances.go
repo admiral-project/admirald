@@ -49,6 +49,10 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, blockedMsg)
 		return
 	}
+	if runningOps, _ := h.db.GetRunningOperationsByInstance(req.InstanceID); len(runningOps) > 0 {
+		writeError(w, http.StatusConflict, "Instance has a running operation; retry after it completes")
+		return
+	}
 	if req.NodeID != "" && req.NodeID != *inst.NodeID {
 		writeError(w, http.StatusConflict, fmt.Sprintf("Instance is assigned to node %q and cannot execute this action on node %q", *inst.NodeID, req.NodeID))
 		return
