@@ -343,9 +343,16 @@ func (p *Publisher) DiscardCommandForNode(commandID, nodeID, reason string) erro
 	return nil
 }
 
-// DiscardTasksForNode prevents durable commands from surviving node removal.
-func (p *Publisher) DiscardTasksForNode(nodeID string) error {
-	_, err := p.db.Exec(`
+// CancelTasksForNode marks active durable commands as cancelled before the
+// control-plane node transaction runs. marker identifies this removal attempt
+// and allows the caller to compensate if the node transaction fails.
+func (p *Publisher) CancelTasksForNode(nodeID, marker string) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin node command cancellation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
 		UPDATE fleet_commands
 		SET status = $1,
 			last_error = $2,
@@ -354,9 +361,58 @@ func (p *Publisher) DiscardTasksForNode(nodeID string) error {
 			leased_by = NULL
 		WHERE node_id = $3
 		  AND status IN ($4, $5, $6)
-	`, string(admiral.CommandFailed), "node removed", nodeID,
-		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning))
-	return err
+	`, string(admiral.CommandCancelled), marker, nodeID,
+		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning)); err != nil {
+		return fmt.Errorf("cancel node commands: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node command cancellation: %w", err)
+	}
+	return nil
+}
+
+// RestoreCancelledTasksForNode compensates a cancelled queue transaction when
+// the corresponding control-plane node transaction fails.
+func (p *Publisher) RestoreCancelledTasksForNode(nodeID, marker string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET status = $1,
+			last_error = NULL,
+			completed_at = NULL,
+			available_at = CURRENT_TIMESTAMP,
+			leased_until = NULL,
+			leased_by = NULL
+		WHERE node_id = $2
+		  AND status = $3
+		  AND last_error = $4
+	`, string(admiral.CommandPending), nodeID, string(admiral.CommandCancelled), marker)
+	if err != nil {
+		return fmt.Errorf("restore cancelled node commands: %w", err)
+	}
+	return nil
+}
+
+// FinalizeCancelledTasksForNode replaces the compensation marker after the
+// node transaction commits. Commands remain cancelled and cannot be retried.
+func (p *Publisher) FinalizeCancelledTasksForNode(nodeID, marker string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET last_error = $1
+		WHERE node_id = $2
+		  AND status = $3
+		  AND last_error = $4
+	`, "node removed", nodeID, string(admiral.CommandCancelled), marker)
+	if err != nil {
+		return fmt.Errorf("finalize cancelled node commands: %w", err)
+	}
+	return nil
+}
+
+// DiscardTasksForNode preserves the legacy queue API while using the
+// cancellation status required for node removal.
+func (p *Publisher) DiscardTasksForNode(nodeID string) error {
+	marker := "node removed"
+	return p.CancelTasksForNode(nodeID, marker)
 }
 
 func (p *Publisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error {

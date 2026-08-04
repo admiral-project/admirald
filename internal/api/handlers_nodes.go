@@ -370,7 +370,21 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 {
 		if r.Method == http.MethodDelete {
 			force := r.URL.Query().Get("force") == "true"
-			if reaper, ok := h.publisher.(interface{ DiscardTasksForNode(string) error }); ok {
+			removalMarker := "node removal pending:" + generateUUID()
+			coordinator, coordinated := h.publisher.(interface {
+				CancelTasksForNode(string, string) error
+				RestoreCancelledTasksForNode(string, string) error
+				FinalizeCancelledTasksForNode(string, string) error
+			})
+			if coordinated {
+				if err := coordinator.CancelTasksForNode(nodeID, removalMarker); err != nil {
+					h.log.Error("Discard node tasks failed", err, map[string]interface{}{"node_id": nodeID})
+					writeError(w, http.StatusInternalServerError, "Failed to discard node tasks")
+					return
+				}
+			} else if reaper, ok := h.publisher.(interface{ DiscardTasksForNode(string) error }); ok {
+				// Compatibility path for test and migration publishers that predate
+				// the compensating coordinator.
 				if err := reaper.DiscardTasksForNode(nodeID); err != nil {
 					h.log.Error("Discard node tasks failed", err, map[string]interface{}{"node_id": nodeID})
 					writeError(w, http.StatusInternalServerError, "Failed to discard node tasks")
@@ -378,6 +392,11 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if err := h.db.RemoveNode(nodeID, force); err != nil {
+				if coordinated {
+					if restoreErr := coordinator.RestoreCancelledTasksForNode(nodeID, removalMarker); restoreErr != nil {
+						h.log.Error("Restore node tasks after failed removal failed", restoreErr, map[string]interface{}{"node_id": nodeID})
+					}
+				}
 				if strings.Contains(err.Error(), "has active instance") {
 					writeError(w, http.StatusConflict, err.Error())
 				} else if strings.Contains(err.Error(), "node not found") {
@@ -387,6 +406,11 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusInternalServerError, "Failed to remove node")
 				}
 				return
+			}
+			if coordinated {
+				if err := coordinator.FinalizeCancelledTasksForNode(nodeID, removalMarker); err != nil {
+					h.log.Error("Finalize cancelled node tasks failed", err, map[string]interface{}{"node_id": nodeID})
+				}
 			}
 			if err := h.syncKnownHostInventory(); err != nil {
 				h.log.Error("Sync know_host inventory failed after remove", err, map[string]interface{}{"node_id": nodeID})
