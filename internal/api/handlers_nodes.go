@@ -370,6 +370,18 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 {
 		if r.Method == http.MethodDelete {
 			force := r.URL.Query().Get("force") == "true"
+			if !force {
+				activeTasks, err := h.publisher.HasActiveTasksForNode(nodeID)
+				if err != nil {
+					h.log.Error("Check node tasks failed", err, map[string]interface{}{"node_id": nodeID})
+					writeError(w, http.StatusInternalServerError, "Failed to check node tasks")
+					return
+				}
+				if activeTasks {
+					writeError(w, http.StatusConflict, "node has pending or running tasks; use force=true to override")
+					return
+				}
+			}
 			removalMarker := "node removal pending:" + generateUUID()
 			coordinator, coordinated := h.publisher.(interface {
 				CancelTasksForNode(string, string) error

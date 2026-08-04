@@ -25,6 +25,7 @@ type TaskPublisher interface {
 	RenewLeaseForNode(commandID, nodeID string) error
 	DiscardCommandForNode(commandID, nodeID, reason string) error
 	CompleteTask(taskPublicID string, success bool, errorMsg string) error
+	HasActiveTasksForNode(nodeID string) (bool, error)
 }
 
 type APIHandlers struct {

@@ -371,6 +371,24 @@ func (p *Publisher) CancelTasksForNode(nodeID, marker string) error {
 	return nil
 }
 
+// HasActiveTasksForNode reports whether removal without force would cut work
+// that is still pending, leased, or running on the node.
+func (p *Publisher) HasActiveTasksForNode(nodeID string) (bool, error) {
+	var active bool
+	err := p.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM fleet_commands
+			WHERE node_id = $1
+			  AND status IN ($2, $3, $4)
+		)
+	`, nodeID, string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning)).Scan(&active)
+	if err != nil {
+		return false, fmt.Errorf("check active node commands: %w", err)
+	}
+	return active, nil
+}
+
 // RestoreCancelledTasksForNode compensates a cancelled queue transaction when
 // the corresponding control-plane node transaction fails.
 func (p *Publisher) RestoreCancelledTasksForNode(nodeID, marker string) error {

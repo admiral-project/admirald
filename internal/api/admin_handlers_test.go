@@ -73,6 +73,10 @@ func (m *migrationTestPublisher) CompleteTask(taskPublicID string, success bool,
 	return nil
 }
 
+func (m *migrationTestPublisher) HasActiveTasksForNode(nodeID string) (bool, error) {
+	return false, nil
+}
+
 func migrationTestAppYAML() string {
 	return "name: migrate-app\n" +
 		"display_name: Migration Test App\n" +
@@ -405,6 +409,7 @@ func (m *mockPublisher) DiscardCommandForNode(commandID, nodeID, reason string) 
 func (m *mockPublisher) CompleteTask(taskPublicID string, success bool, errorMsg string) error {
 	return nil
 }
+func (m *mockPublisher) HasActiveTasksForNode(nodeID string) (bool, error) { return false, nil }
 
 func seedTestAppDefinition(t *testing.T, db *database.DB) {
 	t.Helper()
