@@ -100,7 +100,9 @@ func TestClearCustomerAppRestartRequiredClearsUpdateType(t *testing.T) {
 func TestGetCustomerAppsPageFiltered(t *testing.T) {
 	db := OpenTestDB(t)
 	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name IN ('filt-app1', 'filt-app2')") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name IN ('filt-app1', 'filt-app2')") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name IN ('filt-app1', 'filt-app2')")
+	})
 
 	_ = db.SaveAppDefinition("filt-app1", "Filter App 1", "", "name: filt-app1", nil, "security_critical")
 	_ = db.SaveAppDefinition("filt-app2", "Filter App 2", "", "name: filt-app2", nil, "bugfix")
