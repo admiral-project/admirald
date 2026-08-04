@@ -438,6 +438,14 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "Operation not found for callback")
 		return
 	}
+	// A signed callback can be delivered more than once when Fleet retries an
+	// HTTP request. Once the operation is terminal, acknowledge the duplicate
+	// without allowing an old result to overwrite current state or trigger a
+	// second side effect.
+	if op.Status == "succeeded" || op.Status == "failed" || op.Status == "cancelled" {
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true, "duplicate": true})
+		return
+	}
 
 	if op.NodeID != "" && op.NodeID != res.NodeID {
 		h.log.Error("Callback node_id mismatch", nil, map[string]interface{}{

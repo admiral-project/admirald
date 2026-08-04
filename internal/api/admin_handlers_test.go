@@ -703,6 +703,42 @@ func TestHandleFleetCallbackSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleFleetCallbackIgnoresSignedDuplicateAfterTerminalOperation(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "provisioning")
+	if err := h.db.CreateOperation("op_duplicate", "inst_001", "node_001", "provision_app", "succeeded", ""); err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+
+	callback := admiral.TaskResult{
+		TaskID:      "task_duplicate",
+		OperationID: "op_duplicate",
+		NodeID:      "node_001",
+		Success:     false,
+		Error:       "stale failure",
+	}
+	body, _ := json.Marshal(callback)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleFleetCallback(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected duplicate callback 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	op, err := h.db.GetOperation("op_duplicate")
+	if err != nil {
+		t.Fatalf("get operation: %v", err)
+	}
+	if op.Status != "succeeded" {
+		t.Fatalf("stale callback changed terminal operation to %s", op.Status)
+	}
+}
+
 func TestHandleFleetCallbackFailure(t *testing.T) {
 	h := newTestHandler(t, false)
 
