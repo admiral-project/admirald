@@ -203,6 +203,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 			TierID:                      inst.TierName,
 			NodeID:                      *inst.NodeID,
 			BackupType:                  backupType,
+			Service:                     req.Service,
 			Status:                      "pending",
 			StorageBackend:              backend,
 			StorageKey:                  key,

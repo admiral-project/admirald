@@ -199,7 +199,7 @@ func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, t
 		srcType = "local_path"
 	}
 
-	target, err := resolveRestoreTarget(payload, bk.BackupType, "")
+	target, err := resolveRestoreTarget(payload, bk.BackupType, bk.Service)
 	if err != nil {
 		h.log.Error("Failed to resolve restore target", err, map[string]interface{}{"operation_id": opID})
 		_ = h.db.UpdateOperation(opID, "failed", err.Error())

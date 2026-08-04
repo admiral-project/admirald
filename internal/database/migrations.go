@@ -336,6 +336,16 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 15,
+			Name:    "add_backup_service",
+			Up: func(db migrationDB) error {
+				if _, err := db.Exec("ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS service TEXT NOT NULL DEFAULT ''"); err != nil {
+					return fmt.Errorf("migration 15 failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -494,6 +504,7 @@ CREATE TABLE IF NOT EXISTS backup_records (
     tier_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
     backup_type TEXT NOT NULL,
+    service TEXT NOT NULL DEFAULT '',
     database_type TEXT NOT NULL,
     status TEXT NOT NULL,
     storage_backend TEXT NOT NULL,

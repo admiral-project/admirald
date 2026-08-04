@@ -313,6 +313,7 @@ func (h *APIHandlers) HandleTriggerBackup(w http.ResponseWriter, r *http.Request
 		TierID:                      inst.TierName,
 		NodeID:                      *inst.NodeID,
 		BackupType:                  contractType,
+		Service:                     target.ServiceName,
 		DatabaseType:                "none",
 		Status:                      "pending",
 		StorageBackend:              backend,

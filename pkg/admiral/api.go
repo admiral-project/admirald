@@ -215,7 +215,8 @@ type BackupRecord struct {
 	AppID                       string `json:"app_id"`
 	TierID                      string `json:"tier_id"`
 	NodeID                      string `json:"node_id"`
-	BackupType                  string `json:"backup_type"`     // database | volume
+	BackupType                  string `json:"backup_type"` // database | volume
+	Service                     string `json:"service"`
 	DatabaseType                string `json:"database_type"`   // postgresql | mysql | mariadb | none
 	Status                      string `json:"status"`          // pending | running | succeeded | failed | deleted
 	StorageBackend              string `json:"storage_backend"` // local | s3

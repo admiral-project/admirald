@@ -12,10 +12,10 @@ import (
 
 func (d *DB) CreateBackupRecord(rec *admiral.BackupRecord) error {
 	query := `
-		INSERT INTO backup_records (id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		INSERT INTO backup_records (id, instance_id, app_id, tier_id, node_id, backup_type, service, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`
-	_, err := d.Exec(query, rec.ID, rec.InstanceID, rec.AppID, rec.TierID, rec.NodeID, rec.BackupType, rec.DatabaseType, rec.Status, rec.StorageBackend, rec.StorageKey, rec.StorageURIAdmin, rec.SizeBytes, rec.ChecksumSHA256, rec.TriggeredBy, rec.RetentionPolicySnapshotJSON, rec.TierSnapshotJSON, rec.ErrorMessage)
+	_, err := d.Exec(query, rec.ID, rec.InstanceID, rec.AppID, rec.TierID, rec.NodeID, rec.BackupType, rec.Service, rec.DatabaseType, rec.Status, rec.StorageBackend, rec.StorageKey, rec.StorageURIAdmin, rec.SizeBytes, rec.ChecksumSHA256, rec.TriggeredBy, rec.RetentionPolicySnapshotJSON, rec.TierSnapshotJSON, rec.ErrorMessage)
 	if err != nil {
 		return fmt.Errorf("create backup record: %w", err)
 	}
@@ -88,9 +88,9 @@ func (d *DB) GetBackupRecordsPage(instanceID string, limit, offset int) ([]admir
 	var rows *sql.Rows
 	var err error
 	if instanceID != "" {
-		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE instance_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3", instanceID, limit, offset)
+		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, service, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE instance_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3", instanceID, limit, offset)
 	} else {
-		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", limit, offset)
+		rows, err = d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, service, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2", limit, offset)
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("query backup records: %w", err)
@@ -104,7 +104,7 @@ func (d *DB) GetBackupRecordsPage(instanceID string, limit, offset int) ([]admir
 		var completedAt, expiresAt, verifiedAt sql.NullTime
 		err := rows.Scan(
 			&r.ID, &r.InstanceID, &r.AppID, &r.TierID, &r.NodeID,
-			&r.BackupType, &r.DatabaseType, &r.Status, &r.StorageBackend,
+			&r.BackupType, &r.Service, &r.DatabaseType, &r.Status, &r.StorageBackend,
 			&r.StorageKey, &r.StorageURIAdmin, &r.SizeBytes, &r.ChecksumSHA256,
 			&createdAt, &completedAt, &expiresAt, &r.TriggeredBy,
 			&r.RetentionPolicySnapshotJSON, &r.TierSnapshotJSON, &r.ErrorMessage,
@@ -135,10 +135,10 @@ func (d *DB) GetBackupRecord(id string) (*admiral.BackupRecord, error) {
 	var r admiral.BackupRecord
 	var createdAt time.Time
 	var completedAt, expiresAt, verifiedAt sql.NullTime
-	query := "SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE id = $1"
+	query := "SELECT id, instance_id, app_id, tier_id, node_id, backup_type, service, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE id = $1"
 	err := d.QueryRow(query, id).Scan(
 		&r.ID, &r.InstanceID, &r.AppID, &r.TierID, &r.NodeID,
-		&r.BackupType, &r.DatabaseType, &r.Status, &r.StorageBackend,
+		&r.BackupType, &r.Service, &r.DatabaseType, &r.Status, &r.StorageBackend,
 		&r.StorageKey, &r.StorageURIAdmin, &r.SizeBytes, &r.ChecksumSHA256,
 		&createdAt, &completedAt, &expiresAt, &r.TriggeredBy,
 		&r.RetentionPolicySnapshotJSON, &r.TierSnapshotJSON, &r.ErrorMessage,
@@ -166,7 +166,7 @@ func (d *DB) GetBackupRecord(id string) (*admiral.BackupRecord, error) {
 // and storage_backend 's3'.  Used by the backup verifier goroutine to
 // confirm objects physically exist in remote S3 storage.
 func (d *DB) GetSucceededS3Backups() ([]admiral.BackupRecord, error) {
-	rows, err := d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE status = 'succeeded' AND storage_backend = 's3' ORDER BY created_at DESC")
+	rows, err := d.Query("SELECT id, instance_id, app_id, tier_id, node_id, backup_type, service, database_type, status, storage_backend, storage_key, storage_uri_admin, size_bytes, checksum_sha256, created_at, completed_at, expires_at, triggered_by, retention_policy_snapshot_json, tier_snapshot_json, error_message, verified_at FROM backup_records WHERE status = 'succeeded' AND storage_backend = 's3' ORDER BY created_at DESC")
 	if err != nil {
 		return nil, fmt.Errorf("query succeeded s3 backups: %w", err)
 	}
@@ -179,7 +179,7 @@ func (d *DB) GetSucceededS3Backups() ([]admiral.BackupRecord, error) {
 		var completedAt, expiresAt, verifiedAt sql.NullTime
 		err := rows.Scan(
 			&r.ID, &r.InstanceID, &r.AppID, &r.TierID, &r.NodeID,
-			&r.BackupType, &r.DatabaseType, &r.Status, &r.StorageBackend,
+			&r.BackupType, &r.Service, &r.DatabaseType, &r.Status, &r.StorageBackend,
 			&r.StorageKey, &r.StorageURIAdmin, &r.SizeBytes, &r.ChecksumSHA256,
 			&createdAt, &completedAt, &expiresAt, &r.TriggeredBy,
 			&r.RetentionPolicySnapshotJSON, &r.TierSnapshotJSON, &r.ErrorMessage,
