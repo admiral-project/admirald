@@ -60,7 +60,7 @@ func TestCreateInstanceRoutesGeneratesPersistentHostname(t *testing.T) {
 		Memory:       "1G",
 		Storage:      "5G",
 		PriceMonthly: 1,
-	}}); err != nil {
+	}}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := db.CreateCustomerApp("inst_1", "cust_1", payload.Name, "starter", "node_1", "{}"); err != nil {
@@ -120,7 +120,7 @@ func TestActivateInstanceRoutesUsesFleetHostPorts(t *testing.T) {
 	rawYAML := "name: wiki\nservices:\n  web:\n    image: example.com/wiki:1\n    port: 8080\n    public: true\ntiers:\n  starter:\n    cpu: 1\n    memory: 1G\n    storage: 5G\n"
 	if err := db.SaveAppDefinition(payload.Name, payload.DisplayName, "", rawYAML, []database.AppTier{{
 		AppName: payload.Name, Name: "starter", CPU: 1, Memory: "1G", Storage: "5G", PriceMonthly: 1,
-	}}); err != nil {
+	}}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := db.CreateCustomerApp("inst_1", "cust_1", payload.Name, "starter", "node_1", "{}"); err != nil {
@@ -160,7 +160,7 @@ func TestSeedStaticRoutesCreatesAdminAndPortal(t *testing.T) {
 		Memory:       "1G",
 		Storage:      "5G",
 		PriceMonthly: 1,
-	}}); err != nil {
+	}}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	cfg := &config.Config{

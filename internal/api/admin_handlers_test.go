@@ -413,9 +413,9 @@ func (m *mockPublisher) HasActiveTasksForNode(nodeID string) (bool, error) { ret
 
 func seedTestAppDefinition(t *testing.T, db *database.DB) {
 	t.Helper()
-	_ = db.SaveAppDefinition("testapp", "Test App", "App for testing", "name: testapp", nil)
-	_ = db.SaveAppDefinition("migrate-app", "Migrate App", "App for migration testing", "name: migrate-app", nil)
-	_ = db.SaveAppDefinition("status-app", "Status App", "App for status testing", "name: status-app", nil)
+	_ = db.SaveAppDefinition("testapp", "Test App", "App for testing", "name: testapp", nil, "improvement")
+	_ = db.SaveAppDefinition("migrate-app", "Migrate App", "App for migration testing", "name: migrate-app", nil, "improvement")
+	_ = db.SaveAppDefinition("status-app", "Status App", "App for status testing", "name: status-app", nil, "improvement")
 }
 
 func TestHandleAdminInstancesList(t *testing.T) {
@@ -921,7 +921,7 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	if err := h.db.UpdateNodeStatus("node_002", "active"); err != nil {
 		t.Fatalf("activate node_002: %v", err)
 	}
-	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", `{"name":"testapp","services":{"web":{"image":"nginx"}}}`, []database.AppTier{}); err != nil {
+	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", `{"name":"testapp","services":{"web":{"image":"nginx"}}}`, []database.AppTier{}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {

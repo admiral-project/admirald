@@ -177,7 +177,7 @@ func TestHandleFleetCallbackProvisionSetupFailureEnqueuesCleanup(t *testing.T) {
 		t.Fatalf("register node: %v", err)
 	}
 	rawYAML := "name: testapp\nservices:\n  web:\n    image: docker.io/library/nginx:latest\n    backup:\n      type: none\n"
-	if err := h.db.SaveAppDefinition("testapp", "Test App", "App for testing", rawYAML, nil); err != nil {
+	if err := h.db.SaveAppDefinition("testapp", "Test App", "App for testing", rawYAML, nil, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{"name":"starter","cpu":1,"memory":"256M","storage":"1G"}`); err != nil {

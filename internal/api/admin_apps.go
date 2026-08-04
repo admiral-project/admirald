@@ -197,7 +197,7 @@ func (h *APIHandlers) HandleAdminAppTiers(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		if err := h.db.SaveAppDefinition(app.Name, app.DisplayName, app.Description, string(updatedRawYAML), updatedTiers); err != nil {
+		if err := h.db.SaveAppDefinition(app.Name, app.DisplayName, app.Description, string(updatedRawYAML), updatedTiers, "improvement"); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

@@ -190,6 +190,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	s.supervisedGo("node-health-monitor", s.StartNodeHealthMonitor)
 	s.supervisedGo("token-gc", s.StartTokenGarbageCollector)
 	s.supervisedGo("resource-reconciler", s.StartResourceReconciler)
+	s.supervisedGo("update-overdue-checker", s.StartUpdateOverdueChecker)
 	if s.handlers.networking != nil {
 		if err := s.handlers.networking.SeedStaticRoutes(ctx); err != nil {
 			s.log.Error("Failed to seed public routes", err, nil)

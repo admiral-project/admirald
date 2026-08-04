@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
@@ -656,4 +657,25 @@ func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, 
 	credentials = append(credentials, buildSetupNotices(payload)...)
 
 	writeJSON(w, http.StatusOK, credentials)
+}
+
+// StartUpdateOverdueChecker periodically flags security_critical instances
+// that have not been restarted within the configured threshold.
+func (s *Server) StartUpdateOverdueChecker(ctx context.Context) {
+	const threshold = 2 * time.Hour
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			affected, err := s.handlers.db.FlagOverdueInstances(threshold)
+			if err != nil {
+				s.log.Error("Failed to flag overdue update instances", err, nil)
+			} else if affected > 0 {
+				s.log.Info("Flagged overdue security_critical instances", map[string]interface{}{"count": affected})
+			}
+		}
+	}
 }

@@ -228,6 +228,15 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		updateType := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Admiral-Update-Type")))
+		if updateType == "" {
+			updateType = "improvement"
+		}
+		if !isValidUpdateType(updateType) {
+			writeError(w, http.StatusBadRequest, "invalid update_type; valid: security_critical, security, bugfix, improvement")
+			return
+		}
+
 		var payload admiral.AppDefinitionPayload
 		if err := yaml.Unmarshal([]byte(yamlContent), &payload); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("YAML parsing failed: %v", err))
@@ -266,7 +275,7 @@ func (h *APIHandlers) HandleApps(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		if err := h.db.SaveAppDefinition(payload.Name, payload.DisplayName, payload.Description, yamlContent, dbTiers); err != nil {
+		if err := h.db.SaveAppDefinition(payload.Name, payload.DisplayName, payload.Description, yamlContent, dbTiers, updateType); err != nil {
 			h.log.Error("Save app definition failed", err, map[string]interface{}{"app_name": payload.Name})
 			writeError(w, http.StatusInternalServerError, "Failed to save application definition")
 			return
@@ -336,4 +345,13 @@ func readAppDefinitionBody(w http.ResponseWriter, r *http.Request) (string, erro
 		return "", fmt.Errorf("YAML content is empty")
 	}
 	return req.YAML, nil
+}
+
+func isValidUpdateType(t string) bool {
+	switch t {
+	case "security_critical", "security", "bugfix", "improvement":
+		return true
+	default:
+		return false
+	}
 }

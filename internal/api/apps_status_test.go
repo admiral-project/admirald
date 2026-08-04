@@ -22,7 +22,7 @@ func TestHandleAppsUpdateStatus(t *testing.T) {
 	})
 	if err := h.db.SaveAppDefinition(appName, "Status App", "test", minimalAppYAML(appName), []database.AppTier{
 		{AppName: appName, Name: "small", CPU: 1, Memory: "256M", Storage: "1G", PriceMonthly: 1},
-	}); err != nil {
+	}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestHandleCustomerAppsRejectsInactiveDefinition(t *testing.T) {
 	appName := "inactive-app"
 	if err := h.db.SaveAppDefinition(appName, "Inactive App", "test", minimalAppYAML(appName), []database.AppTier{
 		{AppName: appName, Name: "small", CPU: 1, Memory: "256M", Storage: "1G", PriceMonthly: 1},
-	}); err != nil {
+	}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := h.db.UpdateAppDefinitionStatus(appName, "inactive"); err != nil {

@@ -346,6 +346,19 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 16,
+			Name:    "add_update_type",
+			Up: func(db migrationDB) error {
+				if _, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS update_type TEXT NOT NULL DEFAULT ''"); err != nil {
+					return fmt.Errorf("migration 16 add update_type failed: %w", err)
+				}
+				if _, err := db.Exec("ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS update_started_at TIMESTAMPTZ"); err != nil {
+					return fmt.Errorf("migration 16 add update_started_at failed: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 

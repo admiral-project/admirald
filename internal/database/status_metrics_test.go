@@ -24,6 +24,7 @@ func seedTestAppDefinition(t *testing.T, db *DB) {
 			Storage:      "10G",
 			PriceMonthly: 10,
 		}},
+		"improvement",
 	)
 	if err != nil {
 		t.Fatalf("seed app definition: %v", err)

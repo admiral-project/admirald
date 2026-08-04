@@ -38,6 +38,8 @@ type CustomerApp struct {
 	SetupCompleted      bool       `json:"setup_completed"`
 	SetupTimeoutSeconds int        `json:"setup_timeout_seconds,omitempty"`
 	NeedRestarting      bool       `json:"need_restarting"`
+	UpdateType          string     `json:"update_type"`
+	UpdateStartedAt     *time.Time `json:"update_started_at,omitempty"`
 }
 
 func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {
@@ -145,7 +147,9 @@ func (d *DB) SetSetupCompleted(id string) error {
 // ClearCustomerAppRestartRequired records that the running workload has been
 // started with the current app definition.
 func (d *DB) ClearCustomerAppRestartRequired(id string) error {
-	if _, err := d.Exec("UPDATE customer_apps SET need_restarting = FALSE WHERE id = $1", id); err != nil {
+	if _, err := d.Exec(`UPDATE customer_apps
+		SET need_restarting = FALSE, update_type = '', update_started_at = NULL
+		WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("clear restart requirement for instance %q: %w", id, err)
 	}
 	return nil
@@ -194,7 +198,9 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(pr.hostname, ''),
 			COALESCE(ca.logical_instance_id, ''),
 			COALESCE(ca.setup_completed, FALSE),
-			COALESCE(ca.need_restarting, FALSE)
+			COALESCE(ca.need_restarting, FALSE),
+			COALESCE(ca.update_type, ''),
+			ca.update_started_at
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			WHERE ca.customer_id = $3 ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset, customerID)
@@ -210,7 +216,9 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(pr.hostname, ''),
 			COALESCE(ca.logical_instance_id, ''),
 			COALESCE(ca.setup_completed, FALSE),
-			COALESCE(ca.need_restarting, FALSE)
+			COALESCE(ca.need_restarting, FALSE),
+			COALESCE(ca.update_type, ''),
+			ca.update_started_at
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 			ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset)
@@ -232,6 +240,7 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			&a.Hostname,
 			&a.LogicalInstanceID,
 			&a.SetupCompleted, &a.NeedRestarting,
+			&a.UpdateType, &a.UpdateStartedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan customer app row: %w", err)
 		}
@@ -241,6 +250,112 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 		return nil, 0, fmt.Errorf("iterate customer apps: %w", err)
 	}
 	return apps, total, nil
+}
+
+// GetCustomerAppsPageFiltered returns a filtered, paginated list of customer
+// applications. When needRestarting is true only instances with
+// need_restarting = TRUE are returned. When updateType is non-empty the
+// result is further filtered by the given update_type value.
+func (d *DB) GetCustomerAppsPageFiltered(limit, offset int, customerID string, needRestarting bool, updateType string) ([]CustomerApp, int, error) {
+	where := []string{"1=1"}
+	args := []interface{}{}
+	argIdx := 1
+
+	if customerID != "" {
+		where = append(where, fmt.Sprintf("ca.customer_id = $%d", argIdx))
+		args = append(args, customerID)
+		argIdx++
+	}
+	if needRestarting {
+		where = append(where, "ca.need_restarting = TRUE")
+	}
+	if updateType != "" {
+		where = append(where, fmt.Sprintf("ca.update_type = $%d", argIdx))
+		args = append(args, updateType)
+		argIdx++
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM customer_apps ca WHERE %s", whereClause)
+	if err := d.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count filtered customer apps: %w", err)
+	}
+
+	selArgs := make([]interface{}, len(args))
+	copy(selArgs, args)
+	selArgs = append(selArgs, limit, offset)
+	selLimitIdx := argIdx
+	selOffsetIdx := argIdx + 1
+
+	query := fmt.Sprintf(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
+		ca.commercial_status, ca.technical_status, ca.tier_snapshot_json, ca.created_at,
+		COALESCE(ca.health_status, ''), COALESCE(ca.health_message, ''),
+		ca.last_health_checked_at,
+		COALESCE(ca.storage_limit_bytes, 0), COALESCE(ca.storage_used_bytes, 0),
+		COALESCE(ca.storage_used_percent, 0), COALESCE(ca.storage_state, 'unknown'),
+		COALESCE(ca.storage_message, ''), ca.storage_checked_at,
+		COALESCE(ca.storage_exceeded, FALSE),
+		COALESCE(pr.hostname, ''),
+		COALESCE(ca.logical_instance_id, ''),
+		COALESCE(ca.setup_completed, FALSE),
+		COALESCE(ca.need_restarting, FALSE),
+		COALESCE(ca.update_type, ''),
+		ca.update_started_at
+		FROM customer_apps ca
+		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
+		WHERE %s
+		ORDER BY ca.created_at DESC, ca.id DESC
+		LIMIT $%d OFFSET $%d`, whereClause, selLimitIdx, selOffsetIdx)
+
+	rows, err := d.Query(query, selArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query filtered customer apps: %w", err)
+	}
+	defer rows.Close()
+
+	var apps []CustomerApp
+	for rows.Next() {
+		var a CustomerApp
+		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID,
+			&a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt,
+			&a.HealthStatus, &a.HealthMessage, &a.LastHealthChecked,
+			&a.StorageLimitBytes, &a.StorageUsedBytes, &a.StorageUsedPct,
+			&a.StorageState, &a.StorageMessage, &a.StorageCheckedAt,
+			&a.StorageExceeded,
+			&a.Hostname,
+			&a.LogicalInstanceID,
+			&a.SetupCompleted, &a.NeedRestarting,
+			&a.UpdateType, &a.UpdateStartedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan filtered customer app row: %w", err)
+		}
+		apps = append(apps, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate filtered customer apps: %w", err)
+	}
+	return apps, total, nil
+}
+
+// FlagOverdueInstances marks security_critical instances that have not been
+// restarted within the given duration as technical_status = 'restart_overdue'.
+func (d *DB) FlagOverdueInstances(threshold time.Duration) (int64, error) {
+	result, err := d.Exec(`
+		UPDATE customer_apps
+		SET technical_status = 'restart_overdue'
+		WHERE need_restarting = TRUE
+		  AND update_type = 'security_critical'
+		  AND update_started_at IS NOT NULL
+		  AND update_started_at < NOW() - $1::INTERVAL
+		  AND technical_status NOT IN ('restart_overdue', 'deprovisioning', 'deprovisioned')`,
+		fmt.Sprintf("%d seconds", int(threshold.Seconds())),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("flag overdue instances: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
@@ -257,7 +372,9 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 			COALESCE(ca.logical_instance_id, ''),
 			COALESCE(ca.inspect_data, ''),
 			COALESCE(ca.setup_completed, FALSE),
-			COALESCE(ca.need_restarting, FALSE)
+			COALESCE(ca.need_restarting, FALSE),
+			COALESCE(ca.update_type, ''),
+			ca.update_started_at
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
 		WHERE ca.id = $1`
@@ -272,6 +389,8 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		&a.InspectData,
 		&a.SetupCompleted,
 		&a.NeedRestarting,
+		&a.UpdateType,
+		&a.UpdateStartedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

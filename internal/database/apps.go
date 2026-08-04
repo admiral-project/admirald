@@ -35,7 +35,7 @@ type AppTier struct {
 	BackupPolicyJSON string            `json:"backup_policy_json,omitempty"`
 }
 
-func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, tiers []AppTier) error {
+func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, tiers []AppTier, updateType string) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("start transaction: %w", err)
@@ -86,9 +86,11 @@ func (d *DB) SaveAppDefinition(name, displayName, description, rawYAML string, t
 	if definitionChanged {
 		if _, err := tx.Exec(`
 			UPDATE customer_apps
-			SET need_restarting = TRUE
+			SET need_restarting = TRUE,
+				update_type = $2,
+				update_started_at = NOW()
 			WHERE app_definition_name = $1
-			  AND technical_status NOT IN ('deprovisioning', 'deprovisioned')`, name); err != nil {
+			  AND technical_status NOT IN ('deprovisioning', 'deprovisioned')`, name, updateType); err != nil {
 			return fmt.Errorf("mark instances for restart after app definition update: %w", err)
 		}
 	}

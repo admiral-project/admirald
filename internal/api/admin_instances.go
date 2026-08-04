@@ -421,7 +421,9 @@ func (h *APIHandlers) HandleAdminInstances(w http.ResponseWriter, r *http.Reques
 		}
 
 		page, pageSize := parsePagination(r)
-		apps, total, err := h.db.GetCustomerAppsPage(pageSize, (page-1)*pageSize, "")
+		needRestarting := r.URL.Query().Get("need_restarting") == "true"
+		updateType := r.URL.Query().Get("update_type")
+		apps, total, err := h.db.GetCustomerAppsPageFiltered(pageSize, (page-1)*pageSize, "", needRestarting, updateType)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
