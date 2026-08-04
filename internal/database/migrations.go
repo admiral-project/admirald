@@ -59,12 +59,13 @@ func RunMigrations(db *sql.DB) error {
 	})
 
 	for _, m := range migrations {
-		if !applied[m.Version] {
+		appliedName, alreadyApplied := applied[m.Version]
+		if !alreadyApplied || appliedName != m.Name {
 			fmt.Printf("Applying migration %04d_%s\n", m.Version, m.Name)
 			if err := m.Up(lockedDB); err != nil {
 				return fmt.Errorf("migration %04d_%s failed: %w", m.Version, m.Name, err)
 			}
-			if err := recordMigration(lockedDB, m.Version); err != nil {
+			if err := recordMigration(lockedDB, m.Version, m.Name); err != nil {
 				return err
 			}
 		}
@@ -79,24 +80,31 @@ func ensureMigrationTable(db migrationDB) error {
 		version BIGINT PRIMARY KEY,
 		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
-	_, err := db.Exec(query)
+	if _, err := db.Exec(query); err != nil {
+		return err
+	}
+	// Older releases stored only the numeric version.  The name makes a
+	// post-squash version reuse detectable, so an old row is replayed through
+	// its idempotent migration instead of being trusted blindly.
+	_, err := db.Exec("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''")
 	return err
 }
 
-func getAppliedMigrations(db migrationDB) (map[int]bool, error) {
-	rows, err := db.Query("SELECT version FROM schema_migrations")
+func getAppliedMigrations(db migrationDB) (map[int]string, error) {
+	rows, err := db.Query("SELECT version, name FROM schema_migrations")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	applied := make(map[int]bool)
+	applied := make(map[int]string)
 	for rows.Next() {
 		var v int
-		if err := rows.Scan(&v); err != nil {
+		var name string
+		if err := rows.Scan(&v, &name); err != nil {
 			return nil, err
 		}
-		applied[v] = true
+		applied[v] = name
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate applied migrations: %w", err)
@@ -104,8 +112,11 @@ func getAppliedMigrations(db migrationDB) (map[int]bool, error) {
 	return applied, nil
 }
 
-func recordMigration(db migrationDB, version int) error {
-	_, err := db.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", version)
+func recordMigration(db migrationDB, version int, name string) error {
+	_, err := db.Exec(`
+		INSERT INTO schema_migrations (version, name) VALUES ($1, $2)
+		ON CONFLICT (version) DO UPDATE SET name = EXCLUDED.name, applied_at = CURRENT_TIMESTAMP
+	`, version, name)
 	return err
 }
 
