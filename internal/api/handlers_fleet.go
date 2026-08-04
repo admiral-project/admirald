@@ -454,7 +454,9 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			"received_node": res.NodeID,
 		})
 		h.failFleetCallbackTask(op.TaskID, "callback node_id does not match operation")
-		_ = h.db.UpdateOperation(op.ID, "failed", "callback node_id does not match operation")
+		if uerr := h.db.UpdateOperation(op.ID, "failed", "callback node_id does not match operation"); uerr != nil {
+			h.log.Error("failed to update operation status", uerr, map[string]interface{}{"operation_id": op.ID})
+		}
 		writeError(w, http.StatusForbidden, "Callback node_id does not match operation")
 		return
 	}
@@ -466,7 +468,9 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			"received_task": res.TaskID,
 		})
 		h.failFleetCallbackTask(op.TaskID, "callback task_id does not match operation")
-		_ = h.db.UpdateOperation(op.ID, "failed", "callback task_id does not match operation")
+		if uerr := h.db.UpdateOperation(op.ID, "failed", "callback task_id does not match operation"); uerr != nil {
+			h.log.Error("failed to update operation status", uerr, map[string]interface{}{"operation_id": op.ID})
+		}
 		writeError(w, http.StatusForbidden, "Callback task_id does not match operation")
 		return
 	}

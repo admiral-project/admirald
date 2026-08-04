@@ -12,15 +12,20 @@ func CanonicalImageReference(value string) string {
 	if value == "" || strings.Contains(value, "@sha256:") {
 		return value
 	}
+	value = strings.ToLower(value)
 	first := value
 	if slash := strings.IndexByte(value, '/'); slash >= 0 {
 		first = value[:slash]
 	}
 	if !strings.Contains(first, ".") && !strings.Contains(first, ":") && first != "localhost" {
 		if strings.Contains(value, "/") {
-			return "docker.io/" + value
+			value = "docker.io/" + value
+		} else {
+			value = "docker.io/library/" + value
 		}
-		return "docker.io/library/" + value
+	}
+	if !strings.Contains(value, ":") {
+		value = value + ":latest"
 	}
 	return value
 }
