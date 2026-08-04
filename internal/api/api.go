@@ -21,15 +21,16 @@ import (
 )
 
 type Server struct {
-	handlers       *APIHandlers
-	log            *logging.Logger
-	adminToken     string
-	harborToken    string
-	tokenPepper    string
-	fleetLimiter   Limiter
-	adminLimiter   Limiter
-	trustedProxies []string
-	devMode        bool
+	handlers         *APIHandlers
+	log              *logging.Logger
+	adminToken       string
+	harborToken      string
+	tokenPepper      string
+	fleetLimiter     Limiter
+	adminLimiter     Limiter
+	trustedProxies   []string
+	fleetCallbackKey string
+	devMode          bool
 }
 
 // singleNodeMode is the single source of truth for local node routing. The
@@ -48,7 +49,7 @@ const (
 	authFailureWindow = 5 * time.Minute
 )
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, trustedProxies []string, devMode bool) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey, fleetCallbackKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, trustedProxies []string, devMode bool) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
 	// invalidates all active admin web sessions (flagship/harbor must
@@ -65,15 +66,16 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 	}
 	handlers := NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL)
 	server := &Server{
-		handlers:       handlers,
-		log:            log,
-		adminToken:     adminToken,
-		harborToken:    harborToken,
-		tokenPepper:    tokenPepper,
-		fleetLimiter:   NewDBRateLimiter(db),
-		adminLimiter:   NewDBRateLimiter(db),
-		trustedProxies: trustedProxies,
-		devMode:        devMode,
+		handlers:         handlers,
+		log:              log,
+		adminToken:       adminToken,
+		harborToken:      harborToken,
+		tokenPepper:      tokenPepper,
+		fleetLimiter:     NewDBRateLimiter(db),
+		adminLimiter:     NewDBRateLimiter(db),
+		trustedProxies:   trustedProxies,
+		fleetCallbackKey: fleetCallbackKey,
+		devMode:          devMode,
 	}
 	handlers.server = server
 	return server
@@ -120,7 +122,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/v1/fleet/oci_images", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, s.handlers.HandleOCIImages))
 
 	// Fleet worker routes (worker token required)
-	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleFleetCallback))))
+	mux.HandleFunc("/api/v1/fleet/callback", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-callback", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleFleetCallback)), s.fleetCallbackKey))
 	mux.HandleFunc("/api/v1/fleet/health", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-health", 60, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleAdminHealthCallback))))
 	mux.HandleFunc("/api/v1/fleet/storage", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, RateLimit(s.fleetLimiter, "fleet-storage", 30, time.Minute, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleStorageReport))))
 	mux.HandleFunc("/api/v1/fleet/tasks/claim", NodeAuthMiddleware(s.log, s.handlers.db, s.tokenPepper, "worker", s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleTaskClaim)))

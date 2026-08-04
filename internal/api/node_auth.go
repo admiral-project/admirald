@@ -28,7 +28,7 @@ const (
 	contextKeyTokenType contextKey = "token_type"
 )
 
-func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, expectedTokenType string, trustedProxies []string, next http.HandlerFunc) http.HandlerFunc {
+func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, expectedTokenType string, trustedProxies []string, next http.HandlerFunc, callbackKeys ...string) http.HandlerFunc {
 	limiter := NewRateLimiter()
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := "node_token:" + getClientIP(r, trustedProxies)
@@ -145,7 +145,11 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			provided, decodeErr := hex.DecodeString(r.Header.Get("X-Admiral-Task-Signature"))
-			mac := hmac.New(sha256.New, []byte(reqToken))
+			callbackKey := reqToken
+			if len(callbackKeys) > 0 && strings.TrimSpace(callbackKeys[0]) != "" {
+				callbackKey = callbackKeys[0]
+			}
+			mac := hmac.New(sha256.New, []byte(callbackKey))
 			_, _ = mac.Write(body)
 			if decodeErr != nil || !hmac.Equal(provided, mac.Sum(nil)) {
 				logAuthFailure(log, "WARN", "node_callback", "invalid_signature", http.StatusUnauthorized, r, nil)

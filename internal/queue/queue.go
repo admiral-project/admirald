@@ -215,6 +215,7 @@ func (p *Publisher) claimTask(ctx context.Context, nodeID string) (*admiral.Flee
 			FROM fleet_commands
 			WHERE node_id = $1
 			  AND status = $2
+			  AND attempt_count < max_attempts
 			  AND available_at <= CURRENT_TIMESTAMP
 			ORDER BY priority ASC, created_at ASC
 			FOR UPDATE SKIP LOCKED

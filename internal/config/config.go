@@ -29,6 +29,7 @@ type Config struct {
 	SecretsKeyPrevious []string
 	SigningKey         string
 	TaskEncryptionKey  string
+	FleetCallbackKey   string
 	SessionHMACKey     string // HMAC key for admin session tokens. If empty, a volatile
 	// ephemeral key is generated in memory at startup. This
 	// means a restart invalidates all active admin sessions.
@@ -82,6 +83,7 @@ func load(path string) (*Config, error) {
 		"secrets_key_previous":       "",
 		"signing_key":                "",
 		"task_encryption_key":        "",
+		"fleet_callback_key":         "",
 		"session_hmac_key":           "",
 		"flagship_admin_user":        "",
 		"flagship_admin_pswd":        "",
@@ -120,6 +122,7 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "secrets_key_previous", "ADMIRAL_SECRETS_KEY_PREVIOUS")
 	applyEnv(values, "signing_key", "ADMIRAL_ED25519_PRIVATE_KEY")
 	applyEnv(values, "task_encryption_key", "ADMIRAL_TASK_ENCRYPTION_KEY")
+	applyEnv(values, "fleet_callback_key", "ADMIRAL_FLEET_CALLBACK_KEY")
 	applyEnv(values, "session_hmac_key", "ADMIRAL_SESSION_HMAC_KEY")
 	applyEnv(values, "flagship_admin_user", "ADMIRAL_FLAGSHIP_ADMIN_USER")
 	applyEnv(values, "flagship_admin_pswd", "ADMIRAL_FLAGSHIP_ADMIN_PSWD")
@@ -143,6 +146,12 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 	applyEnv(values, "trusted_proxies", "ADMIRAL_TRUSTED_PROXIES")
 
+	for _, required := range []string{"admin_token", "token_pepper", "database_url", "queue_database_url", "tls_cert_file", "tls_key_file"} {
+		if strings.TrimSpace(values[required]) == "" || strings.TrimSpace(values[required]) == "__REQUIRED__" {
+			return nil, fmt.Errorf("%s is required via %s or its environment variable", required, path)
+		}
+	}
+
 	if values["admin_token"] == "" {
 		return nil, fmt.Errorf("admin_token is required via %s or ADMIRAL_ADMIN_TOKEN", path)
 	}
@@ -154,6 +163,9 @@ func load(path string) (*Config, error) {
 	}
 	if values["queue_database_url"] == "" {
 		return nil, fmt.Errorf("queue_database_url is required via %s or ADMIRAL_QUEUE_DATABASE_URL", path)
+	}
+	if values["fleet_callback_key"] == "" && os.Getenv("ADMIRAL_ENV") != "development" {
+		return nil, fmt.Errorf("fleet_callback_key is required via %s or ADMIRAL_FLEET_CALLBACK_KEY in production", path)
 	}
 	if values["tls_cert_file"] == "" {
 		return nil, fmt.Errorf("tls_cert_file is required via %s or ADMIRAL_TLS_CERT_FILE", path)
@@ -252,6 +264,7 @@ func load(path string) (*Config, error) {
 		SecretsKeyPrevious:       previousSecretsKeys,
 		SigningKey:               values["signing_key"],
 		TaskEncryptionKey:        values["task_encryption_key"],
+		FleetCallbackKey:         values["fleet_callback_key"],
 		SessionHMACKey:           values["session_hmac_key"],
 		FlagshipAdminUser:        values["flagship_admin_user"],
 		FlagshipAdminPassword:    values["flagship_admin_pswd"],
