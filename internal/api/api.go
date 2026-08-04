@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -171,7 +172,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{
 		Addr:           addr + ":" + port,
-		Handler:        RecoveryMiddleware(SecurityHeadersMiddleware(mux)),
+		Handler:        RecoveryMiddleware(s.log, SecurityHeadersMiddleware(mux)),
 		TLSConfig:      tlsconfig.NewServerConfig(),
 		ReadTimeout:    15 * time.Second,
 		WriteTimeout:   15 * time.Second,
@@ -183,18 +184,18 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	if err := s.handlers.syncKnownHostInventory(); err != nil {
 		s.log.Error("Failed to sync know_host inventory at startup", err, nil)
 	}
-	go s.StartBackupScheduler(ctx)
-	go s.StartBackupVerifier(ctx)
-	go s.StartSessionCleaner(ctx)
-	go s.StartNodeHealthMonitor(ctx)
-	go s.StartTokenGarbageCollector(ctx)
-	go s.StartResourceReconciler(ctx)
+	s.supervisedGo("backup-scheduler", s.StartBackupScheduler)
+	s.supervisedGo("backup-verifier", s.StartBackupVerifier)
+	s.supervisedGo("session-cleaner", s.StartSessionCleaner)
+	s.supervisedGo("node-health-monitor", s.StartNodeHealthMonitor)
+	s.supervisedGo("token-gc", s.StartTokenGarbageCollector)
+	s.supervisedGo("resource-reconciler", s.StartResourceReconciler)
 	if s.handlers.networking != nil {
 		if err := s.handlers.networking.SeedStaticRoutes(ctx); err != nil {
 			s.log.Error("Failed to seed public routes", err, nil)
 		}
 		s.handlers.networking.WarnExpiringCert()
-		go s.StartRouteReconciler(ctx)
+		s.supervisedGo("route-reconciler", s.StartRouteReconciler)
 	}
 
 	// Graceful shutdown on context cancellation
@@ -308,6 +309,22 @@ func (s *Server) reconcileResources() {
 			s.log.Error("Failed to update instance health in reconciler", err, map[string]interface{}{"instance_id": app.ID})
 		}
 	}
+}
+
+func (s *Server) supervisedGo(name string, fn func(ctx context.Context)) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				stack := debug.Stack()
+				s.log.Error("background goroutine panic", nil, map[string]interface{}{
+					"goroutine": name,
+					"panic":     rec,
+					"stack":     string(stack),
+				})
+			}
+		}()
+		fn(context.Background())
+	}()
 }
 
 func (s *Server) StartNodeHealthMonitor(ctx context.Context) {

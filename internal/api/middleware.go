@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,10 +43,17 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func RecoveryMiddleware(next http.Handler) http.Handler {
+func RecoveryMiddleware(log *logging.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if recover() != nil {
+			if rec := recover(); rec != nil {
+				stack := debug.Stack()
+				log.Error("handler panic recovered", nil, map[string]interface{}{
+					"panic":  rec,
+					"method": r.Method,
+					"path":   r.URL.Path,
+					"stack":  string(stack),
+				})
 				writeError(w, http.StatusInternalServerError, "internal server error")
 			}
 		}()
