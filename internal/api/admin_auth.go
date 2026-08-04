@@ -91,7 +91,11 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// Pass username in headers for downstream
 			r.Header.Set("X-Admiral-Admin-User", username)
 		}
-		next(w, r)
+		principal := adminTokenAuthPrincipal
+		if username := r.Header.Get("X-Admiral-Admin-User"); username != "" {
+			principal = username
+		}
+		next(w, withAuthPrincipal(r, principal))
 	}
 }
 

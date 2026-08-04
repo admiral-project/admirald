@@ -296,3 +296,23 @@ func TestHarborAuthMiddlewareMarksAdminAsSystemPrincipal(t *testing.T) {
 		t.Fatalf("expected system-authenticated request, got status %d", rr.Code)
 	}
 }
+
+func TestAdminAuthMiddlewareDoesNotTrustOperatorHeader(t *testing.T) {
+	handler := AdminAuthMiddleware(logging.New("test"), "admin-secret", nil, func(w http.ResponseWriter, r *http.Request) {
+		if got := operatorFromRequest(r); got != adminTokenAuthPrincipal {
+			t.Fatalf("operatorFromRequest() = %q, want %q", got, adminTokenAuthPrincipal)
+		}
+		if got := r.Header.Get("X-Admiral-Operator"); got != "" {
+			t.Fatalf("operator header survived authentication: %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	req.Header.Set("X-Admiral-Operator", "forged-user")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}

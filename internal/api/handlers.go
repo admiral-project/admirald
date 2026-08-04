@@ -145,6 +145,9 @@ func generateSecretKey() string {
 }
 
 func operatorFromRequest(r *http.Request) string {
+	if principal, ok := r.Context().Value(authPrincipalContextKey{}).(string); ok && principal != "" {
+		return principal
+	}
 	if op := r.Header.Get("X-Admiral-Admin-User"); op != "" {
 		return op
 	}

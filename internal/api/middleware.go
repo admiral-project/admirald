@@ -19,6 +19,8 @@ import (
 type authPrincipalContextKey struct{}
 
 const systemAuthPrincipal = "system"
+const adminTokenAuthPrincipal = "admin-token"
+const harborTokenAuthPrincipal = "harbor-token"
 
 func withAuthPrincipal(r *http.Request, principal string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), authPrincipalContextKey{}, principal))
@@ -91,16 +93,12 @@ func AdminAuthMiddlewareWithLimiter(log *logging.Logger, adminToken string, trus
 		}
 		limiter.Reset(key)
 
-		operator := r.Header.Get("X-Admiral-Operator")
-		// Strip client-supplied admin-user header to prevent audit trail forgery,
-		// while preserving the authenticated operator attribution.
+		// Static admin tokens authenticate the service, not an individual
+		// operator. Do not accept client-supplied attribution as an audit
+		// principal; session-authenticated requests use the username principal.
 		r.Header.Del("X-Admiral-Admin-User")
 		r.Header.Del("X-Admiral-Operator")
-		if operator != "" {
-			r.Header.Set("X-Admiral-Operator", operator)
-		}
-
-		next(w, r)
+		next(w, withAuthPrincipal(r, adminTokenAuthPrincipal))
 	}
 }
 
@@ -137,24 +135,16 @@ func HarborAuthMiddleware(log *logging.Logger, adminToken, harborToken string, t
 		// Allow both admin token (full access) and harbor token (customer scope)
 		if subtle.ConstantTimeCompare([]byte(reqToken), []byte(adminToken)) == 1 {
 			limiter.Reset(key)
-			operator := r.Header.Get("X-Admiral-Operator")
 			r.Header.Del("X-Admiral-Admin-User")
 			r.Header.Del("X-Admiral-Operator")
-			if operator != "" {
-				r.Header.Set("X-Admiral-Operator", operator)
-			}
 			next(w, withAuthPrincipal(r, systemAuthPrincipal))
 			return
 		}
 		if harborToken != "" && subtle.ConstantTimeCompare([]byte(reqToken), []byte(harborToken)) == 1 {
 			limiter.Reset(key)
-			operator := r.Header.Get("X-Admiral-Operator")
 			r.Header.Del("X-Admiral-Admin-User")
 			r.Header.Del("X-Admiral-Operator")
-			if operator != "" {
-				r.Header.Set("X-Admiral-Operator", operator)
-			}
-			next(w, r)
+			next(w, withAuthPrincipal(r, harborTokenAuthPrincipal))
 			return
 		}
 
