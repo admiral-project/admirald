@@ -326,7 +326,7 @@ func (d *DB) RemoveNode(id string, force bool) error {
 	}
 	_, err = tx.Exec("DELETE FROM node_tokens WHERE node_id = $1", id)
 	if err != nil {
-		return fmt.Errorf("remove node %q: delete backups: %w", id, err)
+		return fmt.Errorf("remove node %q: delete node_tokens: %w", id, err)
 	}
 	_, err = tx.Exec("DELETE FROM customer_apps WHERE node_id = $1", id)
 	if err != nil {
