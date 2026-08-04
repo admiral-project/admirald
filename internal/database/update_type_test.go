@@ -124,6 +124,9 @@ func TestClearCustomerAppRestartRequiredClearsUpdateType(t *testing.T) {
 
 func TestGetCustomerAppsPageFiltered(t *testing.T) {
 	db := OpenTestDB(t)
+	if err := db.TruncateTables(); err != nil {
+		t.Fatalf("truncate tables: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name IN ('filt-app1', 'filt-app2')")
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name IN ('filt-app1', 'filt-app2')")
@@ -136,6 +139,11 @@ func TestGetCustomerAppsPageFiltered(t *testing.T) {
 	_ = db.CreateCustomerApp("inst_f1", "cust_1", "filt-app1", "small", "node_ut", "{}")
 	_ = db.CreateCustomerApp("inst_f2", "cust_1", "filt-app2", "small", "node_ut", "{}")
 	_ = db.CreateCustomerApp("inst_f3", "cust_2", "filt-app1", "small", "node_ut", "{}")
+
+	// Set need_restarting + update_type directly since SaveAppDefinition ran before CreateCustomerApp
+	_, _ = db.Exec("UPDATE customer_apps SET need_restarting = TRUE, update_type = 'security_critical' WHERE id = 'inst_f1'")
+	_, _ = db.Exec("UPDATE customer_apps SET need_restarting = TRUE, update_type = 'bugfix' WHERE id = 'inst_f2'")
+	_, _ = db.Exec("UPDATE customer_apps SET need_restarting = TRUE, update_type = 'security_critical' WHERE id = 'inst_f3'")
 
 	// Filter by need_restarting only
 	apps, total, err := db.GetCustomerAppsPageFiltered(100, 0, "", true, "")
@@ -183,6 +191,9 @@ func TestGetCustomerAppsPageFiltered(t *testing.T) {
 
 func TestFlagOverdueInstances(t *testing.T) {
 	db := OpenTestDB(t)
+	if err := db.TruncateTables(); err != nil {
+		t.Fatalf("truncate tables: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "overdue-app")
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "overdue-app")
@@ -193,10 +204,12 @@ func TestFlagOverdueInstances(t *testing.T) {
 	_ = db.SaveAppDefinition("overdue-app", "Overdue App", "", "name: overdue-app", nil, "security_critical")
 	_ = db.CreateCustomerApp("inst_od1", "cust_1", "overdue-app", "small", "node_ut", "{}")
 
-	_, err := db.Exec(`UPDATE customer_apps SET update_started_at = $1 WHERE id = 'inst_od1'`,
+	// Set state directly: need_restarting, update_type, and old update_started_at
+	_, err := db.Exec(`UPDATE customer_apps SET need_restarting = TRUE, update_type = 'security_critical',
+		update_started_at = $1, technical_status = 'running' WHERE id = 'inst_od1'`,
 		time.Now().Add(-3*time.Hour))
 	if err != nil {
-		t.Fatalf("set update_started_at: %v", err)
+		t.Fatalf("set update state: %v", err)
 	}
 
 	affected, err := db.FlagOverdueInstances(2 * time.Hour)
@@ -218,6 +231,9 @@ func TestFlagOverdueInstances(t *testing.T) {
 
 func TestFlagOverdueInstancesSkipsNonSecurity(t *testing.T) {
 	db := OpenTestDB(t)
+	if err := db.TruncateTables(); err != nil {
+		t.Fatalf("truncate tables: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "nonsec-app")
 		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "nonsec-app")
@@ -228,10 +244,11 @@ func TestFlagOverdueInstancesSkipsNonSecurity(t *testing.T) {
 	_ = db.SaveAppDefinition("nonsec-app", "NonSec App", "", "name: nonsec-app", nil, "bugfix")
 	_ = db.CreateCustomerApp("inst_ns1", "cust_1", "nonsec-app", "small", "node_ut", "{}")
 
-	_, err := db.Exec(`UPDATE customer_apps SET update_started_at = $1 WHERE id = 'inst_ns1'`,
+	_, err := db.Exec(`UPDATE customer_apps SET need_restarting = TRUE, update_type = 'bugfix',
+		update_started_at = $1, technical_status = 'running' WHERE id = 'inst_ns1'`,
 		time.Now().Add(-3*time.Hour))
 	if err != nil {
-		t.Fatalf("set update_started_at: %v", err)
+		t.Fatalf("set update state: %v", err)
 	}
 
 	affected, err := db.FlagOverdueInstances(2 * time.Hour)
