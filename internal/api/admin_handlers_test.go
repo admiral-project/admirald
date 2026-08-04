@@ -5,6 +5,9 @@ package api
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1160,6 +1163,9 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 	// Test 2: Request with matching WireGuard IP -> 200 OK
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(body))
 	req2.Header.Set("X-Admiral-Token", token)
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = mac.Write(body)
+	req2.Header.Set("X-Admiral-Task-Signature", hex.EncodeToString(mac.Sum(nil)))
 	req2.RemoteAddr = "10.99.0.2:51820"
 	rec2 := httptest.NewRecorder()
 	wrapped(rec2, req2)
