@@ -10,17 +10,24 @@ import (
 
 func TestSaveAppDefinitionWithUpdateType(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "updatetype-app") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "updatetype-app") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "updatetype-app")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "updatetype-app")
+	})
 
-	// Create a customer app first
+	// Save app definition first (FK requires app_definitions to exist)
+	if err := db.SaveAppDefinition("updatetype-app", "Update Type App", "Test", "name: updatetype-app", nil, "security_critical"); err != nil {
+		t.Fatalf("save app definition: %v", err)
+	}
+
+	// Create a customer app
 	if err := db.CreateCustomerApp("inst_ut1", "cust_1", "updatetype-app", "small", "node_1", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 
-	// Save app definition with security_critical update type
-	if err := db.SaveAppDefinition("updatetype-app", "Update Type App", "Test", "name: updatetype-app", nil, "security_critical"); err != nil {
-		t.Fatalf("save app definition: %v", err)
+	// Re-save to trigger definitionChanged path (propagates update_type to instances)
+	if err := db.SaveAppDefinition("updatetype-app", "Update Type App", "Test", "name: updatetype-app-v2", nil, "security_critical"); err != nil {
+		t.Fatalf("re-save app definition: %v", err)
 	}
 
 	// Verify the instance was marked with the correct update_type
@@ -41,16 +48,21 @@ func TestSaveAppDefinitionWithUpdateType(t *testing.T) {
 
 func TestSaveAppDefinitionDefaultUpdateType(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "default-app") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "default-app") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "default-app")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "default-app")
+	})
 
+	if err := db.SaveAppDefinition("default-app", "Default App", "Test", "name: default-app", nil, "improvement"); err != nil {
+		t.Fatalf("save app definition: %v", err)
+	}
 	if err := db.CreateCustomerApp("inst_def1", "cust_1", "default-app", "small", "node_1", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 
-	// Save with "improvement" (the default)
-	if err := db.SaveAppDefinition("default-app", "Default App", "Test", "name: default-app", nil, "improvement"); err != nil {
-		t.Fatalf("save app definition: %v", err)
+	// Re-save with "improvement" to trigger propagation
+	if err := db.SaveAppDefinition("default-app", "Default App", "Test", "name: default-app-v2", nil, "improvement"); err != nil {
+		t.Fatalf("re-save app definition: %v", err)
 	}
 
 	inst, err := db.GetCustomerApp("inst_def1")
@@ -64,14 +76,21 @@ func TestSaveAppDefinitionDefaultUpdateType(t *testing.T) {
 
 func TestClearCustomerAppRestartRequiredClearsUpdateType(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "clear-app") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "clear-app") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "clear-app")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "clear-app")
+	})
 
+	if err := db.SaveAppDefinition("clear-app", "Clear App", "Test", "name: clear-app", nil, "security"); err != nil {
+		t.Fatalf("save app definition: %v", err)
+	}
 	if err := db.CreateCustomerApp("inst_clr1", "cust_1", "clear-app", "small", "node_1", "{}"); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
-	if err := db.SaveAppDefinition("clear-app", "Clear App", "Test", "name: clear-app", nil, "security"); err != nil {
-		t.Fatalf("save app definition: %v", err)
+
+	// Re-save to trigger propagation
+	if err := db.SaveAppDefinition("clear-app", "Clear App", "Test", "name: clear-app-v2", nil, "security"); err != nil {
+		t.Fatalf("re-save app definition: %v", err)
 	}
 
 	// Verify marked
@@ -99,9 +118,9 @@ func TestClearCustomerAppRestartRequiredClearsUpdateType(t *testing.T) {
 
 func TestGetCustomerAppsPageFiltered(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name IN ('filt-app1', 'filt-app2')") })
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name IN ('filt-app1', 'filt-app2')")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name IN ('filt-app1', 'filt-app2')")
 	})
 
 	_ = db.SaveAppDefinition("filt-app1", "Filter App 1", "", "name: filt-app1", nil, "security_critical")
@@ -156,8 +175,10 @@ func TestGetCustomerAppsPageFiltered(t *testing.T) {
 
 func TestFlagOverdueInstances(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "overdue-app") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "overdue-app") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "overdue-app")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "overdue-app")
+	})
 
 	_ = db.SaveAppDefinition("overdue-app", "Overdue App", "", "name: overdue-app", nil, "security_critical")
 	_ = db.CreateCustomerApp("inst_od1", "cust_1", "overdue-app", "small", "node_1", "{}")
@@ -177,7 +198,10 @@ func TestFlagOverdueInstances(t *testing.T) {
 		t.Errorf("expected 1 flagged, got %d", affected)
 	}
 
-	inst, _ := db.GetCustomerApp("inst_od1")
+	inst, err := db.GetCustomerApp("inst_od1")
+	if err != nil {
+		t.Fatalf("get customer app: %v", err)
+	}
 	if inst.TechnicalStatus != "restart_overdue" {
 		t.Errorf("expected technical_status 'restart_overdue', got %q", inst.TechnicalStatus)
 	}
@@ -185,8 +209,10 @@ func TestFlagOverdueInstances(t *testing.T) {
 
 func TestFlagOverdueInstancesSkipsNonSecurity(t *testing.T) {
 	db := OpenTestDB(t)
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "nonsec-app") })
-	t.Cleanup(func() { _, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "nonsec-app") })
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM customer_apps WHERE app_definition_name = $1", "nonsec-app")
+		_, _ = db.Exec("DELETE FROM app_definitions WHERE name = $1", "nonsec-app")
+	})
 
 	_ = db.SaveAppDefinition("nonsec-app", "NonSec App", "", "name: nonsec-app", nil, "bugfix")
 	_ = db.CreateCustomerApp("inst_ns1", "cust_1", "nonsec-app", "small", "node_1", "{}")
@@ -206,7 +232,10 @@ func TestFlagOverdueInstancesSkipsNonSecurity(t *testing.T) {
 		t.Errorf("expected 0 flagged for non-security_critical, got %d", affected)
 	}
 
-	inst, _ := db.GetCustomerApp("inst_ns1")
+	inst, err := db.GetCustomerApp("inst_ns1")
+	if err != nil {
+		t.Fatalf("get customer app: %v", err)
+	}
 	if inst.TechnicalStatus == "restart_overdue" {
 		t.Error("bugfix instance should not be flagged as restart_overdue")
 	}
