@@ -359,6 +359,31 @@ func getMigrations() []Migration {
 				return nil
 			},
 		},
+		{
+			Version: 17,
+			Name:    "operator_profiles_and_tokens",
+			Up: func(db migrationDB) error {
+				_, err := db.Exec(`
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS mfa_email_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS operator_tokens (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL REFERENCES admin_users(username) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL CHECK (scope IN ('read', 'write', 'admin')),
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS operator_tokens_username_idx ON operator_tokens(username);
+`)
+				return err
+			},
+		},
 	}
 }
 

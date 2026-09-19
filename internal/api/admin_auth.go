@@ -5,6 +5,7 @@ package api
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -16,6 +17,59 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
+
+// V1AuthMiddleware accepts the internal service credential or a per-operator
+// token. It deliberately does not fall back to the legacy admin credential.
+func (s *Server) V1AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X-Admiral-Token")
+		if token == "" && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if token == "" {
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+		if s.adminToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1 {
+			next(w, withAuthPrincipal(r, systemAuthPrincipal))
+			return
+		}
+		record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
+		if err != nil || record.ID == "" || record.RevokedAt != nil || (record.ExpiresAt != nil && time.Now().After(*record.ExpiresAt)) {
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+		if !scopeAllows(record.Scope, r) {
+			writeError(w, http.StatusForbidden, "operator token scope does not allow this action")
+			return
+		}
+		s.handlers.db.TouchOperatorToken(record.ID)
+		next(w, withAuthPrincipal(r, record.Username))
+	}
+}
+
+func scopeAllows(scope string, r *http.Request) bool {
+	if scope == "admin" {
+		return true
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	if scope == "read" {
+		return false
+	}
+	// write intentionally excludes destructive/control-plane operations.
+	p := r.URL.Path
+	return !strings.Contains(p, "/nodes") && !strings.Contains(p, "/backups") && !strings.Contains(p, "/secrets") && !strings.Contains(p, "/restore") && r.Method != http.MethodDelete
+}
+
+func newOperatorToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "adm_op_" + hex.EncodeToString(b), nil
+}
 
 func (h *APIHandlers) hashToken(input string) string {
 	mac := hmac.New(sha256.New, []byte(h.hmacKey))
@@ -49,6 +103,17 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		// First try session token lookup
 		if s.adminToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) != 1 {
+			// Operator tokens may only manage their own token inventory. Human
+			// profile/session endpoints remain session-authenticated.
+			if strings.HasPrefix(r.URL.Path, "/api/admin/tokens") {
+				record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
+				if err == nil && record.ID != "" && record.RevokedAt == nil && (record.ExpiresAt == nil || time.Now().Before(*record.ExpiresAt)) {
+					s.handlers.db.TouchOperatorToken(record.ID)
+					r.Header.Set("X-Admiral-Admin-User", record.Username)
+					next(w, withAuthPrincipal(r, record.Username))
+					return
+				}
+			}
 			tokenHash := s.handlers.hashToken(token)
 			username, expiresAt, lastActivity, err := s.handlers.db.GetAdminSession(tokenHash)
 			if err != nil {
@@ -171,6 +236,18 @@ func (h *APIHandlers) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 			"remote_ip": h.clientIP(r),
 		})
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+	if req.VerifyOnly {
+		profile, profileErr := h.db.GetOperatorProfile(req.Username)
+		if profileErr != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to load operator profile")
+			return
+		}
+		if h.server != nil {
+			h.server.resetAuthFailures(r, "admin_login")
+		}
+		writeJSON(w, http.StatusOK, admiral.AdminLoginResponse{Username: req.Username, PasswordChangeRequired: mustChange, MFAEmailEnabled: profile.MFAEmailEnabled, Email: profile.Email})
 		return
 	}
 

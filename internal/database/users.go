@@ -15,6 +15,92 @@ type AdminUserRecord struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+type OperatorProfile struct {
+	Username        string     `json:"username"`
+	Email           string     `json:"email"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	MFAEmailEnabled bool       `json:"mfa_email_enabled"`
+}
+
+type OperatorToken struct {
+	ID          string     `json:"id"`
+	Username    string     `json:"username"`
+	Label       string     `json:"label"`
+	TokenPrefix string     `json:"token_prefix"`
+	TokenHash   string     `json:"-"`
+	Scope       string     `json:"scope"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+func (d *DB) GetOperatorProfile(username string) (OperatorProfile, error) {
+	var p OperatorProfile
+	err := d.QueryRow(`SELECT username, email, email_verified_at, mfa_email_enabled FROM admin_users WHERE username=$1`, username).Scan(&p.Username, &p.Email, &p.EmailVerifiedAt, &p.MFAEmailEnabled)
+	if err == sql.ErrNoRows {
+		return p, nil
+	}
+	if err != nil {
+		return p, fmt.Errorf("get operator profile: %w", err)
+	}
+	return p, nil
+}
+
+func (d *DB) UpdateOperatorProfile(username, email string, verified bool, mfa bool) error {
+	_, err := d.Exec(`UPDATE admin_users SET email=$1, email_verified_at=CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE NULL END, mfa_email_enabled=$3 WHERE username=$4`, email, verified, mfa, username)
+	if err != nil {
+		return fmt.Errorf("update operator profile: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) CreateOperatorToken(t OperatorToken) error {
+	_, err := d.Exec(`INSERT INTO operator_tokens (id,username,label,token_prefix,token_hash,scope,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, t.ID, t.Username, t.Label, t.TokenPrefix, t.TokenHash, t.Scope, t.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("create operator token: %w", err)
+	}
+	return nil
+}
+func (d *DB) ListOperatorTokens(username string) ([]OperatorToken, error) {
+	rows, err := d.Query(`SELECT id,username,label,token_prefix,scope,expires_at,revoked_at,last_used_at,created_at FROM operator_tokens WHERE username=$1 ORDER BY created_at DESC`, username)
+	if err != nil {
+		return nil, fmt.Errorf("list operator tokens: %w", err)
+	}
+	defer rows.Close()
+	var out []OperatorToken
+	for rows.Next() {
+		var t OperatorToken
+		if err := rows.Scan(&t.ID, &t.Username, &t.Label, &t.TokenPrefix, &t.Scope, &t.ExpiresAt, &t.RevokedAt, &t.LastUsedAt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+func (d *DB) GetOperatorToken(hash string) (OperatorToken, error) {
+	var t OperatorToken
+	err := d.QueryRow(`SELECT id,username,label,token_prefix,token_hash,scope,expires_at,revoked_at,last_used_at,created_at FROM operator_tokens WHERE token_hash=$1`, hash).Scan(&t.ID, &t.Username, &t.Label, &t.TokenPrefix, &t.TokenHash, &t.Scope, &t.ExpiresAt, &t.RevokedAt, &t.LastUsedAt, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return t, nil
+	}
+	if err != nil {
+		return t, fmt.Errorf("get operator token: %w", err)
+	}
+	return t, nil
+}
+func (d *DB) RevokeOperatorToken(id, username string) (bool, error) {
+	r, err := d.Exec(`UPDATE operator_tokens SET revoked_at=CURRENT_TIMESTAMP WHERE id=$1 AND username=$2 AND revoked_at IS NULL`, id, username)
+	if err != nil {
+		return false, fmt.Errorf("revoke operator token: %w", err)
+	}
+	n, _ := r.RowsAffected()
+	return n == 1, nil
+}
+func (d *DB) TouchOperatorToken(id string) {
+	_, _ = d.Exec(`UPDATE operator_tokens SET last_used_at=CURRENT_TIMESTAMP WHERE id=$1`, id)
+}
+
 func (d *DB) CreateAdminUser(username, passwordHash string, mustChangePassword bool) error {
 	query := `
 		INSERT INTO admin_users (username, password_hash, must_change_password)

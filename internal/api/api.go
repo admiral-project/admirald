@@ -88,21 +88,19 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	// Register authenticated endpoints
 	const jsonLimit = 1 << 20 // 1 MiB for JSON payloads
 	const yamlLimit = 5 << 20 // 5 MiB for YAML app definitions
-	adminTokenAuth := func(next http.HandlerFunc) http.HandlerFunc {
-		return AdminAuthMiddlewareWithLimiter(s.log, s.adminToken, s.trustedProxies, s.adminLimiter, next)
-	}
+	adminTokenAuth := s.V1AuthMiddleware
 
 	// Admin-only routes (use AdminAuthMiddleware)
 	mux.HandleFunc("/api/v1/nodes", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleNodes)))
 	mux.HandleFunc("/api/v1/nodes/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleNodeByID)))
 
 	// Harbor-readable routes (use HarborAuthMiddleware — accepts admin token and harbor token)
-	mux.HandleFunc("/api/v1/apps", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/apps/", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/customer-apps", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
-	mux.HandleFunc("/api/v1/customer-apps/", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
-	mux.HandleFunc("/api/v1/customer-apps/action", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
-	mux.HandleFunc("/api/v1/harbor_ping", HarborAuthMiddleware(s.log, s.adminToken, s.harborToken, s.trustedProxies, s.handlers.HandleHarborPing))
+	mux.HandleFunc("/api/v1/apps", adminTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/apps/", adminTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/customer-apps", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
+	mux.HandleFunc("/api/v1/customer-apps/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
+	mux.HandleFunc("/api/v1/customer-apps/action", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
+	mux.HandleFunc("/api/v1/harbor_ping", adminTokenAuth(s.handlers.HandleHarborPing))
 	mux.HandleFunc("/api/v1/operations", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleOperations)))
 	mux.HandleFunc("/api/v1/routes", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleRoutes)))
 	mux.HandleFunc("/api/v1/routes/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleRoutes)))
@@ -144,6 +142,9 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/api/admin/auth/logout", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminLogout)))
 	mux.HandleFunc("/api/admin/auth/me", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminMe)))
 	mux.HandleFunc("/api/admin/auth/change-password", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminChangePassword)))
+	mux.HandleFunc("/api/admin/profile", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleOperatorProfile)))
+	mux.HandleFunc("/api/admin/tokens", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleOperatorTokens)))
+	mux.HandleFunc("/api/admin/tokens/", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleOperatorTokens)))
 	mux.HandleFunc("/api/admin/apps", s.AdminAuthMiddleware(MaxBody(yamlLimit, s.handlers.HandleAdminApps)))
 	mux.HandleFunc("/api/admin/apps/", s.AdminAuthMiddleware(MaxBody(yamlLimit, s.handlers.HandleAdminApps)))
 	mux.HandleFunc("/api/admin/instances", s.AdminAuthMiddleware(MaxBody(jsonLimit, s.handlers.HandleAdminInstances)))
