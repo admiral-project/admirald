@@ -166,8 +166,9 @@ type RetentionPolicy struct {
 }
 
 type AdminLoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	VerifyOnly bool   `json:"verify_only,omitempty"`
 }
 
 type AdminLoginResponse struct {
@@ -175,11 +176,37 @@ type AdminLoginResponse struct {
 	ExpiresAt              string `json:"expires_at,omitempty"`
 	PasswordChangeRequired bool   `json:"password_change_required,omitempty"`
 	Username               string `json:"username,omitempty"`
+	MFAEmailEnabled        bool   `json:"mfa_email_enabled,omitempty"`
+	Email                  string `json:"email,omitempty"`
 }
 
 type AdminMeResponse struct {
 	Username  string `json:"username"`
 	CreatedAt string `json:"created_at"`
+}
+
+type OperatorProfileResponse struct {
+	Username        string `json:"username"`
+	Email           string `json:"email"`
+	EmailVerifiedAt string `json:"email_verified_at,omitempty"`
+	MFAEmailEnabled bool   `json:"mfa_email_enabled"`
+}
+
+type OperatorTokenRequest struct {
+	Label     string `json:"label"`
+	Scope     string `json:"scope"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+type OperatorTokenResponse struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	Prefix     string `json:"prefix"`
+	Scope      string `json:"scope"`
+	Token      string `json:"token,omitempty"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+	RevokedAt  string `json:"revoked_at,omitempty"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type AdminChangePasswordRequest struct {
