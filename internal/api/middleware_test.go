@@ -297,6 +297,84 @@ func TestHarborAuthMiddlewareMarksAdminAsSystemPrincipal(t *testing.T) {
 	}
 }
 
+func TestV1HarborAuthMiddlewareAcceptsScopedHarborToken(t *testing.T) {
+	newServer := func() *Server {
+		return &Server{
+			adminToken:  "admin-secret",
+			harborToken: "harbor-secret",
+			handlers:    &APIHandlers{},
+		}
+	}
+
+	t.Run("harbor token authenticates as non-system principal", func(t *testing.T) {
+		called := false
+		handler := newServer().V1HarborAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			if isSystemPrincipal(r) {
+				t.Error("harbor token must not create a system principal")
+			}
+			if got := operatorFromRequest(r); got != harborTokenAuthPrincipal {
+				t.Errorf("operatorFromRequest() = %q, want %q", got, harborTokenAuthPrincipal)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest("GET", "/api/v1/harbor_ping", nil)
+		req.Header.Set("Authorization", "Bearer harbor-secret")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || !called {
+			t.Fatalf("expected harbor-token request to succeed, got status %d", rr.Code)
+		}
+	})
+
+	t.Run("harbor token accepted via X-Admiral-Token", func(t *testing.T) {
+		handler := newServer().V1HarborAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest("GET", "/api/v1/apps", nil)
+		req.Header.Set("X-Admiral-Token", "harbor-secret")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("admin token still creates system principal", func(t *testing.T) {
+		called := false
+		handler := newServer().V1HarborAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			if !isSystemPrincipal(r) {
+				t.Error("expected admin token to create system principal")
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest("GET", "/api/v1/harbor_ping", nil)
+		req.Header.Set("X-Admiral-Token", "admin-secret")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || !called {
+			t.Fatalf("expected admin-token request to succeed, got status %d", rr.Code)
+		}
+	})
+
+	t.Run("wrong token rejected", func(t *testing.T) {
+		handler := newServer().V1HarborAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest("GET", "/api/v1/harbor_ping", nil)
+		req.Header.Set("X-Admiral-Token", "wrong-token")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rr.Code)
+		}
+		if rr.Body.String() != "{\"error\":\"unauthorized\"}\n" {
+			t.Fatalf("expected generic unauthorized body, got %q", rr.Body.String())
+		}
+	})
+}
+
 func TestAdminAuthMiddlewareDoesNotTrustOperatorHeader(t *testing.T) {
 	handler := AdminAuthMiddleware(logging.New("test"), "admin-secret", nil, func(w http.ResponseWriter, r *http.Request) {
 		if got := operatorFromRequest(r); got != adminTokenAuthPrincipal {

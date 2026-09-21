@@ -89,18 +89,21 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	const jsonLimit = 1 << 20 // 1 MiB for JSON payloads
 	const yamlLimit = 5 << 20 // 5 MiB for YAML app definitions
 	adminTokenAuth := s.V1AuthMiddleware
+	harborTokenAuth := s.V1HarborAuthMiddleware
 
 	// Admin-only routes (use AdminAuthMiddleware)
 	mux.HandleFunc("/api/v1/nodes", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleNodes)))
 	mux.HandleFunc("/api/v1/nodes/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleNodeByID)))
 
-	// Harbor-readable routes (use HarborAuthMiddleware — accepts admin token and harbor token)
-	mux.HandleFunc("/api/v1/apps", adminTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/apps/", adminTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
-	mux.HandleFunc("/api/v1/customer-apps", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
-	mux.HandleFunc("/api/v1/customer-apps/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
-	mux.HandleFunc("/api/v1/customer-apps/action", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
-	mux.HandleFunc("/api/v1/harbor_ping", adminTokenAuth(s.handlers.HandleHarborPing))
+	// Harbor-readable routes (use V1HarborAuthMiddleware — accepts the
+	// internal service credential, the scoped harbor token, and operator
+	// tokens; the harbor token authenticates as a non-system principal)
+	mux.HandleFunc("/api/v1/apps", harborTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/apps/", harborTokenAuth(MaxBody(yamlLimit, s.handlers.HandleApps)))
+	mux.HandleFunc("/api/v1/customer-apps", harborTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerApps)))
+	mux.HandleFunc("/api/v1/customer-apps/", harborTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppByID)))
+	mux.HandleFunc("/api/v1/customer-apps/action", harborTokenAuth(MaxBody(jsonLimit, s.handlers.HandleCustomerAppAction)))
+	mux.HandleFunc("/api/v1/harbor_ping", harborTokenAuth(s.handlers.HandleHarborPing))
 	mux.HandleFunc("/api/v1/operations", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleOperations)))
 	mux.HandleFunc("/api/v1/routes", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleRoutes)))
 	mux.HandleFunc("/api/v1/routes/", adminTokenAuth(MaxBody(jsonLimit, s.handlers.HandleRoutes)))

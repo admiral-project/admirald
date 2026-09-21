@@ -48,6 +48,46 @@ func (s *Server) V1AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// V1HarborAuthMiddleware accepts the internal service credential, the scoped
+// Harbor token, or a per-operator token. It is used only on Harbor-readable
+// routes. The Harbor token authenticates as a non-system principal so that
+// customer-ownership checks (X-Admiral-Customer-ID) still apply.
+func (s *Server) V1HarborAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X-Admiral-Token")
+		if token == "" && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if token == "" {
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+		if s.adminToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.adminToken)) == 1 {
+			next(w, withAuthPrincipal(r, systemAuthPrincipal))
+			return
+		}
+		if s.harborToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.harborToken)) == 1 {
+			next(w, withAuthPrincipal(r, harborTokenAuthPrincipal))
+			return
+		}
+		if s.handlers == nil || s.handlers.db == nil {
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+		record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
+		if err != nil || record.ID == "" || record.RevokedAt != nil || (record.ExpiresAt != nil && time.Now().After(*record.ExpiresAt)) {
+			writeGenericAuthError(w, http.StatusUnauthorized)
+			return
+		}
+		if !scopeAllows(record.Scope, r) {
+			writeError(w, http.StatusForbidden, "operator token scope does not allow this action")
+			return
+		}
+		s.handlers.db.TouchOperatorToken(record.ID)
+		next(w, withAuthPrincipal(r, record.Username))
+	}
+}
+
 func scopeAllows(scope string, r *http.Request) bool {
 	if scope == "admin" {
 		return true
