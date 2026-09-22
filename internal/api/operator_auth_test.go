@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/admiral-project/admiral/admirald/internal/database"
 )
 
 func requestForScope(method, path string) *http.Request {
@@ -42,5 +45,30 @@ func TestScopeAllows(t *testing.T) {
 func TestScopeAllowsUnknownScope(t *testing.T) {
 	if scopeAllows("unknown", requestForScope(http.MethodPost, "/api/v1/apps")) {
 		t.Fatal("unknown scope must not authorize mutations")
+	}
+}
+
+func TestOperatorTokenUsable(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+	revoked := now.Add(-time.Minute)
+	tests := []struct {
+		name   string
+		record database.OperatorToken
+		want   bool
+	}{
+		{"active without expiry", database.OperatorToken{ID: "opt_1"}, true},
+		{"active before expiry", database.OperatorToken{ID: "opt_1", ExpiresAt: &future}, true},
+		{"expired", database.OperatorToken{ID: "opt_1", ExpiresAt: &past}, false},
+		{"revoked", database.OperatorToken{ID: "opt_1", RevokedAt: &revoked}, false},
+		{"missing id", database.OperatorToken{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := operatorTokenUsable(tt.record, now); got != tt.want {
+				t.Fatalf("operatorTokenUsable() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

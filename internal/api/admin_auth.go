@@ -35,7 +35,7 @@ func (s *Server) V1AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
-		if err != nil || record.ID == "" || record.RevokedAt != nil || (record.ExpiresAt != nil && time.Now().After(*record.ExpiresAt)) {
+		if err != nil || !operatorTokenUsable(record, time.Now()) {
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
@@ -75,7 +75,7 @@ func (s *Server) V1HarborAuthMiddleware(next http.HandlerFunc) http.HandlerFunc 
 			return
 		}
 		record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
-		if err != nil || record.ID == "" || record.RevokedAt != nil || (record.ExpiresAt != nil && time.Now().After(*record.ExpiresAt)) {
+		if err != nil || !operatorTokenUsable(record, time.Now()) {
 			writeGenericAuthError(w, http.StatusUnauthorized)
 			return
 		}
@@ -86,6 +86,11 @@ func (s *Server) V1HarborAuthMiddleware(next http.HandlerFunc) http.HandlerFunc 
 		s.handlers.db.TouchOperatorToken(record.ID)
 		next(w, withAuthPrincipal(r, record.Username))
 	}
+}
+
+func operatorTokenUsable(record database.OperatorToken, now time.Time) bool {
+	return record.ID != "" && record.RevokedAt == nil &&
+		(record.ExpiresAt == nil || now.Before(*record.ExpiresAt))
 }
 
 func scopeAllows(scope string, r *http.Request) bool {
@@ -150,7 +155,7 @@ func (s *Server) AdminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// profile/session endpoints remain session-authenticated.
 			if strings.HasPrefix(r.URL.Path, "/api/admin/tokens") {
 				record, err := s.handlers.db.GetOperatorToken(s.handlers.hashToken(token))
-				if err == nil && record.ID != "" && record.RevokedAt == nil && (record.ExpiresAt == nil || time.Now().Before(*record.ExpiresAt)) {
+				if err == nil && operatorTokenUsable(record, time.Now()) {
 					s.handlers.db.TouchOperatorToken(record.ID)
 					r.Header.Set("X-Admiral-Admin-User", record.Username)
 					next(w, withAuthPrincipal(r, record.Username))
