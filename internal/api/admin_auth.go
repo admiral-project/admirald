@@ -92,6 +92,9 @@ func scopeAllows(scope string, r *http.Request) bool {
 	if scope == "admin" {
 		return true
 	}
+	if scope != "read" && scope != "write" {
+		return false
+	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return true
 	}
