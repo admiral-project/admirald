@@ -294,6 +294,7 @@ type InstanceActionRequest struct {
 }
 
 type ProvisionResponse struct {
+	InstanceID  string       `json:"instance_id"`
 	OperationID string       `json:"operation_id"`
 	Status      string       `json:"status"`
 	Hostname    string       `json:"hostname,omitempty"`

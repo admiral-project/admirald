@@ -502,6 +502,7 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		}
 
 		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
+			InstanceID:  instanceID,
 			OperationID: operationID,
 			Status:      "queued",
 			Hostname:    hostname,
@@ -536,7 +537,7 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 	}
 
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 {
+	if len(parts) < 4 {
 		writeError(w, http.StatusBadRequest, "instance_id is required")
 		return
 	}
@@ -556,6 +557,30 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 	}
 	if inst == nil {
 		writeError(w, http.StatusNotFound, "Instance not found")
+		return
+	}
+	if len(parts) >= 5 && parts[4] == "operations" {
+		if len(parts) != 6 || parts[5] == "" {
+			writeError(w, http.StatusBadRequest, "operation_id is required")
+			return
+		}
+		if !requireCustomerOwnership(w, r, inst.CustomerID) {
+			return
+		}
+		op, err := h.db.GetOperation(parts[5])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Database error retrieving operation")
+			return
+		}
+		if op == nil || op.InstanceID != instanceID {
+			writeError(w, http.StatusNotFound, "Operation not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"id":          op.ID,
+			"instance_id": op.InstanceID,
+			"status":      op.Status,
+		})
 		return
 	}
 	if isSystemPrincipal(r) {
