@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
 
 func TestHandleCustomerAppActionRejectsOtherCustomer(t *testing.T) {
@@ -106,5 +108,99 @@ func TestHandleCustomerAppsRejectsOtherCustomerProvision(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for cross-customer provision, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCustomerBackupListAndReadAreInstanceScoped(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_backup_scope", "worker-scope", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ instance, customer string }{
+		{"inst_backup_owner", "customer_a"},
+		{"inst_backup_other", "customer_b"},
+	} {
+		if err := h.db.CreateCustomerApp(item.instance, item.customer, "testapp", "starter", "node_backup_scope", `{}`); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
+			ID: item.instance + "_record", InstanceID: item.instance, AppID: "testapp", TierID: "starter",
+			NodeID: "private-node-id", BackupType: "database", Service: "db", DatabaseType: "postgresql",
+			Status: "succeeded", StorageBackend: "s3", StorageKey: "private/bucket/key", SizeBytes: 42,
+			ChecksumSHA256: "abc123", TriggeredBy: "manual",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := &Server{adminToken: "admin-secret", harborToken: "harbor-secret", handlers: h}
+	handler := server.V1HarborAuthMiddleware(h.HandleCustomerAppByID)
+	request := func(path, customer string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer harbor-secret")
+		req.Header.Set("X-Admiral-Customer-ID", customer)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	list := request("/api/v1/customer-apps/inst_backup_owner/backups", "customer_a")
+	if list.Code != http.StatusOK {
+		t.Fatalf("owner backup list returned %d: %s", list.Code, list.Body.String())
+	}
+	var records []map[string]interface{}
+	if err := json.Unmarshal(list.Body.Bytes(), &records); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0]["id"] != "inst_backup_owner_record" {
+		t.Fatalf("unexpected customer backup list: %#v", records)
+	}
+	if _, ok := records[0]["node_id"]; ok {
+		t.Fatal("customer backup response exposed the node ID")
+	}
+	if _, ok := records[0]["storage_key"]; ok {
+		t.Fatal("customer backup response exposed the storage key")
+	}
+
+	if got := request("/api/v1/customer-apps/inst_backup_owner/backups", "customer_b").Code; got != http.StatusForbidden {
+		t.Fatalf("cross-customer backup list returned %d, want 403", got)
+	}
+	if got := request("/api/v1/customer-apps/inst_backup_owner/backups/inst_backup_other_record", "customer_a").Code; got != http.StatusNotFound {
+		t.Fatalf("cross-instance backup read returned %d, want 404", got)
+	}
+}
+
+func TestCustomerRestoreRejectsBackupOwnedByAnotherCustomer(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_restore_scope", "worker-scope", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ instance, customer string }{
+		{"inst_restore_owner", "customer_a"},
+		{"inst_restore_other", "customer_b"},
+	} {
+		if err := h.db.CreateCustomerApp(item.instance, item.customer, "testapp", "starter", "node_restore_scope", `{}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
+		ID: "bk_restore_other", InstanceID: "inst_restore_other", AppID: "testapp", TierID: "starter",
+		NodeID: "node_restore_scope", BackupType: "database", Service: "db", DatabaseType: "postgresql",
+		Status: "succeeded", StorageBackend: "s3", StorageKey: "customer-b/private-backup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{adminToken: "admin-secret", harborToken: "harbor-secret", handlers: h}
+	handler := server.V1HarborAuthMiddleware(h.HandleCustomerAppByID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/inst_restore_owner/backups/restore", bytes.NewBufferString(
+		`{"backup_id":"bk_restore_other","target_app_id":"inst_restore_owner","service":"db"}`,
+	))
+	req.Header.Set("Authorization", "Bearer harbor-secret")
+	req.Header.Set("X-Admiral-Customer-ID", "customer_a")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-customer restore returned %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 }

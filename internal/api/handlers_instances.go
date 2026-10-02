@@ -543,6 +543,13 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 	}
 	instanceID := parts[3]
 
+	// Customer-scoped backup operations are kept below the instance resource so
+	// the Harbor token can never list backups across unrelated instances.
+	if len(parts) >= 5 && parts[4] == "backups" {
+		h.HandleCustomerAppBackups(w, r, instanceID, parts[5:])
+		return
+	}
+
 	// /api/v1/customer-apps/{id}/credentials
 	if len(parts) >= 5 && parts[4] == "credentials" {
 		h.handleCredentials(w, r, instanceID)

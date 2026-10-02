@@ -50,6 +50,7 @@ Configuration can also be provided via `/etc/admirald.ini`.
     - `/api/v1/nodes` — Node registration and management
     - `/api/v1/apps` — Application definition management (harbor token)
     - `/api/v1/customer-apps` — Instance lifecycle management (harbor token)
+    - `/api/v1/customer-apps/{id}/backups` — Customer-owned backup listing and restore requests (harbor token)
     - `/api/v1/harbor_ping` — Harbor connectivity check (harbor token)
     - `/api/v1/fleet/*` — Worker node callbacks and health reporting
 - `/api/admin/*` — Administrative API (session auth)

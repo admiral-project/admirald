@@ -32,10 +32,6 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "Database error retrieving backup")
 		return
 	}
-	if bk == nil {
-		writeError(w, http.StatusNotFound, "Backup not found")
-		return
-	}
 	inst, err := h.db.GetCustomerApp(req.TargetAppID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Database error retrieving instance")
@@ -44,6 +40,22 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	if inst == nil {
 		writeError(w, http.StatusNotFound, "Target instance not found")
 		return
+	}
+	if bk == nil {
+		if !strings.EqualFold(strings.TrimSpace(req.Source.Type), "https") || strings.TrimSpace(req.Source.URI) == "" {
+			writeError(w, http.StatusNotFound, "Backup not found")
+			return
+		}
+		appDef, err := h.db.GetAppDefinition(inst.AppDefinitionName)
+		if err != nil || appDef == nil {
+			writeError(w, http.StatusInternalServerError, "Failed retrieving app definition")
+			return
+		}
+		bk, err = uploadedRestoreRecord(req, inst, appDef.RawYAML)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 	}
 	if err := admiral.ValidateRestoreSource(req.Source, bk); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
