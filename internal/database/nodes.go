@@ -52,6 +52,23 @@ type Node struct {
 
 var nodeColumns = "id, hostname, ip, COALESCE(wireguard_ip, ''), COALESCE(node_role, 'worker'), COALESCE(public_ip, ''), os, podman_version, COALESCE(fleet_version, ''), status, last_heartbeat, COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0), COALESCE(pods_active, 0), COALESCE(pods_paused, 0), COALESCE(pods_failed, 0), COALESCE(storage_state, ''), COALESCE(storage_message, ''), COALESCE(manual_disabled, FALSE), COALESCE(health_status, ''), COALESCE(health_reason_codes, ''), COALESCE(available_for_provisioning, TRUE), COALESCE(unavailable_reason_codes, ''), COALESCE(ram_total_bytes, 0), COALESCE(ram_used_bytes, 0), COALESCE(ram_commit_limit_bytes, 0), COALESCE(disk_commit_limit_bytes, 0), COALESCE(committed_ram_bytes, 0), COALESCE(committed_disk_bytes, 0), last_metrics_at, COALESCE(token_type, 'worker'), COALESCE(token_status, 'pending'), COALESCE(token_identifier, ''), COALESCE(token_hash, ''), token_expires_at, COALESCE(claim_id::text, ''), COALESCE(token_value_encrypted, '')"
 
+const nodeInventoryColumns = `
+	n.id, n.hostname, n.ip, COALESCE(n.wireguard_ip, ''), COALESCE(n.node_role, 'worker'),
+	COALESCE(n.public_ip, ''), n.os, n.podman_version, COALESCE(n.fleet_version, ''), n.status,
+	n.last_heartbeat, COALESCE(n.disk_total_bytes, 0), COALESCE(n.disk_used_bytes, 0),
+	COALESCE(n.pods_active, 0), COALESCE(n.pods_paused, 0), COALESCE(n.pods_failed, 0),
+	COALESCE(n.storage_state, ''), COALESCE(n.storage_message, ''), COALESCE(n.manual_disabled, FALSE),
+	COALESCE(n.health_status, ''), COALESCE(n.health_reason_codes, ''),
+	COALESCE(n.available_for_provisioning, TRUE), COALESCE(n.unavailable_reason_codes, ''),
+	COALESCE(n.ram_total_bytes, 0), COALESCE(n.ram_used_bytes, 0),
+	COALESCE(n.ram_commit_limit_bytes, 0), COALESCE(n.disk_commit_limit_bytes, 0),
+	COALESCE(n.committed_ram_bytes, 0), COALESCE(n.committed_disk_bytes, 0), n.last_metrics_at,
+	COALESCE(t.token_type, n.token_type, 'worker'), COALESCE(t.token_status, n.token_status, 'pending'),
+	COALESCE(t.token_identifier, n.token_identifier, ''), COALESCE(t.token_hash, n.token_hash, ''),
+	COALESCE(t.token_expires_at, n.token_expires_at), COALESCE(t.claim_id::text, n.claim_id::text, ''),
+	COALESCE(t.token_value_encrypted, n.token_value_encrypted, '')
+`
+
 func (d *DB) RegisterNode(id, hostname, ip, wireguardIP, nodeRole, publicIP, os, podmanV string) error {
 	query := `
 		INSERT INTO nodes (id, hostname, ip, wireguard_ip, node_role, public_ip, os, podman_version, status)
@@ -75,7 +92,15 @@ func (d *DB) RegisterNode(id, hostname, ip, wireguardIP, nodeRole, publicIP, os,
 }
 
 func (d *DB) GetNodes() ([]Node, error) {
-	query := "SELECT " + nodeColumns + " FROM nodes ORDER BY created_at ASC"
+	// Node token state was normalized into node_tokens. Prefer that record over
+	// the legacy token columns still present on nodes so authorization decisions
+	// observe token rotations and revocations.
+	query := "SELECT " + nodeInventoryColumns + `
+		FROM nodes n
+		LEFT JOIN node_tokens t
+			ON t.node_id = n.id
+			AND t.token_type = COALESCE(NULLIF(n.node_role, ''), 'worker')
+		ORDER BY n.created_at ASC`
 	rows, err := d.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("query nodes: %w", err)

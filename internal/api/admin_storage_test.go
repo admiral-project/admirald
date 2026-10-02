@@ -91,9 +91,11 @@ func TestStorageTestSelectsLiveWorkerOverPortal(t *testing.T) {
 	if err := h.db.RegisterNode("worker-storage-test", "worker", "10.0.0.11", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register worker node: %v", err)
 	}
-	if _, err := h.db.Exec(`UPDATE nodes SET status = 'active', last_heartbeat = CURRENT_TIMESTAMP,
-		token_type = 'worker', token_status = 'consumed' WHERE id = $1`, "worker-storage-test"); err != nil {
-		t.Fatalf("activate worker token and heartbeat: %v", err)
+	if _, err := h.db.Exec(`UPDATE nodes SET status = 'active', last_heartbeat = CURRENT_TIMESTAMP WHERE id = $1`, "worker-storage-test"); err != nil {
+		t.Fatalf("activate worker and heartbeat: %v", err)
+	}
+	if err := h.db.UpsertNodeToken("worker-storage-test", "worker-token", "hash", "worker", "active", "encrypted", nil, ""); err != nil {
+		t.Fatalf("store active worker token: %v", err)
 	}
 	publisher := &migrationTestPublisher{db: h.db}
 	h.publisher = publisher
