@@ -93,7 +93,7 @@ func (h *APIHandlers) HandleCustomerAppBackups(w http.ResponseWriter, r *http.Re
 
 	if len(suffix) == 0 {
 		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed for customer backup list")
 			return
 		}
 		records, err := h.db.GetBackupRecords(instanceID)
@@ -112,7 +112,7 @@ func (h *APIHandlers) HandleCustomerAppBackups(w http.ResponseWriter, r *http.Re
 
 	if len(suffix) == 1 && suffix[0] == "restore" {
 		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "restore requires POST")
 			return
 		}
 		var req admiral.RestoreBackupRequest
@@ -157,7 +157,11 @@ func (h *APIHandlers) HandleCustomerAppBackups(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if len(suffix) == 1 && suffix[0] != "" && r.Method == http.MethodGet {
+	if len(suffix) == 1 && suffix[0] != "" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed for customer backup")
+			return
+		}
 		record, err := h.db.GetBackupRecord(suffix[0])
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Database error retrieving backup")
@@ -170,5 +174,5 @@ func (h *APIHandlers) HandleCustomerAppBackups(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusOK, customerBackup(*record))
 		return
 	}
-	w.WriteHeader(http.StatusNotFound)
+	writeError(w, http.StatusNotFound, "customer backup endpoint not found")
 }

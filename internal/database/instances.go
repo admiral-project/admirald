@@ -5,10 +5,13 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+var ErrCustomerAppNotPaused = errors.New("customer app is no longer paused")
 
 type CustomerApp struct {
 	ID                  string     `json:"id"`
@@ -122,6 +125,44 @@ func (d *DB) UpdateCustomerAppStatus(id, commStatus, techStatus string) error {
 	_, err := d.Exec(query, commStatus, techStatus, id)
 	if err != nil {
 		return fmt.Errorf("update customer app status: %w", err)
+	}
+	return nil
+}
+
+// CreateRestoreOperationAndSetStatus records the restore operation and moves
+// the app into restoring state as one transaction. The status predicate also
+// prevents a restore from starting if the app resumed after validation.
+func (d *DB) CreateRestoreOperationAndSetStatus(operationID, instanceID, nodeID, adminUser string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin restore operation transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.Exec(`
+		UPDATE customer_apps
+		SET technical_status = 'restoring'
+		WHERE id = $1 AND technical_status IN ('paused', 'stopped')
+	`, instanceID)
+	if err != nil {
+		return fmt.Errorf("set customer app restoring status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check customer app restore status: %w", err)
+	}
+	if rows != 1 {
+		return ErrCustomerAppNotPaused
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO operations (id, instance_id, node_id, action, status, admin_user)
+		VALUES ($1, $2, $3, 'restore_backup', 'pending_dispatch', $4)
+	`, operationID, instanceIDArg(instanceID), nodeID, adminUser); err != nil {
+		return fmt.Errorf("create restore operation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit restore operation transaction: %w", err)
 	}
 	return nil
 }

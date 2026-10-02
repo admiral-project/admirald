@@ -372,6 +372,11 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 	if err != nil {
 		t.Fatalf("connect test db: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close test db: %v", err)
+		}
+	})
 	if err := database.RunMigrations(db.DB); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}

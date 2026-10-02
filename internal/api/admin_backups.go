@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -94,14 +95,10 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 			break
 		}
 	}
-
-	opID := generateID("op")
-	nodeID := ""
-	if inst.NodeID != nil {
-		nodeID = *inst.NodeID
+	if matchedTier.Name == "" {
+		writeError(w, http.StatusConflict, "Target application's tier is not available")
+		return
 	}
-	_ = h.db.CreateOperation(opID, inst.ID, nodeID, string(admiral.ActionRestoreBackup), "pending_dispatch", operatorFromRequest(r))
-	_ = h.db.UpdateCustomerAppStatus(inst.ID, "", "restoring")
 
 	allSecretValues, err := h.decryptedSecretMap(inst.ID)
 	if err != nil {
@@ -128,6 +125,25 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
+	}
+
+	var storageConfig *admiral.BackupStorageConfig
+	if srcType == "s3" {
+		storageConfig, err = h.db.GetActiveBackupStorageConfig()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed retrieving backup storage configuration")
+			return
+		}
+		if storageConfig == nil || storageConfig.Backend != "s3" {
+			writeError(w, http.StatusConflict, "Active S3 backup storage is not configured")
+			return
+		}
+	}
+
+	opID := generateID("op")
+	nodeID := ""
+	if inst.NodeID != nil {
+		nodeID = *inst.NodeID
 	}
 
 	task := &admiral.FleetTask{
@@ -157,26 +173,32 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	}
 
 	if srcType == "s3" {
-		storageCfg, _ := h.db.GetActiveBackupStorageConfig()
-		if storageCfg != nil && storageCfg.Backend == "s3" {
-			task.Storage = &admiral.StorageConfig{
-				Backend:        storageCfg.Backend,
-				Endpoint:       storageCfg.Endpoint,
-				Region:         storageCfg.Region,
-				Bucket:         storageCfg.Bucket,
-				Prefix:         storageCfg.Prefix,
-				ForcePathStyle: storageCfg.ForcePathStyle,
-				AccessKeyEnv:   storageCfg.AccessKeyEnv,
-				SecretKeyEnv:   storageCfg.SecretKeyEnv,
-			}
+		task.Storage = &admiral.StorageConfig{
+			Backend:         storageConfig.Backend,
+			Endpoint:        storageConfig.Endpoint,
+			Region:          storageConfig.Region,
+			Bucket:          storageConfig.Bucket,
+			Prefix:          storageConfig.Prefix,
+			ForcePathStyle:  storageConfig.ForcePathStyle,
+			AccessKeyEnv:    storageConfig.AccessKeyEnv,
+			SecretKeyEnv:    storageConfig.SecretKeyEnv,
+			SessionTokenEnv: storageConfig.SessionTokenEnv,
 		}
 	}
-	if srcType == "s3" && task.Storage == nil {
-		h.log.Error("Failed to load S3 storage config for restore", nil,
-			map[string]interface{}{"instance_id": inst.ID, "backup_id": bk.ID})
-	}
 
-	h.enqueueRawTask(task)
+	if err := h.db.CreateRestoreOperationAndSetStatus(opID, inst.ID, nodeID, operatorFromRequest(r)); err != nil {
+		if errors.Is(err, database.ErrCustomerAppNotPaused) {
+			writeError(w, http.StatusConflict, "Restore is only allowed when the app remains paused")
+			return
+		}
+		h.log.Error("Failed to create restore operation", err, map[string]interface{}{"instance_id": inst.ID})
+		writeError(w, http.StatusInternalServerError, "Failed to create restore operation")
+		return
+	}
+	if err := h.enqueueRawTaskWithErr(task); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to queue restore task")
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
 }

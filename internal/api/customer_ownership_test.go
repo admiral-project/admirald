@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
 
@@ -279,5 +281,88 @@ func TestCustomerRestoreRejectsBackupOwnedByAnotherCustomer(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-customer restore returned %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCustomerRestorePOSTDispatchesAndQueuesS3Restore(t *testing.T) {
+	h := newTestHandler(t, false)
+	rawYAML := `name: testapp
+services:
+  db:
+    image: postgres:16
+    backup:
+      type: database
+      engine: postgresql
+`
+	if err := h.db.SaveAppDefinition("testapp", "Test App", "Restore test app", rawYAML, []database.AppTier{{
+		AppName: "testapp", Name: "starter", CPU: 1, Memory: "512MiB", Storage: "1GiB",
+	}}, "improvement"); err != nil {
+		t.Fatalf("save app definition and tier: %v", err)
+	}
+	if err := h.db.RegisterNode("node_customer_restore", "worker-restore", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_customer_restore", "customer_restore", "testapp", "starter", "node_customer_restore", `{}`); err != nil {
+		t.Fatalf("create customer app: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_customer_restore", "", "paused"); err != nil {
+		t.Fatalf("pause customer app: %v", err)
+	}
+	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
+		ID: "bk_customer_restore", InstanceID: "inst_customer_restore", AppID: "testapp", TierID: "starter",
+		NodeID: "node_customer_restore", BackupType: "database", Service: "db", DatabaseType: "postgresql",
+		Status: "succeeded", StorageBackend: "s3", StorageKey: "admiral/backups/db.dump",
+	}); err != nil {
+		t.Fatalf("create backup record: %v", err)
+	}
+	if err := h.db.SaveBackupStorageConfig(&admiral.BackupStorageConfig{
+		ID: "global", Backend: "s3", Enabled: true, Endpoint: "https://s3.example.test", Bucket: "admiral",
+	}); err != nil {
+		t.Fatalf("save storage config: %v", err)
+	}
+	publisher := &migrationTestPublisher{db: h.db}
+	h.publisher = publisher
+
+	server := &Server{adminToken: "admin-secret", harborToken: "harbor-secret", handlers: h}
+	handler := server.V1HarborAuthMiddleware(h.HandleCustomerAppByID)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/inst_customer_restore/backups/restore", bytes.NewBufferString(
+		`{"backup_id":"bk_customer_restore","target_app_id":"inst_customer_restore","service":"db"}`,
+	))
+	req.Header.Set("Authorization", "Bearer harbor-secret")
+	req.Header.Set("X-Admiral-Customer-ID", "customer_restore")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("customer restore returned %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	var response admiral.RestoreBackupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode restore response: %v", err)
+	}
+	if response.OperationID == "" || response.Status != "queued" {
+		t.Fatalf("unexpected restore response: %+v", response)
+	}
+	if len(publisher.published) != 1 {
+		t.Fatalf("published %d restore tasks, want one", len(publisher.published))
+	}
+	task := publisher.published[0]
+	if task.Action != admiral.ActionRestoreBackup || task.NodeID != "node_customer_restore" || task.Storage == nil || task.Storage.Backend != "s3" {
+		t.Fatalf("unexpected restore task: %+v", task)
+	}
+	instance, err := h.db.GetCustomerApp("inst_customer_restore")
+	if err != nil {
+		t.Fatalf("load restored app: %v", err)
+	}
+	if instance.TechnicalStatus != "restoring" {
+		t.Fatalf("instance status is %q, want restoring", instance.TechnicalStatus)
+	}
+
+	badMethod := httptest.NewRequest(http.MethodPut, "/api/v1/customer-apps/inst_customer_restore/backups/restore", nil)
+	badMethod.Header.Set("Authorization", "Bearer harbor-secret")
+	badMethod.Header.Set("X-Admiral-Customer-ID", "customer_restore")
+	badMethodRec := httptest.NewRecorder()
+	handler.ServeHTTP(badMethodRec, badMethod)
+	if badMethodRec.Code != http.StatusMethodNotAllowed || !strings.Contains(badMethodRec.Body.String(), "restore requires POST") {
+		t.Fatalf("unsupported restore method returned %d: %s", badMethodRec.Code, badMethodRec.Body.String())
 	}
 }

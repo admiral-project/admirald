@@ -583,11 +583,6 @@ func requireCustomerOwnership(w http.ResponseWriter, r *http.Request, customerID
 }
 
 func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 4 {
 		writeError(w, http.StatusBadRequest, "instance_id is required")
@@ -599,6 +594,11 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 	// the Harbor token can never list backups across unrelated instances.
 	if len(parts) >= 5 && parts[4] == "backups" {
 		h.HandleCustomerAppBackups(w, r, instanceID, parts[5:])
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
