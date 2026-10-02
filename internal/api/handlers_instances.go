@@ -326,7 +326,15 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "Failed to fetch customer applications")
 			return
 		}
-		writeJSON(w, http.StatusOK, apps)
+		if isSystemPrincipal(r) {
+			writeJSON(w, http.StatusOK, apps)
+			return
+		}
+		response := make([]harborCustomerAppResponse, 0, len(apps))
+		for i := range apps {
+			response = append(response, newHarborCustomerAppResponse(&apps[i]))
+		}
+		writeJSON(w, http.StatusOK, response)
 
 	case http.MethodPost:
 		var req admiral.ProvisionRequest
@@ -514,6 +522,50 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// harborCustomerAppResponse contains application and customer-facing health
+// information. Infrastructure placement, runtime inspection, and internal
+// scheduling snapshots remain available only to system principals.
+type harborCustomerAppResponse struct {
+	ID                  string     `json:"id"`
+	AppDefinitionName   string     `json:"app_definition_name"`
+	TierName            string     `json:"tier_name"`
+	CommercialStatus    string     `json:"commercial_status"`
+	TechnicalStatus     string     `json:"technical_status"`
+	CreatedAt           time.Time  `json:"created_at"`
+	HealthStatus        string     `json:"health_status"`
+	HealthMessage       string     `json:"health_message,omitempty"`
+	LastHealthChecked   *time.Time `json:"last_health_checked_at,omitempty"`
+	StorageLimitBytes   int64      `json:"storage_limit_bytes"`
+	StorageUsedBytes    int64      `json:"storage_used_bytes"`
+	StorageUsedPct      float64    `json:"storage_used_percent"`
+	StorageState        string     `json:"storage_state"`
+	StorageMessage      string     `json:"storage_message,omitempty"`
+	StorageCheckedAt    *time.Time `json:"storage_checked_at,omitempty"`
+	StorageExceeded     bool       `json:"storage_exceeded"`
+	GracePeriodStartsAt *time.Time `json:"grace_period_starts_at,omitempty"`
+	GracePeriodEndsAt   *time.Time `json:"grace_period_ends_at,omitempty"`
+	SetupCompleted      bool       `json:"setup_completed"`
+	SetupTimeoutSeconds int        `json:"setup_timeout_seconds,omitempty"`
+	NeedRestarting      bool       `json:"need_restarting"`
+	UpdateType          string     `json:"update_type"`
+	UpdateStartedAt     *time.Time `json:"update_started_at,omitempty"`
+}
+
+func newHarborCustomerAppResponse(app *database.CustomerApp) harborCustomerAppResponse {
+	return harborCustomerAppResponse{
+		ID: app.ID, AppDefinitionName: app.AppDefinitionName, TierName: app.TierName,
+		CommercialStatus: app.CommercialStatus, TechnicalStatus: app.TechnicalStatus,
+		CreatedAt: app.CreatedAt, HealthStatus: app.HealthStatus, HealthMessage: app.HealthMessage,
+		LastHealthChecked: app.LastHealthChecked, StorageLimitBytes: app.StorageLimitBytes,
+		StorageUsedBytes: app.StorageUsedBytes, StorageUsedPct: app.StorageUsedPct,
+		StorageState: app.StorageState, StorageMessage: app.StorageMessage,
+		StorageCheckedAt: app.StorageCheckedAt, StorageExceeded: app.StorageExceeded,
+		GracePeriodStartsAt: app.GracePeriodStartsAt, GracePeriodEndsAt: app.GracePeriodEndsAt,
+		SetupCompleted: app.SetupCompleted, SetupTimeoutSeconds: app.SetupTimeoutSeconds,
+		NeedRestarting: app.NeedRestarting, UpdateType: app.UpdateType, UpdateStartedAt: app.UpdateStartedAt,
+	}
+}
+
 func requireCustomerOwnership(w http.ResponseWriter, r *http.Request, customerID string) bool {
 	if isSystemPrincipal(r) {
 		return true
@@ -610,7 +662,7 @@ func (h *APIHandlers) HandleCustomerAppByID(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	writeJSON(w, http.StatusOK, inst)
+	writeJSON(w, http.StatusOK, newHarborCustomerAppResponse(inst))
 }
 
 func (h *APIHandlers) handleCredentials(w http.ResponseWriter, r *http.Request, instanceID string) {

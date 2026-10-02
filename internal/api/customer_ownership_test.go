@@ -111,6 +111,83 @@ func TestHandleCustomerAppsRejectsOtherCustomerProvision(t *testing.T) {
 	}
 }
 
+func TestHarborCustomerAppResponsesHideInfrastructureFields(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_customer_view", "worker-private", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.CreateCustomerApp("inst_customer_view", "customer_view", "testapp", "starter", "node_customer_view", `{"private":"tier snapshot"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_customer_view", "", "running"); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{adminToken: "admin-secret", harborToken: "harbor-secret", handlers: h}
+	detailHandler := server.V1HarborAuthMiddleware(h.HandleCustomerAppByID)
+	listHandler := server.V1HarborAuthMiddleware(h.HandleCustomerApps)
+	request := func(handler http.HandlerFunc, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer harbor-secret")
+		req.Header.Set("X-Admiral-Customer-ID", "customer_view")
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		return rec
+	}
+	assertCustomerSafe := func(body []byte) {
+		t.Helper()
+		var response map[string]interface{}
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatal(err)
+		}
+		for _, field := range []string{
+			"node_id", "hostname", "logical_instance_id", "inspect_data", "tier_snapshot_json",
+			"customer_id", "emergency_limit_bytes",
+		} {
+			if _, exists := response[field]; exists {
+				t.Errorf("Harbor response exposed internal field %q: %#v", field, response)
+			}
+		}
+		if response["id"] != "inst_customer_view" || response["technical_status"] != "running" {
+			t.Errorf("Harbor response is missing customer-visible state: %#v", response)
+		}
+	}
+
+	detail := request(detailHandler, "/api/v1/customer-apps/inst_customer_view")
+	if detail.Code != http.StatusOK {
+		t.Fatalf("customer detail returned %d: %s", detail.Code, detail.Body.String())
+	}
+	assertCustomerSafe(detail.Body.Bytes())
+
+	list := request(listHandler, "/api/v1/customer-apps?customer_id=customer_view")
+	if list.Code != http.StatusOK {
+		t.Fatalf("customer list returned %d: %s", list.Code, list.Body.String())
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(list.Body.Bytes(), &records); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("customer list returned %d apps, want 1", len(records))
+	}
+	assertCustomerSafe(records[0])
+
+	adminRequest := httptest.NewRequest(http.MethodGet, "/api/v1/customer-apps/inst_customer_view", nil)
+	adminRequest.Header.Set("Authorization", "Bearer admin-secret")
+	adminResponse := httptest.NewRecorder()
+	detailHandler(adminResponse, adminRequest)
+	if adminResponse.Code != http.StatusOK {
+		t.Fatalf("system detail returned %d: %s", adminResponse.Code, adminResponse.Body.String())
+	}
+	var systemRecord map[string]interface{}
+	if err := json.Unmarshal(adminResponse.Body.Bytes(), &systemRecord); err != nil {
+		t.Fatal(err)
+	}
+	if systemRecord["node_id"] == nil || systemRecord["tier_snapshot_json"] == nil {
+		t.Fatalf("system detail lost control-plane fields: %#v", systemRecord)
+	}
+}
+
 func TestCustomerBackupListAndReadAreInstanceScoped(t *testing.T) {
 	h := newTestHandler(t, false)
 	if err := h.db.RegisterNode("node_backup_scope", "worker-scope", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
