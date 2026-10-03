@@ -54,11 +54,28 @@ func customerBackupPolicy(inst *database.CustomerApp) (*admiral.BackupPolicy, er
 	if inst == nil || strings.TrimSpace(inst.TierSnapshotJSON) == "" {
 		return nil, nil
 	}
-	var tier admiral.YAMLTier
+	// Customer applications persist the selected database.AppTier, whose
+	// backup policy is stored as a JSON string in backup_policy_json. Older
+	// snapshots and focused callers may still provide the original YAML tier
+	// shape with a nested backups object, so accept both representations.
+	var tier struct {
+		Backups          *admiral.BackupPolicy `json:"backups"`
+		BackupPolicyJSON string                `json:"backup_policy_json"`
+	}
 	if err := json.Unmarshal([]byte(inst.TierSnapshotJSON), &tier); err != nil {
 		return nil, fmt.Errorf("decode customer tier backup policy: %w", err)
 	}
-	return tier.Backups, nil
+	if tier.Backups != nil {
+		return tier.Backups, nil
+	}
+	if strings.TrimSpace(tier.BackupPolicyJSON) == "" {
+		return nil, nil
+	}
+	var policy admiral.BackupPolicy
+	if err := json.Unmarshal([]byte(tier.BackupPolicyJSON), &policy); err != nil {
+		return nil, fmt.Errorf("decode persisted customer backup policy: %w", err)
+	}
+	return &policy, nil
 }
 
 func uploadedRestoreRecord(req admiral.RestoreBackupRequest, inst *database.CustomerApp, rawYAML string) (*admiral.BackupRecord, error) {

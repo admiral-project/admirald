@@ -302,7 +302,7 @@ services:
 	if err := h.db.RegisterNode("node_customer_restore", "worker-restore", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
-	if err := h.db.CreateCustomerApp("inst_customer_restore", "customer_restore", "testapp", "starter", "node_customer_restore", `{"backups":{"manual_backups":true,"backup_database":true,"restore_allowed":true}}`); err != nil {
+	if err := h.db.CreateCustomerApp("inst_customer_restore", "customer_restore", "testapp", "starter", "node_customer_restore", `{"app_name":"testapp","name":"starter","cpu":1,"memory":"512MiB","storage":"1GiB","backup_policy_json":"{\"manual_backups\":true,\"backup_database\":true,\"restore_allowed\":true}"}`); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 	if err := h.db.UpdateCustomerAppStatus("inst_customer_restore", "", "paused"); err != nil {
@@ -372,7 +372,7 @@ func TestCustomerBackupPolicyBlocksDisabledRestoreAndManualBackup(t *testing.T) 
 	if err := h.db.RegisterNode("node_backup_policy", "worker-policy", "10.0.0.20", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
-	if err := h.db.CreateCustomerApp("inst_backup_policy", "customer_policy", "testapp", "starter", "node_backup_policy", `{"backups":{"manual_backups":false,"backup_database":false,"backup_volumes":false,"restore_allowed":false}}`); err != nil {
+	if err := h.db.CreateCustomerApp("inst_backup_policy", "customer_policy", "testapp", "starter", "node_backup_policy", `{"app_name":"testapp","name":"starter","cpu":1,"memory":"512MiB","storage":"1GiB","backup_policy_json":"{\"manual_backups\":false,\"backup_database\":false,\"backup_volumes\":false,\"restore_allowed\":false}"}`); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 	if err := h.db.UpdateCustomerAppStatus("inst_backup_policy", "", "paused"); err != nil {
