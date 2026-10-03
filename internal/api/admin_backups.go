@@ -122,7 +122,7 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	if srcURI == "" {
 		srcURI = bk.StorageKey
 	}
-	trustedSourceIP, err := trustedHarborRestoreSourceIP(h, r, srcType, srcURI)
+	trustedSource, err := trustedHarborRestoreSource(h, r, srcType, srcURI, h.server != nil && h.server.singleNodeMode())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -165,15 +165,18 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		SharedVolumes: buildSharedVolumeInfos(payload),
 		Backup:        buildTaskBackupInfo(target),
 		Restore: &admiral.RestoreInfo{
-			BackupID:        bk.ID,
-			StorageBackend:  srcType,
-			StorageKey:      srcURI,
-			BackupType:      bk.BackupType,
-			DatabaseType:    bk.DatabaseType,
-			Service:         target.ServiceName,
-			ChecksumSHA256:  bk.ChecksumSHA256,
-			VerifyChecksum:  req.VerifyChecksum,
-			TrustedSourceIP: trustedSourceIP,
+			BackupID:                bk.ID,
+			StorageBackend:          srcType,
+			StorageKey:              srcURI,
+			BackupType:              bk.BackupType,
+			DatabaseType:            bk.DatabaseType,
+			Service:                 target.ServiceName,
+			ChecksumSHA256:          bk.ChecksumSHA256,
+			VerifyChecksum:          req.VerifyChecksum,
+			TrustedSourceIP:         trustedSource.legacyIP,
+			TrustedSourceOrigin:     trustedSource.origin,
+			TrustedSourcePathPrefix: trustedSource.pathPrefix,
+			TrustedSourceIPs:        trustedSource.ips,
 		},
 	}
 	if task.NodeID == "" && inst.NodeID != nil {
@@ -211,29 +214,71 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
 }
 
-func trustedHarborRestoreSourceIP(h *APIHandlers, r *http.Request, sourceType, sourceURI string) (string, error) {
+type trustedHarborRestoreCapability struct {
+	legacyIP   string
+	origin     string
+	pathPrefix string
+	ips        []string
+}
+
+const harborUploadedBackupPathPrefix = "/api/v1/backups/uploads/"
+
+func validHarborUploadedBackupPath(path string) bool {
+	rest := strings.TrimPrefix(path, harborUploadedBackupPathPrefix)
+	parts := strings.Split(rest, "/")
+	return strings.HasPrefix(path, harborUploadedBackupPathPrefix) && len(parts) == 2 && strings.HasPrefix(parts[0], "upbk_") && parts[1] == "download"
+}
+
+func trustedHarborRestoreSource(h *APIHandlers, r *http.Request, sourceType, sourceURI string, singleNode bool) (trustedHarborRestoreCapability, error) {
 	if !isHarborServicePrincipal(r) || !strings.EqualFold(strings.TrimSpace(sourceType), "https") {
-		return "", nil
+		return trustedHarborRestoreCapability{}, nil
 	}
 	parsed, err := url.Parse(strings.TrimSpace(sourceURI))
-	if err != nil || parsed.Scheme != "https" {
-		return "", nil
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil || parsed.Fragment != "" {
+		return trustedHarborRestoreCapability{}, nil
 	}
-	hostIP := net.ParseIP(parsed.Hostname())
-	if hostIP == nil || !hostIP.IsPrivate() {
-		return "", nil
+	if parsed.Port() != "5001" || !validHarborUploadedBackupPath(parsed.Path) {
+		return trustedHarborRestoreCapability{}, fmt.Errorf("Harbor restore source must use the uploaded-backup HTTPS endpoint")
+	}
+	query := parsed.Query()
+	if query.Get("customer_id") == "" || query.Get("expires") == "" || query.Get("signature") == "" {
+		return trustedHarborRestoreCapability{}, fmt.Errorf("Harbor restore source is missing its signed download capability")
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	origin := "https://" + strings.ToLower(parsed.Host)
+	if singleNode && (host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+		ips, err := net.DefaultResolver.LookupNetIP(r.Context(), "ip", host)
+		if err != nil {
+			return trustedHarborRestoreCapability{}, fmt.Errorf("resolve local Harbor restore origin: %w", err)
+		}
+		trustedIPs := make([]string, 0, len(ips))
+		for _, addr := range ips {
+			ip := net.IP(addr.AsSlice())
+			if !ip.IsLoopback() {
+				return trustedHarborRestoreCapability{}, fmt.Errorf("local Harbor restore origin resolved outside loopback")
+			}
+			trustedIPs = append(trustedIPs, ip.String())
+		}
+		if len(trustedIPs) == 0 {
+			return trustedHarborRestoreCapability{}, fmt.Errorf("local Harbor restore origin has no addresses")
+		}
+		return trustedHarborRestoreCapability{origin: origin, pathPrefix: harborUploadedBackupPathPrefix, ips: trustedIPs}, nil
+	}
+	hostIP := net.ParseIP(host)
+	if hostIP == nil || !hostIP.IsPrivate() || hostIP.IsLoopback() || hostIP.IsLinkLocalUnicast() {
+		return trustedHarborRestoreCapability{}, fmt.Errorf("private restore source is not a registered Harbor portal")
 	}
 	portals, err := h.db.GetPortalNodes()
 	if err != nil {
-		return "", fmt.Errorf("validate Harbor restore origin: %w", err)
+		return trustedHarborRestoreCapability{}, fmt.Errorf("validate Harbor restore origin: %w", err)
 	}
 	for _, portal := range portals {
 		portalIP := net.ParseIP(strings.TrimSpace(portal.WireguardIP))
 		if portalIP != nil && hostIP.Equal(portalIP) {
-			return portalIP.String(), nil
+			return trustedHarborRestoreCapability{legacyIP: portalIP.String(), origin: origin, pathPrefix: harborUploadedBackupPathPrefix, ips: []string{portalIP.String()}}, nil
 		}
 	}
-	return "", fmt.Errorf("private restore source is not a registered Harbor portal")
+	return trustedHarborRestoreCapability{}, fmt.Errorf("private restore source is not a registered Harbor portal")
 }
 
 func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {

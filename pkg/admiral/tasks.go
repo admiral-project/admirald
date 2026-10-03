@@ -129,15 +129,18 @@ type BackupInfo struct {
 }
 
 type RestoreInfo struct {
-	BackupID        string `json:"backup_id"`
-	StorageBackend  string `json:"storage_backend"`
-	StorageKey      string `json:"storage_key"`
-	BackupType      string `json:"backup_type"`
-	DatabaseType    string `json:"database_type"`
-	Service         string `json:"service"`
-	ChecksumSHA256  string `json:"checksum_sha256,omitempty"`
-	VerifyChecksum  bool   `json:"verify_checksum,omitempty"`
-	TrustedSourceIP string `json:"trusted_source_ip,omitempty"`
+	BackupID                string   `json:"backup_id"`
+	StorageBackend          string   `json:"storage_backend"`
+	StorageKey              string   `json:"storage_key"`
+	BackupType              string   `json:"backup_type"`
+	DatabaseType            string   `json:"database_type"`
+	Service                 string   `json:"service"`
+	ChecksumSHA256          string   `json:"checksum_sha256,omitempty"`
+	VerifyChecksum          bool     `json:"verify_checksum,omitempty"`
+	TrustedSourceIP         string   `json:"trusted_source_ip,omitempty"`
+	TrustedSourceOrigin     string   `json:"trusted_source_origin,omitempty"`
+	TrustedSourcePathPrefix string   `json:"trusted_source_path_prefix,omitempty"`
+	TrustedSourceIPs        []string `json:"trusted_source_ips,omitempty"`
 }
 
 type TaskResult struct {
