@@ -99,6 +99,16 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		nextTechStatus = "stopped"
 	case "backup":
 		nextTechStatus = "backup_running"
+		policy, err := customerBackupPolicy(inst)
+		if err != nil {
+			h.log.Error("Read customer backup policy failed", err, map[string]interface{}{"instance_id": req.InstanceID})
+			writeError(w, http.StatusInternalServerError, "Failed to validate backup policy")
+			return
+		}
+		if policy == nil || !policy.ManualBackups {
+			writeError(w, http.StatusForbidden, "Manual backups are disabled for this tier")
+			return
+		}
 		payload := parseAppPayload(appDef.RawYAML)
 		if payload == nil {
 			writeError(w, http.StatusInternalServerError, "Stored application definition is invalid")
@@ -110,8 +120,16 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 			return
 		}
 		if target.Backup.Type == "volume" {
+			if !policy.BackupVolumes {
+				writeError(w, http.StatusForbidden, "Manual volume backups are disabled for this tier")
+				return
+			}
 			action = admiral.ActionBackupVolumes
 		} else {
+			if !policy.BackupDatabase {
+				writeError(w, http.StatusForbidden, "Manual database backups are disabled for this tier")
+				return
+			}
 			action = admiral.ActionBackupDatabase
 		}
 	case "deprovision":
@@ -526,32 +544,38 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 // information. Infrastructure placement, runtime inspection, and internal
 // scheduling snapshots remain available only to system principals.
 type harborCustomerAppResponse struct {
-	ID                  string     `json:"id"`
-	AppDefinitionName   string     `json:"app_definition_name"`
-	TierName            string     `json:"tier_name"`
-	CommercialStatus    string     `json:"commercial_status"`
-	TechnicalStatus     string     `json:"technical_status"`
-	CreatedAt           time.Time  `json:"created_at"`
-	HealthStatus        string     `json:"health_status"`
-	HealthMessage       string     `json:"health_message,omitempty"`
-	LastHealthChecked   *time.Time `json:"last_health_checked_at,omitempty"`
-	StorageLimitBytes   int64      `json:"storage_limit_bytes"`
-	StorageUsedBytes    int64      `json:"storage_used_bytes"`
-	StorageUsedPct      float64    `json:"storage_used_percent"`
-	StorageState        string     `json:"storage_state"`
-	StorageMessage      string     `json:"storage_message,omitempty"`
-	StorageCheckedAt    *time.Time `json:"storage_checked_at,omitempty"`
-	StorageExceeded     bool       `json:"storage_exceeded"`
-	GracePeriodStartsAt *time.Time `json:"grace_period_starts_at,omitempty"`
-	GracePeriodEndsAt   *time.Time `json:"grace_period_ends_at,omitempty"`
-	SetupCompleted      bool       `json:"setup_completed"`
-	SetupTimeoutSeconds int        `json:"setup_timeout_seconds,omitempty"`
-	NeedRestarting      bool       `json:"need_restarting"`
-	UpdateType          string     `json:"update_type"`
-	UpdateStartedAt     *time.Time `json:"update_started_at,omitempty"`
+	ID                    string     `json:"id"`
+	AppDefinitionName     string     `json:"app_definition_name"`
+	TierName              string     `json:"tier_name"`
+	CommercialStatus      string     `json:"commercial_status"`
+	TechnicalStatus       string     `json:"technical_status"`
+	CreatedAt             time.Time  `json:"created_at"`
+	HealthStatus          string     `json:"health_status"`
+	HealthMessage         string     `json:"health_message,omitempty"`
+	LastHealthChecked     *time.Time `json:"last_health_checked_at,omitempty"`
+	StorageLimitBytes     int64      `json:"storage_limit_bytes"`
+	StorageUsedBytes      int64      `json:"storage_used_bytes"`
+	StorageUsedPct        float64    `json:"storage_used_percent"`
+	StorageState          string     `json:"storage_state"`
+	StorageMessage        string     `json:"storage_message,omitempty"`
+	StorageCheckedAt      *time.Time `json:"storage_checked_at,omitempty"`
+	StorageExceeded       bool       `json:"storage_exceeded"`
+	GracePeriodStartsAt   *time.Time `json:"grace_period_starts_at,omitempty"`
+	GracePeriodEndsAt     *time.Time `json:"grace_period_ends_at,omitempty"`
+	SetupCompleted        bool       `json:"setup_completed"`
+	SetupTimeoutSeconds   int        `json:"setup_timeout_seconds,omitempty"`
+	NeedRestarting        bool       `json:"need_restarting"`
+	UpdateType            string     `json:"update_type"`
+	UpdateStartedAt       *time.Time `json:"update_started_at,omitempty"`
+	ManualBackupsAllowed  bool       `json:"manual_backups_allowed"`
+	BackupDatabaseAllowed bool       `json:"backup_database_allowed"`
+	BackupVolumesAllowed  bool       `json:"backup_volumes_allowed"`
+	RestoreAllowed        bool       `json:"restore_allowed"`
 }
 
 func newHarborCustomerAppResponse(app *database.CustomerApp) harborCustomerAppResponse {
+	policy, _ := customerBackupPolicy(app)
+	manualBackups := policy != nil && policy.ManualBackups
 	return harborCustomerAppResponse{
 		ID: app.ID, AppDefinitionName: app.AppDefinitionName, TierName: app.TierName,
 		CommercialStatus: app.CommercialStatus, TechnicalStatus: app.TechnicalStatus,
@@ -563,6 +587,10 @@ func newHarborCustomerAppResponse(app *database.CustomerApp) harborCustomerAppRe
 		GracePeriodStartsAt: app.GracePeriodStartsAt, GracePeriodEndsAt: app.GracePeriodEndsAt,
 		SetupCompleted: app.SetupCompleted, SetupTimeoutSeconds: app.SetupTimeoutSeconds,
 		NeedRestarting: app.NeedRestarting, UpdateType: app.UpdateType, UpdateStartedAt: app.UpdateStartedAt,
+		ManualBackupsAllowed:  manualBackups,
+		BackupDatabaseAllowed: manualBackups && policy.BackupDatabase,
+		BackupVolumesAllowed:  manualBackups && policy.BackupVolumes,
+		RestoreAllowed:        policy != nil && policy.RestoreAllowed,
 	}
 }
 

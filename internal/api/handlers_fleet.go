@@ -566,7 +566,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 				}
 			}
 		case string(admiral.ActionRestoreBackup):
-			nextTechStatus = "running"
+			nextTechStatus = "paused"
 		case string(admiral.ActionInspectApp):
 			nextTechStatus = ""
 			if res.Metadata != "" {
@@ -584,6 +584,10 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			// Backup failure does not make the instance failed — restore running status.
 			nextTechStatus = "running"
 			handleBackupCallback(h, op, res, false)
+		} else if op.Action == string(admiral.ActionRestoreBackup) {
+			// Restore is accepted only from a paused/stopped state and Fleet
+			// leaves the service paused even when the restore itself fails.
+			nextTechStatus = "paused"
 		} else {
 			nextTechStatus = "failed"
 		}

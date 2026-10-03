@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
@@ -120,6 +122,11 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	if srcURI == "" {
 		srcURI = bk.StorageKey
 	}
+	trustedSourceIP, err := trustedHarborRestoreSourceIP(h, r, srcType, srcURI)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	target, err := resolveRestoreTarget(payload, bk.BackupType, req.Service)
 	if err != nil {
@@ -158,14 +165,15 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 		SharedVolumes: buildSharedVolumeInfos(payload),
 		Backup:        buildTaskBackupInfo(target),
 		Restore: &admiral.RestoreInfo{
-			BackupID:       bk.ID,
-			StorageBackend: srcType,
-			StorageKey:     srcURI,
-			BackupType:     bk.BackupType,
-			DatabaseType:   bk.DatabaseType,
-			Service:        target.ServiceName,
-			ChecksumSHA256: bk.ChecksumSHA256,
-			VerifyChecksum: req.VerifyChecksum,
+			BackupID:        bk.ID,
+			StorageBackend:  srcType,
+			StorageKey:      srcURI,
+			BackupType:      bk.BackupType,
+			DatabaseType:    bk.DatabaseType,
+			Service:         target.ServiceName,
+			ChecksumSHA256:  bk.ChecksumSHA256,
+			VerifyChecksum:  req.VerifyChecksum,
+			TrustedSourceIP: trustedSourceIP,
 		},
 	}
 	if task.NodeID == "" && inst.NodeID != nil {
@@ -201,6 +209,31 @@ func (h *APIHandlers) HandleAdminRestoreBackup(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusAccepted, admiral.RestoreBackupResponse{OperationID: opID, Status: "queued"})
+}
+
+func trustedHarborRestoreSourceIP(h *APIHandlers, r *http.Request, sourceType, sourceURI string) (string, error) {
+	if !isHarborServicePrincipal(r) || !strings.EqualFold(strings.TrimSpace(sourceType), "https") {
+		return "", nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(sourceURI))
+	if err != nil || parsed.Scheme != "https" {
+		return "", nil
+	}
+	hostIP := net.ParseIP(parsed.Hostname())
+	if hostIP == nil || !hostIP.IsPrivate() {
+		return "", nil
+	}
+	portals, err := h.db.GetPortalNodes()
+	if err != nil {
+		return "", fmt.Errorf("validate Harbor restore origin: %w", err)
+	}
+	for _, portal := range portals {
+		portalIP := net.ParseIP(strings.TrimSpace(portal.WireguardIP))
+		if portalIP != nil && hostIP.Equal(portalIP) {
+			return portalIP.String(), nil
+		}
+	}
+	return "", fmt.Errorf("private restore source is not a registered Harbor portal")
 }
 
 func (h *APIHandlers) HandleAdminPrune(w http.ResponseWriter, r *http.Request) {

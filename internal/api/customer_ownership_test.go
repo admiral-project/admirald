@@ -302,7 +302,7 @@ services:
 	if err := h.db.RegisterNode("node_customer_restore", "worker-restore", "10.0.0.10", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
-	if err := h.db.CreateCustomerApp("inst_customer_restore", "customer_restore", "testapp", "starter", "node_customer_restore", `{}`); err != nil {
+	if err := h.db.CreateCustomerApp("inst_customer_restore", "customer_restore", "testapp", "starter", "node_customer_restore", `{"backups":{"manual_backups":true,"backup_database":true,"restore_allowed":true}}`); err != nil {
 		t.Fatalf("create customer app: %v", err)
 	}
 	if err := h.db.UpdateCustomerAppStatus("inst_customer_restore", "", "paused"); err != nil {
@@ -364,5 +364,41 @@ services:
 	handler.ServeHTTP(badMethodRec, badMethod)
 	if badMethodRec.Code != http.StatusMethodNotAllowed || !strings.Contains(badMethodRec.Body.String(), "restore requires POST") {
 		t.Fatalf("unsupported restore method returned %d: %s", badMethodRec.Code, badMethodRec.Body.String())
+	}
+}
+
+func TestCustomerBackupPolicyBlocksDisabledRestoreAndManualBackup(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_backup_policy", "worker-policy", "10.0.0.20", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_backup_policy", "customer_policy", "testapp", "starter", "node_backup_policy", `{"backups":{"manual_backups":false,"backup_database":false,"backup_volumes":false,"restore_allowed":false}}`); err != nil {
+		t.Fatalf("create customer app: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_backup_policy", "", "paused"); err != nil {
+		t.Fatalf("pause customer app: %v", err)
+	}
+
+	restoreReq := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/inst_backup_policy/backups/restore", bytes.NewBufferString(
+		`{"backup_id":"uploaded_policy_backup","service":"db","source":{"type":"https","uri":"https://backup.example.test/file.dump"}}`,
+	))
+	restoreReq.Header.Set("X-Admiral-Customer-ID", "customer_policy")
+	restoreRec := httptest.NewRecorder()
+	h.HandleCustomerAppBackups(restoreRec, restoreReq, "inst_backup_policy", []string{"restore"})
+	if restoreRec.Code != http.StatusForbidden || !strings.Contains(restoreRec.Body.String(), "Restore is disabled") {
+		t.Fatalf("disabled restore returned %d: %s", restoreRec.Code, restoreRec.Body.String())
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_backup_policy", "", "running"); err != nil {
+		t.Fatalf("resume customer app: %v", err)
+	}
+
+	backupReq := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/action", bytes.NewBufferString(
+		`{"instance_id":"inst_backup_policy","action":"backup","service":"db"}`,
+	))
+	backupReq.Header.Set("X-Admiral-Customer-ID", "customer_policy")
+	backupRec := httptest.NewRecorder()
+	h.HandleCustomerAppAction(backupRec, backupReq)
+	if backupRec.Code != http.StatusForbidden || !strings.Contains(backupRec.Body.String(), "Manual backups are disabled") {
+		t.Fatalf("disabled manual backup returned %d: %s", backupRec.Code, backupRec.Body.String())
 	}
 }

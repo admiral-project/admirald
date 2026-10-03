@@ -32,6 +32,11 @@ func isSystemPrincipal(r *http.Request) bool {
 	return principal == systemAuthPrincipal
 }
 
+func isHarborServicePrincipal(r *http.Request) bool {
+	principal, _ := r.Context().Value(authPrincipalContextKey{}).(string)
+	return principal == harborTokenAuthPrincipal
+}
+
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")

@@ -50,6 +50,17 @@ func customerBackup(rec admiral.BackupRecord) customerBackupRecord {
 	}
 }
 
+func customerBackupPolicy(inst *database.CustomerApp) (*admiral.BackupPolicy, error) {
+	if inst == nil || strings.TrimSpace(inst.TierSnapshotJSON) == "" {
+		return nil, nil
+	}
+	var tier admiral.YAMLTier
+	if err := json.Unmarshal([]byte(inst.TierSnapshotJSON), &tier); err != nil {
+		return nil, fmt.Errorf("decode customer tier backup policy: %w", err)
+	}
+	return tier.Backups, nil
+}
+
 func uploadedRestoreRecord(req admiral.RestoreBackupRequest, inst *database.CustomerApp, rawYAML string) (*admiral.BackupRecord, error) {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
@@ -145,6 +156,16 @@ func (h *APIHandlers) HandleCustomerAppBackups(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusNotFound, "Backup not found")
 				return
 			}
+		}
+		policy, err := customerBackupPolicy(inst)
+		if err != nil {
+			h.log.Error("Read customer restore policy failed", err, map[string]interface{}{"instance_id": instanceID})
+			writeError(w, http.StatusInternalServerError, "Failed to validate restore policy")
+			return
+		}
+		if policy == nil || !policy.RestoreAllowed {
+			writeError(w, http.StatusForbidden, "Restore is disabled for this tier")
+			return
 		}
 
 		body, err := json.Marshal(req)
