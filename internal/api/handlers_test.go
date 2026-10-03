@@ -88,6 +88,32 @@ func TestScopeTaskSecrets(t *testing.T) {
 	}
 }
 
+func TestDeprovisionSecretNamesOmitsSecretValues(t *testing.T) {
+	payload := admiral.AppDefinitionPayload{
+		Services: map[string]admiral.YAMLService{
+			"web": {
+				Secrets: map[string]admiral.YAMLSecret{
+					"DATABASE_PASSWORD": {Generate: "password"},
+				},
+			},
+			"db": {
+				Secrets: map[string]admiral.YAMLSecret{
+					"ROOT_PASSWORD": {Generate: "password"},
+				},
+			},
+			"worker": {},
+		},
+	}
+
+	want := map[string]map[string]string{
+		"web": {"DATABASE_PASSWORD": ""},
+		"db":  {"ROOT_PASSWORD": ""},
+	}
+	if got := deprovisionSecretNames(payload); !reflect.DeepEqual(got, want) {
+		t.Fatalf("deprovision secret names = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseHostPortsFromMetadata(t *testing.T) {
 	metadata := `{"executor":"systemd-podman","action":"provision_app","host_ports":{"web":8080,"db":15432}}`
 	got := parseHostPortsFromMetadata(metadata)

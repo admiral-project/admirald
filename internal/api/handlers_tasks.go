@@ -23,7 +23,9 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	}
 
 	var secretValues map[string]map[string]string
-	if actionRequiresSecrets(action) {
+	if action == admiral.ActionDeprovisionApp {
+		secretValues = deprovisionSecretNames(payload)
+	} else if actionRequiresSecrets(action) {
 		allSecretValues, err := h.decryptedSecretMap(instID)
 		if err != nil {
 			h.log.Error("Failed to decrypt task secrets", err, map[string]interface{}{"operation_id": opID, "instance_id": instID})
@@ -166,6 +168,24 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	if uerr := h.db.UpdateOperation(opID, "queued", ""); uerr != nil {
 		h.log.Error("Failed to update operation as queued", uerr, map[string]interface{}{"operation_id": opID})
 	}
+}
+
+// deprovisionSecretNames returns only the declared per-service secret names.
+// Fleet needs these names to remove rootless Podman secrets, but cleanup must
+// not decrypt or send the secret values again.
+func deprovisionSecretNames(payload admiral.AppDefinitionPayload) map[string]map[string]string {
+	secrets := make(map[string]map[string]string)
+	for serviceName, service := range payload.Services {
+		if len(service.Secrets) == 0 {
+			continue
+		}
+		serviceSecrets := make(map[string]string, len(service.Secrets))
+		for secretName := range service.Secrets {
+			serviceSecrets[secretName] = ""
+		}
+		secrets[serviceName] = serviceSecrets
+	}
+	return secrets
 }
 
 func (h *APIHandlers) dispatchTask(opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction) {
