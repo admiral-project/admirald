@@ -384,6 +384,29 @@ CREATE INDEX IF NOT EXISTS operator_tokens_username_idx ON operator_tokens(usern
 				return err
 			},
 		},
+		{
+			Version: 18,
+			Name:    "idempotent_provision_requests",
+			Up: func(db migrationDB) error {
+				_, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS provision_requests (
+    customer_id TEXT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    response_status INTEGER NOT NULL DEFAULT 0,
+    response_json JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (customer_id, idempotency_key_hash)
+);
+CREATE INDEX IF NOT EXISTS provision_requests_created_at_idx ON provision_requests(created_at);
+`)
+				return err
+			},
+		},
 	}
 }
 

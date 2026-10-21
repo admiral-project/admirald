@@ -267,6 +267,7 @@ type ProvisionRequest struct {
 	CustomerID        string `json:"customer_id"`
 	NodeID            string `json:"node_id,omitempty"`
 	LogicalInstanceID string `json:"logical_instance_id,omitempty"`
+	IdempotencyKey    string `json:"-"`
 }
 
 type MigrateAppRequest struct {

@@ -13,37 +13,58 @@ import (
 
 var ErrCustomerAppNotPaused = errors.New("customer app is no longer paused")
 
+// effectiveAvailabilityColumns keeps the last runtime observation separate
+// from whether the assigned worker is currently reachable and healthy.
+const effectiveAvailabilityColumns = `CASE
+			WHEN ca.node_id IS NULL THEN 'unknown'
+			WHEN n.status <> 'active'
+			  OR n.last_heartbeat IS NULL
+			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes'
+			  OR n.health_status <> 'healthy' THEN 'unavailable'
+			ELSE 'available'
+		END,
+		CASE
+			WHEN ca.node_id IS NULL THEN 'node_unassigned'
+			WHEN n.status <> 'active' THEN COALESCE(NULLIF(n.unavailable_reason_codes, ''), 'node_not_active')
+			WHEN n.last_heartbeat IS NULL
+			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes' THEN 'heartbeat_stale'
+			WHEN n.health_status <> 'healthy' THEN COALESCE(NULLIF(n.health_reason_codes, ''), 'node_unhealthy')
+			ELSE ''
+		END`
+
 type CustomerApp struct {
-	ID                  string     `json:"id"`
-	CustomerID          string     `json:"customer_id"`
-	AppDefinitionName   string     `json:"app_definition_name"`
-	TierName            string     `json:"tier_name"`
-	NodeID              *string    `json:"node_id"`
-	CommercialStatus    string     `json:"commercial_status"`
-	TechnicalStatus     string     `json:"technical_status"`
-	TierSnapshotJSON    string     `json:"tier_snapshot_json"`
-	CreatedAt           time.Time  `json:"created_at"`
-	HealthStatus        string     `json:"health_status"`
-	HealthMessage       string     `json:"health_message,omitempty"`
-	LastHealthChecked   *time.Time `json:"last_health_checked_at,omitempty"`
-	StorageLimitBytes   int64      `json:"storage_limit_bytes"`
-	StorageUsedBytes    int64      `json:"storage_used_bytes"`
-	StorageUsedPct      float64    `json:"storage_used_percent"`
-	StorageState        string     `json:"storage_state"`
-	StorageMessage      string     `json:"storage_message,omitempty"`
-	StorageCheckedAt    *time.Time `json:"storage_checked_at,omitempty"`
-	StorageExceeded     bool       `json:"storage_exceeded"`
-	GracePeriodStartsAt *time.Time `json:"grace_period_starts_at,omitempty"`
-	GracePeriodEndsAt   *time.Time `json:"grace_period_ends_at,omitempty"`
-	EmergencyLimitBytes int64      `json:"emergency_limit_bytes"`
-	Hostname            string     `json:"hostname"`
-	LogicalInstanceID   string     `json:"logical_instance_id"`
-	InspectData         string     `json:"inspect_data,omitempty"`
-	SetupCompleted      bool       `json:"setup_completed"`
-	SetupTimeoutSeconds int        `json:"setup_timeout_seconds,omitempty"`
-	NeedRestarting      bool       `json:"need_restarting"`
-	UpdateType          string     `json:"update_type"`
-	UpdateStartedAt     *time.Time `json:"update_started_at,omitempty"`
+	ID                    string     `json:"id"`
+	CustomerID            string     `json:"customer_id"`
+	AppDefinitionName     string     `json:"app_definition_name"`
+	TierName              string     `json:"tier_name"`
+	NodeID                *string    `json:"node_id"`
+	CommercialStatus      string     `json:"commercial_status"`
+	TechnicalStatus       string     `json:"technical_status"`
+	TierSnapshotJSON      string     `json:"tier_snapshot_json"`
+	CreatedAt             time.Time  `json:"created_at"`
+	HealthStatus          string     `json:"health_status"`
+	HealthMessage         string     `json:"health_message,omitempty"`
+	LastHealthChecked     *time.Time `json:"last_health_checked_at,omitempty"`
+	EffectiveAvailability string     `json:"effective_availability"`
+	AvailabilityReason    string     `json:"availability_reason,omitempty"`
+	StorageLimitBytes     int64      `json:"storage_limit_bytes"`
+	StorageUsedBytes      int64      `json:"storage_used_bytes"`
+	StorageUsedPct        float64    `json:"storage_used_percent"`
+	StorageState          string     `json:"storage_state"`
+	StorageMessage        string     `json:"storage_message,omitempty"`
+	StorageCheckedAt      *time.Time `json:"storage_checked_at,omitempty"`
+	StorageExceeded       bool       `json:"storage_exceeded"`
+	GracePeriodStartsAt   *time.Time `json:"grace_period_starts_at,omitempty"`
+	GracePeriodEndsAt     *time.Time `json:"grace_period_ends_at,omitempty"`
+	EmergencyLimitBytes   int64      `json:"emergency_limit_bytes"`
+	Hostname              string     `json:"hostname"`
+	LogicalInstanceID     string     `json:"logical_instance_id"`
+	InspectData           string     `json:"inspect_data,omitempty"`
+	SetupCompleted        bool       `json:"setup_completed"`
+	SetupTimeoutSeconds   int        `json:"setup_timeout_seconds,omitempty"`
+	NeedRestarting        bool       `json:"need_restarting"`
+	UpdateType            string     `json:"update_type"`
+	UpdateStartedAt       *time.Time `json:"update_started_at,omitempty"`
 }
 
 func (d *DB) CreateCustomerApp(id, customerID, appName, tierName, nodeID, tierSnapshotJSON string) error {
@@ -229,7 +250,7 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 	var rows *sql.Rows
 	var err error
 	if customerID != "" {
-		rows, err = d.Query(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
+		rows, err = d.Query(fmt.Sprintf(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
 			ca.commercial_status, ca.technical_status, ca.tier_snapshot_json, ca.created_at,
 			COALESCE(ca.health_status, ''), COALESCE(ca.health_message, ''),
 			ca.last_health_checked_at,
@@ -242,12 +263,14 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.setup_completed, FALSE),
 			COALESCE(ca.need_restarting, FALSE),
 			COALESCE(ca.update_type, ''),
-			ca.update_started_at
+			ca.update_started_at,
+			%s
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
-			WHERE ca.customer_id = $3 ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset, customerID)
+			LEFT JOIN nodes n ON n.id = ca.node_id
+			WHERE ca.customer_id = $3 ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, effectiveAvailabilityColumns), limit, offset, customerID)
 	} else {
-		rows, err = d.Query(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
+		rows, err = d.Query(fmt.Sprintf(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
 			ca.commercial_status, ca.technical_status, ca.tier_snapshot_json, ca.created_at,
 			COALESCE(ca.health_status, ''), COALESCE(ca.health_message, ''),
 			ca.last_health_checked_at,
@@ -260,10 +283,12 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			COALESCE(ca.setup_completed, FALSE),
 			COALESCE(ca.need_restarting, FALSE),
 			COALESCE(ca.update_type, ''),
-			ca.update_started_at
+			ca.update_started_at,
+			%s
 			FROM customer_apps ca
 			LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
-			ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, limit, offset)
+			LEFT JOIN nodes n ON n.id = ca.node_id
+			ORDER BY ca.created_at DESC, ca.id DESC LIMIT $1 OFFSET $2`, effectiveAvailabilityColumns), limit, offset)
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("query customer apps: %w", err)
@@ -282,7 +307,7 @@ func (d *DB) GetCustomerAppsPage(limit, offset int, customerID string) ([]Custom
 			&a.Hostname,
 			&a.LogicalInstanceID,
 			&a.SetupCompleted, &a.NeedRestarting,
-			&a.UpdateType, &a.UpdateStartedAt,
+			&a.UpdateType, &a.UpdateStartedAt, &a.EffectiveAvailability, &a.AvailabilityReason,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan customer app row: %w", err)
 		}
@@ -344,12 +369,14 @@ func (d *DB) GetCustomerAppsPageFiltered(limit, offset int, customerID string, n
 		COALESCE(ca.setup_completed, FALSE),
 		COALESCE(ca.need_restarting, FALSE),
 		COALESCE(ca.update_type, ''),
-		ca.update_started_at
+		ca.update_started_at,
+		%s
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
+		LEFT JOIN nodes n ON n.id = ca.node_id
 		WHERE %s
 		ORDER BY ca.created_at DESC, ca.id DESC
-		LIMIT $%d OFFSET $%d`, whereClause, selLimitIdx, selOffsetIdx)
+		LIMIT $%d OFFSET $%d`, effectiveAvailabilityColumns, whereClause, selLimitIdx, selOffsetIdx)
 
 	rows, err := d.Query(query, selArgs...)
 	if err != nil {
@@ -369,7 +396,7 @@ func (d *DB) GetCustomerAppsPageFiltered(limit, offset int, customerID string, n
 			&a.Hostname,
 			&a.LogicalInstanceID,
 			&a.SetupCompleted, &a.NeedRestarting,
-			&a.UpdateType, &a.UpdateStartedAt,
+			&a.UpdateType, &a.UpdateStartedAt, &a.EffectiveAvailability, &a.AvailabilityReason,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan filtered customer app row: %w", err)
 		}
@@ -402,7 +429,7 @@ func (d *DB) FlagOverdueInstances(threshold time.Duration) (int64, error) {
 
 func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 	var a CustomerApp
-	query := `SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
+	query := fmt.Sprintf(`SELECT ca.id, ca.customer_id, ca.app_definition_name, ca.tier_name, ca.node_id,
 		ca.commercial_status, ca.technical_status, ca.tier_snapshot_json, ca.created_at,
 		COALESCE(ca.health_status, ''), COALESCE(ca.health_message, ''),
 		ca.last_health_checked_at,
@@ -416,10 +443,12 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 			COALESCE(ca.setup_completed, FALSE),
 			COALESCE(ca.need_restarting, FALSE),
 			COALESCE(ca.update_type, ''),
-			ca.update_started_at
+		ca.update_started_at,
+		%s
 		FROM customer_apps ca
 		LEFT JOIN public_routes pr ON pr.app_instance_id = ca.id AND pr.route_kind = 'app_instance'
-		WHERE ca.id = $1`
+		LEFT JOIN nodes n ON n.id = ca.node_id
+		WHERE ca.id = $1`, effectiveAvailabilityColumns)
 	err := d.QueryRow(query, id).Scan(&a.ID, &a.CustomerID, &a.AppDefinitionName, &a.TierName, &a.NodeID,
 		&a.CommercialStatus, &a.TechnicalStatus, &a.TierSnapshotJSON, &a.CreatedAt,
 		&a.HealthStatus, &a.HealthMessage, &a.LastHealthChecked,
@@ -433,6 +462,8 @@ func (d *DB) GetCustomerApp(id string) (*CustomerApp, error) {
 		&a.NeedRestarting,
 		&a.UpdateType,
 		&a.UpdateStartedAt,
+		&a.EffectiveAvailability,
+		&a.AvailabilityReason,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

@@ -203,7 +203,6 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	s.supervisedGo("session-cleaner", s.StartSessionCleaner)
 	s.supervisedGo("node-health-monitor", s.StartNodeHealthMonitor)
 	s.supervisedGo("token-gc", s.StartTokenGarbageCollector)
-	s.supervisedGo("resource-reconciler", s.StartResourceReconciler)
 	s.supervisedGo("update-overdue-checker", s.StartUpdateOverdueChecker)
 	if s.handlers.networking != nil {
 		if err := s.handlers.networking.SeedStaticRoutes(ctx); err != nil {
@@ -288,40 +287,6 @@ func (s *Server) StartRouteReconciler(ctx context.Context) {
 			if err := s.handlers.networking.Sync(ctx); err != nil {
 				s.log.Error("Route reconciliation failed", err, nil)
 			}
-		}
-	}
-}
-
-func (s *Server) StartResourceReconciler(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	s.log.Info("Resource reconciler started", nil)
-	for {
-		select {
-		case <-ctx.Done():
-			s.log.Info("Resource reconciler stopped", nil)
-			return
-		case <-ticker.C:
-			s.reconcileResources()
-		}
-	}
-}
-
-func (s *Server) reconcileResources() {
-	apps, err := s.handlers.db.GetInconsistentInstances()
-	if err != nil {
-		s.log.Error("Resource reconciler failed to query inconsistent instances", err, nil)
-		return
-	}
-
-	for _, app := range apps {
-		s.log.Warn("Detected inconsistent instance state: instance running on offline node", map[string]interface{}{
-			"instance_id": app.ID,
-			"node_id":     *app.NodeID,
-		})
-		// For now, we just mark it as unhealthy. Future improvements could trigger a failover or restart.
-		if err := s.handlers.db.UpdateInstanceHealth(app.ID, "unhealthy", "node_offline"); err != nil {
-			s.log.Error("Failed to update instance health in reconciler", err, map[string]interface{}{"instance_id": app.ID})
 		}
 	}
 }

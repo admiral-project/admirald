@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -401,9 +402,32 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 	return NewHandlers(db, logging.New("test"), &mockPublisher{}, nil, nil, "test-hmac-key", "test-pepper", 60)
 }
 
-type mockPublisher struct{}
+type mockPublisher struct {
+	mu         sync.Mutex
+	tasks      []*admiral.FleetTask
+	entered    chan struct{}
+	release    chan struct{}
+	enteredOne sync.Once
+}
 
-func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error { return nil }
+func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error {
+	if m.entered != nil {
+		m.enteredOne.Do(func() { close(m.entered) })
+	}
+	if m.release != nil {
+		<-m.release
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tasks = append(m.tasks, task)
+	return nil
+}
+
+func (m *mockPublisher) taskCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.tasks)
+}
 func (m *mockPublisher) PublishRejectedTask(task *admiral.FleetTask, reason, result string) error {
 	return nil
 }
@@ -1315,37 +1339,85 @@ func TestFleetCallbackDedicatedSignatureRequiresFreshTimestamp(t *testing.T) {
 	}
 }
 
-func TestResourceReconciler(t *testing.T) {
+func TestInstanceAvailabilityTracksNodeWithoutMutatingRuntimeObservation(t *testing.T) {
 	h := newTestHandler(t, false)
-	server := &Server{
-		handlers: h,
-		log:      logging.New("test"),
-	}
-
-	// 1. Register node and instance
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
-	_ = h.db.UpdateCustomerAppStatus("inst_001", "active", "running")
-
-	// 2. Mark node offline
-	if err := h.db.UpdateNodeStatus("node_001", "offline"); err != nil {
-		t.Fatalf("mark node offline: %v", err)
+	if err := h.db.UpdateCustomerAppStatus("inst_001", "active", "running"); err != nil {
+		t.Fatalf("set instance status: %v", err)
 	}
-
-	// 3. Run reconciliation
-	server.reconcileResources()
-
-	// 4. Verify instance is unhealthy
-	inst, err := h.db.GetCustomerApp("inst_001")
+	if err := h.db.UpdateInstanceHealth("inst_001", "healthy", "last worker observation"); err != nil {
+		t.Fatalf("set last runtime observation: %v", err)
+	}
+	heartbeat := &admiral.HeartbeatRequest{NodeID: "node_001", DiskTotal: 100, DiskUsed: 10, RAMTotal: 100, RAMUsed: 10}
+	if err := h.db.UpdateNodeHeartbeat("node_001", heartbeat); err != nil {
+		t.Fatalf("set initial heartbeat: %v", err)
+	}
+	if err := h.db.UpdateNodeHealth("node_001", "healthy", "", true, ""); err != nil {
+		t.Fatalf("set initial worker health: %v", err)
+	}
+	available, err := h.db.GetCustomerApp("inst_001")
 	if err != nil {
-		t.Fatalf("get instance: %v", err)
+		t.Fatalf("get initially available instance: %v", err)
 	}
-	if inst.HealthStatus != "unhealthy" || inst.HealthMessage != "node_offline" {
-		t.Fatalf("expected unhealthy/node_offline, got %s/%s", inst.HealthStatus, inst.HealthMessage)
+	if available.EffectiveAvailability != "available" {
+		t.Fatalf("expected available worker, got %q (%s)", available.EffectiveAvailability, available.AvailabilityReason)
+	}
+	lastHealthCheck := available.LastHealthChecked
+
+	if _, err := h.db.Exec("UPDATE nodes SET last_heartbeat = CURRENT_TIMESTAMP - INTERVAL '3 minutes' WHERE id = $1", "node_001"); err != nil {
+		t.Fatalf("expire worker heartbeat: %v", err)
+	}
+	if _, err := h.db.MarkNodesOffline(2 * time.Minute); err != nil {
+		t.Fatalf("mark stale worker offline: %v", err)
+	}
+	unavailable, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get unavailable instance: %v", err)
+	}
+	if unavailable.EffectiveAvailability != "unavailable" || unavailable.AvailabilityReason != "heartbeat_timeout" {
+		t.Fatalf("expected unavailable/heartbeat_timeout, got %s/%s", unavailable.EffectiveAvailability, unavailable.AvailabilityReason)
+	}
+	if unavailable.HealthStatus != "healthy" || unavailable.HealthMessage != "last worker observation" {
+		t.Fatalf("worker outage overwrote last runtime observation: %s/%s", unavailable.HealthStatus, unavailable.HealthMessage)
+	}
+	if unavailable.LastHealthChecked == nil || lastHealthCheck == nil || !unavailable.LastHealthChecked.Equal(*lastHealthCheck) {
+		t.Fatalf("worker outage changed last health check: before=%v after=%v", lastHealthCheck, unavailable.LastHealthChecked)
+	}
+	page, _, err := h.db.GetCustomerAppsPage(10, 0, "cust_001")
+	if err != nil {
+		t.Fatalf("list unavailable instance: %v", err)
+	}
+	if len(page) != 1 || page[0].EffectiveAvailability != "unavailable" {
+		t.Fatalf("customer list did not derive unavailable state: %+v", page)
+	}
+	filtered, _, err := h.db.GetCustomerAppsPageFiltered(10, 0, "cust_001", false, "")
+	if err != nil {
+		t.Fatalf("list filtered unavailable instance: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].EffectiveAvailability != "unavailable" {
+		t.Fatalf("filtered list did not derive unavailable state: %+v", filtered)
+	}
+
+	if err := h.db.UpdateNodeHeartbeat("node_001", heartbeat); err != nil {
+		t.Fatalf("restore worker heartbeat: %v", err)
+	}
+	if err := h.db.UpdateNodeHealth("node_001", "healthy", "", true, ""); err != nil {
+		t.Fatalf("restore worker health: %v", err)
+	}
+	recovered, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get recovered instance: %v", err)
+	}
+	if recovered.EffectiveAvailability != "available" {
+		t.Fatalf("expected availability to recover on same node, got %s/%s", recovered.EffectiveAvailability, recovered.AvailabilityReason)
+	}
+	if recovered.NodeID == nil || *recovered.NodeID != "node_001" {
+		t.Fatalf("recovery changed node placement: %v", recovered.NodeID)
 	}
 }
 

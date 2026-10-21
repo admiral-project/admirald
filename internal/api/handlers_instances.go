@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -369,6 +370,31 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		keyHash, err := provisionIdempotencyKeyHash(r.Header.Get("Idempotency-Key"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		requestHash, err := provisionRequestHash(req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid provision request")
+			return
+		}
+		existingRequest, err := h.db.GetProvisionRequest(req.CustomerID, keyHash)
+		if err != nil {
+			h.log.Error("Get provision idempotency record failed", err, map[string]interface{}{"customer_id": req.CustomerID})
+			writeError(w, http.StatusInternalServerError, "Failed to check prior provision request")
+			return
+		}
+		if existingRequest != nil {
+			if existingRequest.RequestHash != requestHash {
+				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different provision request")
+				return
+			}
+			writeProvisionReplay(w, existingRequest)
+			return
+		}
+
 		appDef, err := h.db.GetAppDefinition(req.AppDefinitionName)
 		if err != nil {
 			h.log.Error("Get app definition failed on provision", err, map[string]interface{}{"app_name": req.AppDefinitionName})
@@ -435,6 +461,7 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 
 		instanceID := generateID("inst")
 		operationID := generateID("op")
+		taskID := generateID("task")
 		nodeID := selection.NodeID
 
 		tierBytes, err := json.Marshal(matchedTier)
@@ -446,7 +473,15 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 		lid := req.LogicalInstanceID
 		ramBytes := database.ParseSizeBytes(matchedTier.Memory)
 		diskBytes := database.ParseSizeBytes(matchedTier.Storage)
-		if err := h.db.ReserveNodeCapacityAndCreateApp(instanceID, req.CustomerID, req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON, lid, ramBytes, diskBytes); err != nil {
+		created, provisionRecord, err := h.db.ReserveIdempotentProvision(
+			req.CustomerID, keyHash, requestHash, instanceID, operationID, taskID,
+			req.AppDefinitionName, req.TierName, nodeID, tierSnapshotJSON, lid, operatorFromRequest(r), ramBytes, diskBytes,
+		)
+		if err != nil {
+			if errors.Is(err, database.ErrProvisionIdempotencyConflict) {
+				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different provision request")
+				return
+			}
 			if err == database.ErrNodeCapacityPolicyBlocked {
 				evaluations := h.refreshNodeEvaluationsForTier(*matchedTier, nodeID)
 				if recErr := h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, nodeID, *matchedTier, evaluations); recErr != nil {
@@ -457,6 +492,14 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			}
 			h.log.Error("Create customer app with capacity reservation failed", err, map[string]interface{}{"node_id": nodeID, "instance_id": instanceID})
 			writeError(w, http.StatusInternalServerError, "Failed to create app record")
+			return
+		}
+		if !created {
+			if provisionRecord.RequestHash != requestHash {
+				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different provision request")
+				return
+			}
+			writeProvisionReplay(w, provisionRecord)
 			return
 		}
 		h.auditCapacityEvent("node_capacity_reserved", nodeID, instanceID, operationID, admiral.ActionProvisionApp, ramBytes, diskBytes)
@@ -482,15 +525,14 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			if uerr := h.db.UpdateCustomerAppStatus(instanceID, "", "failed"); uerr != nil {
 				h.log.Error("Failed to mark instance as failed after secrets error", uerr, map[string]interface{}{"instance_id": instanceID})
 			}
+			if uerr := h.db.UpdateOperation(operationID, "failed", "failed to create instance secrets"); uerr != nil {
+				h.log.Error("Failed to mark provision operation failed after secrets error", uerr, map[string]interface{}{"operation_id": operationID})
+			}
 			releaseCapacity()
+			if uerr := completeProvisionResponse(h.db, req.CustomerID, keyHash, http.StatusInternalServerError, map[string]string{"error": "Failed to create instance secrets"}); uerr != nil {
+				h.log.Error("Failed to store failed provision response", uerr, map[string]interface{}{"operation_id": operationID})
+			}
 			writeError(w, http.StatusInternalServerError, "Failed to create instance secrets")
-			return
-		}
-
-		if err := h.db.CreateOperation(operationID, instanceID, nodeID, string(admiral.ActionProvisionApp), "pending_dispatch", operatorFromRequest(r)); err != nil {
-			h.log.Error("Create operation record failed", err, nil)
-			releaseCapacity()
-			writeError(w, http.StatusInternalServerError, "Failed to create operation record")
 			return
 		}
 
@@ -507,6 +549,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 					h.log.Error("Failed to mark operation as failed after routes error", uerr, map[string]interface{}{"operation_id": operationID})
 				}
 				releaseCapacity()
+				if uerr := completeProvisionResponse(h.db, req.CustomerID, keyHash, http.StatusInternalServerError, map[string]string{"error": "Failed to create public routes"}); uerr != nil {
+					h.log.Error("Failed to store failed provision response", uerr, map[string]interface{}{"operation_id": operationID})
+				}
 				writeError(w, http.StatusInternalServerError, "Failed to create public routes")
 				return
 			}
@@ -516,7 +561,7 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			hostname = routes[0].Hostname
 		}
 
-		h.enqueueTask(operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
+		h.enqueueTaskWithID(taskID, operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
 
 		// If the app definition includes setup_command on any service,
 		// transition to "initializing" so the customer is informed that
@@ -527,13 +572,19 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		writeJSON(w, http.StatusAccepted, admiral.ProvisionResponse{
+		response := admiral.ProvisionResponse{
 			InstanceID:  instanceID,
 			OperationID: operationID,
 			Status:      "queued",
 			Hostname:    hostname,
 			Credentials: credentials,
-		})
+		}
+		if err := completeProvisionResponse(h.db, req.CustomerID, keyHash, http.StatusAccepted, admiral.ProvisionResponse{
+			InstanceID: instanceID, OperationID: operationID, Status: "queued", Hostname: hostname,
+		}); err != nil {
+			h.log.Error("Failed to store provision idempotency response", err, map[string]interface{}{"operation_id": operationID})
+		}
+		writeJSON(w, http.StatusAccepted, response)
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -553,6 +604,8 @@ type harborCustomerAppResponse struct {
 	HealthStatus          string     `json:"health_status"`
 	HealthMessage         string     `json:"health_message,omitempty"`
 	LastHealthChecked     *time.Time `json:"last_health_checked_at,omitempty"`
+	EffectiveAvailability string     `json:"effective_availability"`
+	AvailabilityReason    string     `json:"availability_reason,omitempty"`
 	StorageLimitBytes     int64      `json:"storage_limit_bytes"`
 	StorageUsedBytes      int64      `json:"storage_used_bytes"`
 	StorageUsedPct        float64    `json:"storage_used_percent"`
@@ -580,7 +633,8 @@ func newHarborCustomerAppResponse(app *database.CustomerApp) harborCustomerAppRe
 		ID: app.ID, AppDefinitionName: app.AppDefinitionName, TierName: app.TierName,
 		CommercialStatus: app.CommercialStatus, TechnicalStatus: app.TechnicalStatus,
 		CreatedAt: app.CreatedAt, HealthStatus: app.HealthStatus, HealthMessage: app.HealthMessage,
-		LastHealthChecked: app.LastHealthChecked, StorageLimitBytes: app.StorageLimitBytes,
+		LastHealthChecked: app.LastHealthChecked, EffectiveAvailability: app.EffectiveAvailability,
+		AvailabilityReason: app.AvailabilityReason, StorageLimitBytes: app.StorageLimitBytes,
 		StorageUsedBytes: app.StorageUsedBytes, StorageUsedPct: app.StorageUsedPct,
 		StorageState: app.StorageState, StorageMessage: app.StorageMessage,
 		StorageCheckedAt: app.StorageCheckedAt, StorageExceeded: app.StorageExceeded,

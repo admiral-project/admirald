@@ -48,6 +48,7 @@ func (d *DB) TruncateTables() error {
 	tables := []string{
 		"public_routes",
 		"task_outbox",
+		"provision_requests",
 		"backup_records",
 		"backup_storage_configs",
 		"admin_sessions",

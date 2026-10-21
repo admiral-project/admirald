@@ -10,6 +10,10 @@ import (
 )
 
 func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) {
+	h.enqueueTaskWithID(generateID("task"), opID, instID, nodeID, tenantID, rawYAML, tier, action, backupID, backupService)
+}
+
+func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil { //nolint:gosec // rawYAML from stored appDef.RawYAML (trusted DB data)
 		h.log.Error("Failed to parse app definition for task dispatch", err, map[string]interface{}{"operation_id": opID})
@@ -43,7 +47,7 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	services := buildServiceInfos(payload, tier, instID, tenantID, h.publicBaseURLForInstance(instID), secretValues)
 
 	task := &admiral.FleetTask{
-		TaskID:      generateID("task"),
+		TaskID:      taskID,
 		OperationID: opID,
 		NodeID:      nodeID,
 		Action:      action,

@@ -167,6 +167,7 @@ func (p *Publisher) persistTask(task *admiral.FleetTask, storePayload []byte, st
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, NULLIF($16, '')::jsonb, $17, $18
 		)
+		ON CONFLICT (idempotency_key) DO NOTHING
 	`, commandID, operationUUID, task.OperationID, task.TaskID, task.InstanceID, task.NodeID, string(task.Action), string(storePayload), string(status), defaultPriority, availableAt, maxAttempts, idempotencyKey, completedAt, lastErrorValue, result, sigValue, signedAtValue)
 	if err != nil {
 		return fmt.Errorf("insert fleet command: %w", err)
