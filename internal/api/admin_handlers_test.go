@@ -1478,7 +1478,7 @@ func TestHandleAdminHealthCallbackDoesNotActivateRoutesForUnhealthyInstance(t *t
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", payload.Name, "starter", "node_001", `{}`); err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
-	manager := &networking.Manager{DB: h.db, Config: &config.Config{DevMode: true}}
+	manager := &networking.Manager{DB: h.db, Config: &config.Config{DevMode: true, NetworkingAppsDomain: "apps.example.com"}}
 	routes, err := manager.CreateInstanceRoutes("inst_001", payload, "node_001")
 	if err != nil {
 		t.Fatalf("create instance route: %v", err)
