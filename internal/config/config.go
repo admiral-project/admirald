@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -145,9 +146,19 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "networking_cockpit_target", "ADMIRAL_NETWORKING_COCKPIT_TARGET")
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 	applyEnv(values, "trusted_proxies", "ADMIRAL_TRUSTED_PROXIES")
+	var placeholderKeys []string
+	for key, value := range values {
+		if strings.TrimSpace(value) == "__REQUIRED__" {
+			placeholderKeys = append(placeholderKeys, key)
+		}
+	}
+	if len(placeholderKeys) > 0 {
+		sort.Strings(placeholderKeys)
+		return nil, fmt.Errorf("%s must be configured with a real value; __REQUIRED__ is a template placeholder", placeholderKeys[0])
+	}
 
 	for _, required := range []string{"admin_token", "token_pepper", "database_url", "queue_database_url", "tls_cert_file", "tls_key_file"} {
-		if strings.TrimSpace(values[required]) == "" || strings.TrimSpace(values[required]) == "__REQUIRED__" {
+		if strings.TrimSpace(values[required]) == "" {
 			return nil, fmt.Errorf("%s is required via %s or its environment variable", required, path)
 		}
 	}

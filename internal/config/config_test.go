@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,71 @@ func TestConfigPathUsesSystemdCredential(t *testing.T) {
 	want := "/run/credentials/admirald.service/admirald.ini"
 	if got := configPath(); got != want {
 		t.Fatalf("configPath() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadRejectsTemplatePlaceholdersInConfig(t *testing.T) {
+	envNames := []string{
+		"ADMIRAL_ENV", "ADMIRAL_PORT", "ADMIRAL_LISTEN_ADDRESS", "DATABASE_URL", "ADMIRAL_DATABASE_URL",
+		"ADMIRAL_QUEUE_DATABASE_URL", "ADMIRAL_ADMIN_TOKEN", "ADMIRAL_HARBOR_API_TOKEN", "ADMIRAL_TOKEN_PEPPER",
+		"ADMIRAL_SECRETS_KEY", "ADMIRAL_SECRETS_KEY_PREVIOUS", "ADMIRAL_ED25519_PRIVATE_KEY",
+		"ADMIRAL_TASK_ENCRYPTION_KEY", "ADMIRAL_FLEET_CALLBACK_KEY", "ADMIRAL_SESSION_HMAC_KEY",
+		"ADMIRAL_FLAGSHIP_ADMIN_USER", "ADMIRAL_FLAGSHIP_ADMIN_PSWD", "ADMIRAL_TLS_CERT_FILE", "ADMIRAL_TLS_KEY_FILE",
+		"ADMIRAL_NETWORKING_BASE_DOMAIN", "ADMIRAL_NETWORKING_ADMIN_HOSTNAME", "ADMIRAL_NETWORKING_ADMIN_TARGET",
+		"ADMIRAL_NETWORKING_PORTAL_HOSTNAME", "ADMIRAL_NETWORKING_PORTAL_TARGET", "ADMIRAL_NETWORKING_APPS_DOMAIN",
+		"ADMIRAL_NETWORKING_APPS_REDIRECT_TO", "ADMIRAL_NETWORKING_TLS_PROVIDER", "ADMIRAL_NETWORKING_TLS_EMAIL",
+		"ADMIRAL_NETWORKING_TLS_CERT_FILE", "ADMIRAL_NETWORKING_TLS_KEY_FILE", "ADMIRAL_NETWORKING_FLAGSHIP_HOST",
+		"ADMIRAL_NETWORKING_FLAGSHIP_TARGET", "ADMIRAL_NETWORKING_COCKPIT_HOST", "ADMIRAL_NETWORKING_COCKPIT_TARGET",
+		"ADMIRAL_CADDY_ADMIN_URL", "ADMIRAL_TRUSTED_PROXIES",
+	}
+	for _, name := range envNames {
+		t.Setenv(name, "")
+	}
+	t.Setenv("ADMIRAL_ENV", "production")
+
+	tempDir := t.TempDir()
+	certFile := writeTempFile(t, tempDir, "server.crt")
+	keyFile := writeTempFile(t, tempDir, "server.key")
+	baseConfig := []string{
+		"database_url=postgres://user:pass@localhost:5432/admiral_core?sslmode=require",
+		"queue_database_url=postgres://queue:pass@localhost:5432/admiral_queue?sslmode=require",
+		"admin_token=valid-admin-token",
+		"harbor_api_token=valid-harbor-token",
+		"token_pepper=valid-token-pepper",
+		"secrets_key=01234567890123456789012345678901",
+		"signing_key=valid-signing-key",
+		"task_encryption_key=valid-task-encryption-key",
+		"fleet_callback_key=valid-fleet-callback-key",
+		"session_hmac_key=valid-session-hmac-key",
+		"flagship_admin_user=admin",
+		"flagship_admin_pswd=valid-admin-password",
+		"tls_cert_file=" + certFile,
+		"tls_key_file=" + keyFile,
+	}
+	targetKeys := []string{
+		"database_url", "queue_database_url", "admin_token", "harbor_api_token", "token_pepper", "secrets_key",
+		"signing_key", "task_encryption_key", "fleet_callback_key", "session_hmac_key", "flagship_admin_user",
+		"flagship_admin_pswd", "tls_cert_file", "tls_key_file",
+	}
+	configPath := filepath.Join(tempDir, "admirald.ini")
+	for _, target := range targetKeys {
+		t.Run(target, func(t *testing.T) {
+			lines := append([]string(nil), baseConfig...)
+			for i, line := range lines {
+				key, _, ok := strings.Cut(line, "=")
+				if ok && key == target {
+					lines[i] = key + "=__REQUIRED__"
+					break
+				}
+			}
+			if err := os.WriteFile(configPath, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+				t.Fatalf("write test config: %v", err)
+			}
+			_, err := load(configPath)
+			if err == nil || !strings.Contains(err.Error(), target) {
+				t.Fatalf("load error = %v, want a placeholder rejection naming %q", err, target)
+			}
+		})
 	}
 }
 
