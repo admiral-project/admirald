@@ -405,6 +405,7 @@ func newTestHandler(t *testing.T, seedAdmin bool) *APIHandlers {
 type mockPublisher struct {
 	mu         sync.Mutex
 	tasks      []*admiral.FleetTask
+	publishErr error
 	entered    chan struct{}
 	release    chan struct{}
 	enteredOne sync.Once
@@ -416,6 +417,9 @@ func (m *mockPublisher) PublishTask(task *admiral.FleetTask) error {
 	}
 	if m.release != nil {
 		<-m.release
+	}
+	if m.publishErr != nil {
+		return m.publishErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

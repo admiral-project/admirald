@@ -561,7 +561,16 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			hostname = routes[0].Hostname
 		}
 
-		h.enqueueTaskWithID(taskID, operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", "")
+		if err := h.enqueueTaskWithID(taskID, operationID, instanceID, nodeID, req.CustomerID, appDef.RawYAML, *matchedTier, admiral.ActionProvisionApp, "", ""); err != nil {
+			h.log.Error("Failed to queue provision task", err, map[string]interface{}{"operation_id": operationID})
+			releaseCapacity()
+			failureResponse := map[string]string{"error": "Failed to queue provision task"}
+			if err := completeProvisionResponse(h.db, req.CustomerID, keyHash, http.StatusInternalServerError, failureResponse); err != nil {
+				h.log.Error("Failed to store rejected provision response", err, map[string]interface{}{"operation_id": operationID})
+			}
+			writeError(w, http.StatusInternalServerError, "Failed to queue provision task")
+			return
+		}
 
 		// If the app definition includes setup_command on any service,
 		// transition to "initializing" so the customer is informed that

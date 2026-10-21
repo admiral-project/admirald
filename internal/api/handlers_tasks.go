@@ -13,7 +13,7 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	h.enqueueTaskWithID(generateID("task"), opID, instID, nodeID, tenantID, rawYAML, tier, action, backupID, backupService)
 }
 
-func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) {
+func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) error {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil { //nolint:gosec // rawYAML from stored appDef.RawYAML (trusted DB data)
 		h.log.Error("Failed to parse app definition for task dispatch", err, map[string]interface{}{"operation_id": opID})
@@ -23,7 +23,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
 			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 		}
-		return
+		return fmt.Errorf("parse app definition for task dispatch: %w", err)
 	}
 
 	var secretValues map[string]map[string]string
@@ -39,7 +39,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 			if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
 				h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 			}
-			return
+			return fmt.Errorf("prepare task secrets: %w", err)
 		}
 		secretValues = scopeTaskSecrets(action, payload, allSecretValues, backupService)
 	}
@@ -71,7 +71,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if ierr != nil {
 			h.log.Error("Failed to load restart state for image verification", ierr, map[string]interface{}{"instance_id": instID, "operation_id": opID})
 			_ = h.db.UpdateOperation(opID, "failed", "failed to load restart state")
-			return
+			return fmt.Errorf("load restart state: %w", ierr)
 		}
 		task.VerifyImages = inst != nil && inst.NeedRestarting
 		if task.VerifyImages {
@@ -115,7 +115,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 			if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
 				h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 			}
-			return
+			return fmt.Errorf("resolve backup target: %w", err)
 		}
 		task.Backup = buildTaskBackupInfo(target)
 	}
@@ -156,8 +156,15 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		"action":       action,
 	})
 
-	if uerr := h.db.UpdateOperationTaskID(opID, task.TaskID); uerr != nil {
-		h.log.Error("Failed to persist task_id on operation", uerr, map[string]interface{}{"task_id": task.TaskID, "operation_id": opID})
+	if err := h.db.UpdateOperationTaskID(opID, task.TaskID); err != nil {
+		h.log.Error("Failed to persist task_id on operation", err, map[string]interface{}{"task_id": task.TaskID, "operation_id": opID})
+		if uerr := h.db.UpdateOperation(opID, "failed", "failed to persist task ID"); uerr != nil {
+			h.log.Error("Failed to mark operation as failed", uerr, map[string]interface{}{"operation_id": opID})
+		}
+		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+			h.log.Error("Failed to mark instance as failed", uerr, map[string]interface{}{"instance_id": instID})
+		}
+		return fmt.Errorf("persist task ID: %w", err)
 	}
 	if err := h.publisher.PublishTask(task); err != nil {
 		h.log.Error("Failed to persist task to queue database", err, map[string]interface{}{"task_id": task.TaskID, "operation_id": opID})
@@ -167,11 +174,12 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
 			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 		}
-		return
+		return fmt.Errorf("persist task to queue: %w", err)
 	}
 	if uerr := h.db.UpdateOperation(opID, "queued", ""); uerr != nil {
 		h.log.Error("Failed to update operation as queued", uerr, map[string]interface{}{"operation_id": opID})
 	}
+	return nil
 }
 
 // deprovisionSecretNames returns only the declared per-service secret names.
