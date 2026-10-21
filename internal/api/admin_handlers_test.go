@@ -18,8 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admiral-project/admiral/admirald/internal/config"
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/internal/logging"
+	"github.com/admiral-project/admiral/admirald/internal/networking"
 	"github.com/admiral-project/admiral/admirald/internal/security"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 	"golang.org/x/crypto/bcrypt"
@@ -1450,5 +1452,63 @@ func TestHandleAdminHealthCallbackPreservesInitializingTechnicalStatus(t *testin
 	}
 	if inst.HealthStatus != string(admiral.HealthHealthy) {
 		t.Fatalf("expected health_status healthy, got %q", inst.HealthStatus)
+	}
+}
+
+func TestHandleAdminHealthCallbackDoesNotActivateRoutesForUnhealthyInstance(t *testing.T) {
+	h := newTestHandler(t, false)
+	token := "test-token-unhealthy-route"
+	setupNodeWithToken(t, h, "node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "fedora", "5.0", token)
+	wrapped := nodeAuthWrapped(h, token, h.HandleAdminHealthCallback)
+
+	payload := admiral.AppDefinitionPayload{
+		Name:        "health-app",
+		DisplayName: "Health App",
+		Services: map[string]admiral.YAMLService{
+			"web": {Image: "docker.io/library/nginx:1.27", Port: 8080, Public: true},
+		},
+		Tiers: map[string]admiral.YAMLTier{
+			"starter": {CPU: 1, Memory: "512MiB", Storage: "1GiB"},
+		},
+	}
+	rawYAML := "name: health-app\nservices:\n  web:\n    image: docker.io/library/nginx:1.27\n    port: 8080\n    public: true\ntiers:\n  starter:\n    cpu: 1\n    memory: 512MiB\n    storage: 1GiB\n"
+	if err := h.db.SaveAppDefinition(payload.Name, payload.DisplayName, "", rawYAML, nil, "improvement"); err != nil {
+		t.Fatalf("save app definition: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_001", "cust_001", payload.Name, "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	manager := &networking.Manager{DB: h.db, Config: &config.Config{DevMode: true}}
+	routes, err := manager.CreateInstanceRoutes("inst_001", payload, "node_001")
+	if err != nil {
+		t.Fatalf("create instance route: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("created routes = %d, want 1", len(routes))
+	}
+	h.networking = manager
+
+	body, _ := json.Marshal(admiral.HealthReport{
+		InstanceID:   "inst_001",
+		NodeID:       "node_001",
+		HealthStatus: admiral.HealthUnhealthy,
+		Message:      "database service unavailable",
+		HostPorts:    map[string]int{"web": 43123},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/health", bytes.NewReader(body))
+	req.Header.Set("X-Admiral-Token", token)
+	req.RemoteAddr = "10.99.0.2:51820"
+	rec := httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health callback status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := h.db.GetPublicRoute(routes[0].Hostname)
+	if err != nil {
+		t.Fatalf("get instance route: %v", err)
+	}
+	if stored.Status != string(admiral.RouteStatusPending) || stored.TargetPort == 43123 {
+		t.Fatalf("unhealthy callback activated the public route: %+v", stored)
 	}
 }
