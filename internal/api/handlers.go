@@ -24,6 +24,9 @@ type TaskPublisher interface {
 	MarkRunningForNode(commandID, nodeID string) error
 	RenewLeaseForNode(commandID, nodeID string) error
 	DiscardCommandForNode(commandID, nodeID, reason string) error
+	CancelCommandForNode(commandID, nodeID, reason string) error
+	CancelTaskForNode(taskPublicID, nodeID, reason string) error
+	AcknowledgeTaskForNode(taskPublicID, nodeID string) error
 	CompleteTask(taskPublicID string, success bool, errorMsg string) error
 	HasActiveTasksForNode(nodeID string) (bool, error)
 }

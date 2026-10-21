@@ -344,6 +344,70 @@ func (p *Publisher) DiscardCommandForNode(commandID, nodeID, reason string) erro
 	return nil
 }
 
+// CancelCommandForNode prevents a queued command from running after its
+// operation is no longer eligible for execution.
+func (p *Publisher) CancelCommandForNode(commandID, nodeID, reason string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET status = $1,
+			last_error = $2,
+			completed_at = CURRENT_TIMESTAMP,
+			leased_until = NULL,
+			leased_by = NULL
+		WHERE id = $3
+		  AND node_id = $4
+		  AND status IN ($5, $6, $7)
+	`, string(admiral.CommandCancelled), reason, commandID, nodeID,
+		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning))
+	if err != nil {
+		return fmt.Errorf("cancel command: %w", err)
+	}
+	return nil
+}
+
+// CancelTaskForNode settles a callback whose operation is already terminal.
+// The task ID and node ID scope the update so a stale callback cannot cancel a
+// different worker's command.
+func (p *Publisher) CancelTaskForNode(taskPublicID, nodeID, reason string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET status = $1,
+			last_error = $2,
+			completed_at = CURRENT_TIMESTAMP,
+			leased_until = NULL,
+			leased_by = NULL
+		WHERE task_public_id = $3
+		  AND node_id = $4
+		  AND status IN ($5, $6, $7)
+	`, string(admiral.CommandCancelled), reason, taskPublicID, nodeID,
+		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning))
+	if err != nil {
+		return fmt.Errorf("cancel task: %w", err)
+	}
+	return nil
+}
+
+// AcknowledgeTaskForNode settles a duplicate callback for an already
+// successful operation without allowing a stale callback to alter another
+// node's command.
+func (p *Publisher) AcknowledgeTaskForNode(taskPublicID, nodeID string) error {
+	_, err := p.db.Exec(`
+		UPDATE fleet_commands
+		SET status = $1,
+			completed_at = CURRENT_TIMESTAMP,
+			leased_until = NULL,
+			leased_by = NULL
+		WHERE task_public_id = $2
+		  AND node_id = $3
+		  AND status IN ($4, $5, $6)
+	`, string(admiral.CommandSucceeded), taskPublicID, nodeID,
+		string(admiral.CommandPending), string(admiral.CommandLeased), string(admiral.CommandRunning))
+	if err != nil {
+		return fmt.Errorf("acknowledge task: %w", err)
+	}
+	return nil
+}
+
 // CancelTasksForNode marks active durable commands as cancelled before the
 // control-plane node transaction runs. marker identifies this removal attempt
 // and allows the caller to compensate if the node transaction fails.

@@ -215,23 +215,83 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, commandID, attemptCount, maxAttempts, err := h.publisher.ClaimTask(authenticatedNodeID)
-	if err != nil {
-		if errors.Is(err, queue.ErrNoCommandAvailable) {
-			w.WriteHeader(http.StatusNoContent)
+	const maxDiscardedTerminalTasks = 128
+	for discarded := 0; discarded < maxDiscardedTerminalTasks; discarded++ {
+		task, commandID, attemptCount, maxAttempts, err := h.publisher.ClaimTask(authenticatedNodeID)
+		if err != nil {
+			if errors.Is(err, queue.ErrNoCommandAvailable) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			h.log.Error("Task claim failed", err, map[string]interface{}{"node_id": req.NodeID})
+			writeError(w, http.StatusInternalServerError, "task claim failed")
 			return
 		}
-		h.log.Error("Task claim failed", err, map[string]interface{}{"node_id": req.NodeID})
-		writeError(w, http.StatusInternalServerError, "task claim failed")
+		if task == nil {
+			h.log.Error("Task claim returned an empty payload", nil, map[string]interface{}{"node_id": authenticatedNodeID, "command_id": commandID})
+			writeError(w, http.StatusInternalServerError, "task claim returned an empty payload")
+			return
+		}
+
+		op, err := h.db.GetOperation(task.OperationID)
+		if err != nil {
+			h.log.Error("Task operation lookup failed", err, map[string]interface{}{"operation_id": task.OperationID, "task_id": task.TaskID})
+			writeError(w, http.StatusServiceUnavailable, "task operation state unavailable")
+			return
+		}
+		reason := staleTaskReason(task, op, authenticatedNodeID)
+		if reason != "" {
+			if err := h.publisher.CancelCommandForNode(commandID, authenticatedNodeID, reason); err != nil {
+				h.log.Error("Stale task cancellation failed", err, map[string]interface{}{"operation_id": task.OperationID, "task_id": task.TaskID})
+				writeError(w, http.StatusInternalServerError, "stale task cancellation failed")
+				return
+			}
+			h.log.Info("Discarded task that is no longer eligible", map[string]interface{}{
+				"operation_id": task.OperationID,
+				"task_id":      task.TaskID,
+				"node_id":      authenticatedNodeID,
+				"reason":       reason,
+			})
+			continue
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"command_id":    commandID,
+			"task":          task,
+			"attempt_count": attemptCount,
+			"max_attempts":  maxAttempts,
+		})
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"command_id":    commandID,
-		"task":          task,
-		"attempt_count": attemptCount,
-		"max_attempts":  maxAttempts,
-	})
+func staleTaskReason(task *admiral.FleetTask, op *database.Operation, nodeID string) string {
+	if task == nil {
+		return "task payload is missing"
+	}
+	if op == nil {
+		return "operation no longer exists"
+	}
+	if op.Status == "succeeded" || op.Status == "failed" || op.Status == "cancelled" {
+		return "operation is terminal: " + op.Status
+	}
+	if op.InstanceID != task.InstanceID {
+		return "task instance does not match operation"
+	}
+	if op.NodeID != "" && op.NodeID != nodeID {
+		return "operation is assigned to another node"
+	}
+	if task.NodeID != "" && task.NodeID != nodeID {
+		return "task is assigned to another node"
+	}
+	if op.Action != string(task.Action) {
+		return "task action does not match operation"
+	}
+	if op.TaskID != "" && op.TaskID != task.TaskID {
+		return "task was replaced by a newer operation task"
+	}
+	return ""
 }
 
 // HandleOCIImages returns the unique OCI image references used by active app
@@ -443,6 +503,13 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 	// without allowing an old result to overwrite current state or trigger a
 	// second side effect.
 	if op.Status == "succeeded" || op.Status == "failed" || op.Status == "cancelled" {
+		if op.Status == "succeeded" {
+			if err := h.publisher.AcknowledgeTaskForNode(res.TaskID, res.NodeID); err != nil {
+				h.log.Error("Failed to acknowledge callback for terminal operation", err, map[string]interface{}{"operation_id": op.ID, "task_id": res.TaskID})
+			}
+		} else if err := h.publisher.CancelTaskForNode(res.TaskID, res.NodeID, "operation is terminal: "+op.Status); err != nil {
+			h.log.Error("Failed to cancel callback task for terminal operation", err, map[string]interface{}{"operation_id": op.ID, "task_id": res.TaskID})
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true, "duplicate": true})
 		return
 	}
