@@ -184,6 +184,7 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 	query := `
 		UPDATE nodes SET
 			last_heartbeat = CURRENT_TIMESTAMP,
+			boot_id = COALESCE(NULLIF($15, ''), boot_id),
 			last_metrics_at = CURRENT_TIMESTAMP,
 			status = 'active',
 			hostname = COALESCE(NULLIF($2, ''), hostname),
@@ -203,7 +204,7 @@ func (d *DB) UpdateNodeHeartbeat(id string, req *admiral.HeartbeatRequest) error
 	`
 	_, err := d.Exec(query, id, req.Hostname, req.IP, req.WireguardIP, req.PublicIP, req.PodmanVersion, req.FleetVersion,
 		req.DiskTotal, req.DiskUsed, req.RAMTotal, req.RAMUsed,
-		req.PodsActive, req.PodsPaused, req.PodsFailed)
+		req.PodsActive, req.PodsPaused, req.PodsFailed, req.BootID)
 	if err != nil {
 		return fmt.Errorf("update node heartbeat: %w", err)
 	}

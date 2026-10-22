@@ -407,6 +407,17 @@ CREATE INDEX IF NOT EXISTS provision_requests_created_at_idx ON provision_reques
 				return err
 			},
 		},
+		{
+			Version: 19,
+			Name:    "bind_runtime_health_to_node_boot",
+			Up: func(db migrationDB) error {
+				_, err := db.Exec(`
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS boot_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE customer_apps ADD COLUMN IF NOT EXISTS last_health_boot_id TEXT NOT NULL DEFAULT '';
+`)
+				return err
+			},
+		},
 	}
 }
 

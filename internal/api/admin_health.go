@@ -131,8 +131,8 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
-	if report.InstanceID == "" || report.NodeID == "" || report.HealthStatus == "" {
-		writeError(w, http.StatusBadRequest, "instance_id, node_id, and health_status are required")
+	if report.InstanceID == "" || report.NodeID == "" || report.BootID == "" || report.HealthStatus == "" {
+		writeError(w, http.StatusBadRequest, "instance_id, node_id, boot_id, and health_status are required")
 		return
 	}
 
@@ -157,13 +157,8 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 	}
 
 	preserveTechnicalStatus := inst.TechnicalStatus == "initializing" || inst.TechnicalStatus == "setup_failed"
-	var updateErr error
-	if preserveTechnicalStatus {
-		updateErr = h.db.UpdateInstanceHealth(report.InstanceID, string(report.HealthStatus), report.Message)
-	} else {
-		techStatus := healthToTechStatus(report.HealthStatus)
-		updateErr = h.db.UpdateInstanceHealthAndTechStatus(report.InstanceID, string(report.HealthStatus), techStatus, report.Message)
-	}
+	techStatus := healthToTechStatus(report.HealthStatus)
+	updateErr := h.db.UpdateInstanceHealthForBoot(report.InstanceID, string(report.HealthStatus), techStatus, report.Message, report.BootID, preserveTechnicalStatus)
 	if updateErr != nil {
 		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
 		writeError(w, http.StatusInternalServerError, "Failed to update health")

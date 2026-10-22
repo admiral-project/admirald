@@ -351,8 +351,8 @@ func (h *APIHandlers) HandleNodeHeartbeat(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.NodeID == "" {
-		writeError(w, http.StatusBadRequest, "node_id is required")
+	if req.NodeID == "" || strings.TrimSpace(req.BootID) == "" {
+		writeError(w, http.StatusBadRequest, "node_id and boot_id are required")
 		return
 	}
 	authenticatedNodeID, ok := NodeIDFromContext(r.Context())

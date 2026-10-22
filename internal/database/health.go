@@ -10,14 +10,39 @@ import (
 )
 
 func (d *DB) UpdateInstanceHealth(instanceID, healthStatus, message string) error {
-	_, err := d.Exec("UPDATE customer_apps SET health_status = $1, health_message = $2, last_health_checked_at = CURRENT_TIMESTAMP WHERE id = $3",
-		healthStatus, message, instanceID)
+	_, err := d.Exec(`UPDATE customer_apps AS ca SET
+		health_status = $1, health_message = $2, last_health_checked_at = CURRENT_TIMESTAMP,
+		last_health_boot_id = COALESCE((SELECT n.boot_id FROM nodes AS n WHERE n.id = ca.node_id), '')
+		WHERE ca.id = $3`, healthStatus, message, instanceID)
 	return err
 }
 
 func (d *DB) UpdateInstanceHealthAndTechStatus(instanceID, healthStatus, techStatus, message string) error {
-	_, err := d.Exec("UPDATE customer_apps SET health_status = $1, health_message = $2, technical_status = $3, last_health_checked_at = CURRENT_TIMESTAMP WHERE id = $4",
-		healthStatus, message, techStatus, instanceID)
+	_, err := d.Exec(`UPDATE customer_apps AS ca SET
+		health_status = $1, health_message = $2, technical_status = $3,
+		last_health_checked_at = CURRENT_TIMESTAMP,
+		last_health_boot_id = COALESCE((SELECT n.boot_id FROM nodes AS n WHERE n.id = ca.node_id), '')
+		WHERE ca.id = $4`, healthStatus, message, techStatus, instanceID)
+	return err
+}
+
+// UpdateInstanceHealthForBoot records a Fleet health observation together with
+// the Linux boot ID that produced it. Effective availability compares this
+// value with the node's latest heartbeat boot ID, so pre-reboot observations
+// remain historical but cannot make a workload appear available after reboot.
+func (d *DB) UpdateInstanceHealthForBoot(instanceID, healthStatus, techStatus, message, bootID string, preserveTechnicalStatus bool) error {
+	query := `UPDATE customer_apps SET
+		health_status = $1, health_message = $2, last_health_checked_at = CURRENT_TIMESTAMP,
+		last_health_boot_id = $3`
+	args := []any{healthStatus, message, bootID}
+	if !preserveTechnicalStatus {
+		query += `, technical_status = $4 WHERE id = $5`
+		args = append(args, techStatus, instanceID)
+	} else {
+		query += ` WHERE id = $4`
+		args = append(args, instanceID)
+	}
+	_, err := d.Exec(query, args...)
 	return err
 }
 

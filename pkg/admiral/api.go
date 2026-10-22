@@ -24,6 +24,7 @@ type RegisterNodeResponse struct {
 
 type HeartbeatRequest struct {
 	NodeID        string `json:"node_id"`
+	BootID        string `json:"boot_id"`
 	Hostname      string `json:"hostname,omitempty"`
 	IP            string `json:"ip,omitempty"`
 	WireguardIP   string `json:"wireguard_ip,omitempty"`
@@ -372,6 +373,7 @@ const (
 type HealthReport struct {
 	InstanceID   string         `json:"instance_id"`
 	NodeID       string         `json:"node_id"`
+	BootID       string         `json:"boot_id"`
 	HealthStatus HealthStatus   `json:"health_status"`
 	Message      string         `json:"message,omitempty"`
 	HostPorts    map[string]int `json:"host_ports,omitempty"`

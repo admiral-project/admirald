@@ -1221,6 +1221,9 @@ func setupNodeWithToken(t *testing.T, h *APIHandlers, nodeID, hostname, ip, wgIP
 	if err := h.db.RegisterNode(nodeID, hostname, ip, wgIP, nodeRole, "", os, podmanV); err != nil {
 		t.Fatalf("register node: %v", err)
 	}
+	if _, err := h.db.Exec("UPDATE nodes SET boot_id = $1 WHERE id = $2", "test-boot-id", nodeID); err != nil {
+		t.Fatalf("set test node boot ID: %v", err)
+	}
 	identifier := nodeTokenIdentifier(token, "test-pepper")
 	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
 	if err != nil {
@@ -1240,6 +1243,7 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 
 	heartbeat := admiral.HeartbeatRequest{
 		NodeID: "node_001",
+		BootID: "test-boot-id",
 		Status: "active",
 	}
 	body, _ := json.Marshal(heartbeat)
@@ -1271,7 +1275,7 @@ func TestHandleNodeHeartbeatIPValidation(t *testing.T) {
 
 	// A valid node token must not be able to update a different node by
 	// changing the node_id in the authenticated request body.
-	forged := admiral.HeartbeatRequest{NodeID: "node_002", Status: "active"}
+	forged := admiral.HeartbeatRequest{NodeID: "node_002", BootID: "test-boot-id", Status: "active"}
 	forgedBody, _ := json.Marshal(forged)
 	forgedReq := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/heartbeat", bytes.NewReader(forgedBody))
 	forgedReq.Header.Set("X-Admiral-Token", token)
@@ -1373,7 +1377,7 @@ func TestInstanceAvailabilityTracksNodeAndFreshRuntimeWithoutMutatingObservation
 	if err := h.db.UpdateCustomerAppStatus("inst_001", "active", "running"); err != nil {
 		t.Fatalf("set instance status: %v", err)
 	}
-	heartbeat := &admiral.HeartbeatRequest{NodeID: "node_001", DiskTotal: 100, DiskUsed: 10, RAMTotal: 100, RAMUsed: 10}
+	heartbeat := &admiral.HeartbeatRequest{NodeID: "node_001", BootID: "test-boot-before", DiskTotal: 100, DiskUsed: 10, RAMTotal: 100, RAMUsed: 10}
 	if err := h.db.UpdateNodeHeartbeat("node_001", heartbeat); err != nil {
 		t.Fatalf("set initial heartbeat: %v", err)
 	}
@@ -1517,6 +1521,63 @@ func TestInstanceAvailabilityTracksNodeAndFreshRuntimeWithoutMutatingObservation
 	}
 }
 
+func TestInstanceAvailabilityInvalidatesHealthFromPreviousNodeBoot(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_reboot", "worker-reboot", "10.0.0.8", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_reboot", "cust_reboot", "testapp", "starter", "node_reboot", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_reboot", "active", "running"); err != nil {
+		t.Fatalf("set instance status: %v", err)
+	}
+	if err := h.db.UpdateNodeHeartbeat("node_reboot", &admiral.HeartbeatRequest{NodeID: "node_reboot", BootID: "boot-before"}); err != nil {
+		t.Fatalf("record initial heartbeat: %v", err)
+	}
+	if err := h.db.UpdateNodeHealth("node_reboot", "healthy", "", true, ""); err != nil {
+		t.Fatalf("set node health: %v", err)
+	}
+	if err := h.db.UpdateInstanceHealthForBoot("inst_reboot", "healthy", "running", "all services ready", "boot-before", false); err != nil {
+		t.Fatalf("record pre-reboot runtime health: %v", err)
+	}
+	before, err := h.db.GetCustomerApp("inst_reboot")
+	if err != nil {
+		t.Fatalf("get pre-reboot instance: %v", err)
+	}
+	if before.EffectiveAvailability != "available" {
+		t.Fatalf("expected available before reboot, got %s/%s", before.EffectiveAvailability, before.AvailabilityReason)
+	}
+
+	if err := h.db.UpdateNodeHeartbeat("node_reboot", &admiral.HeartbeatRequest{NodeID: "node_reboot", BootID: "boot-after"}); err != nil {
+		t.Fatalf("record post-reboot heartbeat: %v", err)
+	}
+	afterBoot, err := h.db.GetCustomerApp("inst_reboot")
+	if err != nil {
+		t.Fatalf("get instance after node reboot: %v", err)
+	}
+	if afterBoot.EffectiveAvailability != "unavailable" || afterBoot.AvailabilityReason != "runtime_observation_before_node_boot" {
+		t.Fatalf("expected unavailable until a post-boot observation, got %s/%s", afterBoot.EffectiveAvailability, afterBoot.AvailabilityReason)
+	}
+	if afterBoot.HealthStatus != before.HealthStatus || afterBoot.HealthMessage != before.HealthMessage {
+		t.Fatalf("reboot overwrote historical runtime health: before=%s/%s after=%s/%s", before.HealthStatus, before.HealthMessage, afterBoot.HealthStatus, afterBoot.HealthMessage)
+	}
+	if before.LastHealthChecked == nil || afterBoot.LastHealthChecked == nil || !before.LastHealthChecked.Equal(*afterBoot.LastHealthChecked) {
+		t.Fatalf("reboot changed the historical health timestamp: before=%v after=%v", before.LastHealthChecked, afterBoot.LastHealthChecked)
+	}
+
+	if err := h.db.UpdateInstanceHealthForBoot("inst_reboot", "healthy", "running", "all services ready after reboot", "boot-after", false); err != nil {
+		t.Fatalf("record post-reboot runtime health: %v", err)
+	}
+	recovered, err := h.db.GetCustomerApp("inst_reboot")
+	if err != nil {
+		t.Fatalf("get recovered instance: %v", err)
+	}
+	if recovered.EffectiveAvailability != "available" {
+		t.Fatalf("expected available after a fresh post-boot observation, got %s/%s", recovered.EffectiveAvailability, recovered.AvailabilityReason)
+	}
+}
+
 func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	h := newTestHandler(t, false)
 
@@ -1535,6 +1596,7 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	report := admiral.HealthReport{
 		InstanceID:   "inst_001",
 		NodeID:       "node_001",
+		BootID:       "test-boot-id",
 		HealthStatus: admiral.HealthHealthy,
 		Message:      "all good",
 	}
@@ -1566,6 +1628,7 @@ func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	report2 := admiral.HealthReport{
 		InstanceID:   "inst_001",
 		NodeID:       "node_002",
+		BootID:       "test-boot-id",
 		HealthStatus: admiral.HealthHealthy,
 		Message:      "all good",
 	}
@@ -1597,6 +1660,7 @@ func TestHandleAdminHealthCallbackPreservesInitializingTechnicalStatus(t *testin
 	body, _ := json.Marshal(admiral.HealthReport{
 		InstanceID:   "inst_001",
 		NodeID:       "node_001",
+		BootID:       "test-boot-id",
 		HealthStatus: admiral.HealthHealthy,
 		Message:      "all good",
 		HostPorts:    map[string]int{"web": 18080},
@@ -1659,6 +1723,7 @@ func TestHandleAdminHealthCallbackDoesNotActivateRoutesForUnhealthyInstance(t *t
 	body, _ := json.Marshal(admiral.HealthReport{
 		InstanceID:   "inst_001",
 		NodeID:       "node_001",
+		BootID:       "test-boot-id",
 		HealthStatus: admiral.HealthUnhealthy,
 		Message:      "database service unavailable",
 		HostPorts:    map[string]int{"web": 43123},

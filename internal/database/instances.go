@@ -26,6 +26,8 @@ const effectiveAvailabilityColumns = `CASE
 			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes'
 			  OR n.health_status <> 'healthy' THEN 'unavailable'
 			WHEN ca.last_health_checked_at IS NULL THEN 'unknown'
+			WHEN COALESCE(n.boot_id, '') = '' THEN 'unavailable'
+			WHEN COALESCE(ca.last_health_boot_id, '') <> n.boot_id THEN 'unavailable'
 			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'unavailable'
 			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'unavailable'
 			ELSE 'available'
@@ -41,6 +43,8 @@ const effectiveAvailabilityColumns = `CASE
 			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes' THEN 'heartbeat_stale'
 			WHEN n.health_status <> 'healthy' THEN COALESCE(NULLIF(n.health_reason_codes, ''), 'node_unhealthy')
 			WHEN ca.last_health_checked_at IS NULL THEN 'runtime_not_observed'
+			WHEN COALESCE(n.boot_id, '') = '' THEN 'node_boot_id_unknown'
+			WHEN COALESCE(ca.last_health_boot_id, '') <> n.boot_id THEN 'runtime_observation_before_node_boot'
 			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'runtime_not_healthy'
 			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'runtime_observation_stale'
 			ELSE ''
