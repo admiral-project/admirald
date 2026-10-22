@@ -18,6 +18,8 @@ var ErrCustomerAppNotPaused = errors.New("customer app is no longer paused")
 // checks workload health every 30 seconds; two missed checks make the observation
 // stale until a fresh report arrives.
 const effectiveAvailabilityColumns = `CASE
+			WHEN ca.technical_status IN ('stopped', 'paused_for_storage') THEN 'unavailable'
+			WHEN ca.technical_status IN ('deprovisioning', 'deprovisioned') THEN 'unavailable'
 			WHEN ca.node_id IS NULL THEN 'unknown'
 			WHEN n.status <> 'active'
 			  OR n.last_heartbeat IS NULL
@@ -29,6 +31,10 @@ const effectiveAvailabilityColumns = `CASE
 			ELSE 'available'
 		END,
 		CASE
+			WHEN ca.technical_status = 'stopped' THEN 'instance_stopped'
+			WHEN ca.technical_status = 'paused_for_storage' THEN 'instance_paused_for_storage'
+			WHEN ca.technical_status = 'deprovisioning' THEN 'instance_deprovisioning'
+			WHEN ca.technical_status = 'deprovisioned' THEN 'instance_deprovisioned'
 			WHEN ca.node_id IS NULL THEN 'node_unassigned'
 			WHEN n.status <> 'active' THEN COALESCE(NULLIF(n.unavailable_reason_codes, ''), 'node_not_active')
 			WHEN n.last_heartbeat IS NULL

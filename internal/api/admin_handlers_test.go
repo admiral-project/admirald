@@ -1486,6 +1486,31 @@ func TestInstanceAvailabilityTracksNodeAndFreshRuntimeWithoutMutatingObservation
 	if available.EffectiveAvailability != "available" || available.AvailabilityReason != "" {
 		t.Fatalf("fresh healthy runtime did not restore availability: %s/%s", available.EffectiveAvailability, available.AvailabilityReason)
 	}
+
+	for _, tc := range []struct {
+		commercialStatus   string
+		technicalStatus    string
+		availabilityReason string
+	}{
+		{commercialStatus: "active", technicalStatus: "stopped", availabilityReason: "instance_stopped"},
+		{commercialStatus: "active", technicalStatus: "paused_for_storage", availabilityReason: "instance_paused_for_storage"},
+		{commercialStatus: "active", technicalStatus: "deprovisioning", availabilityReason: "instance_deprovisioning"},
+		{commercialStatus: "cancelled", technicalStatus: "deprovisioned", availabilityReason: "instance_deprovisioned"},
+	} {
+		if err := h.db.UpdateCustomerAppStatus("inst_001", tc.commercialStatus, tc.technicalStatus); err != nil {
+			t.Fatalf("set non-serving instance status %q: %v", tc.technicalStatus, err)
+		}
+		nonServing, err := h.db.GetCustomerApp("inst_001")
+		if err != nil {
+			t.Fatalf("get instance in %q state: %v", tc.technicalStatus, err)
+		}
+		if nonServing.EffectiveAvailability != "unavailable" || nonServing.AvailabilityReason != tc.availabilityReason {
+			t.Fatalf("expected unavailable/%s for %s, got %s/%s", tc.availabilityReason, tc.technicalStatus, nonServing.EffectiveAvailability, nonServing.AvailabilityReason)
+		}
+		if nonServing.HealthStatus != "healthy" || nonServing.HealthMessage != "recovered after reboot" {
+			t.Fatalf("lifecycle availability overwrote last runtime observation: %s/%s", nonServing.HealthStatus, nonServing.HealthMessage)
+		}
+	}
 }
 
 func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
