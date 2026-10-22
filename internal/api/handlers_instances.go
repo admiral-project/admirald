@@ -380,18 +380,13 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, "Invalid provision request")
 			return
 		}
-		existingRequest, err := h.db.GetProvisionRequest(req.CustomerID, keyHash)
+		replayed, err := h.replayProvisionIfPresent(w, req.CustomerID, keyHash, requestHash)
 		if err != nil {
 			h.log.Error("Get provision idempotency record failed", err, map[string]interface{}{"customer_id": req.CustomerID})
 			writeError(w, http.StatusInternalServerError, "Failed to check prior provision request")
 			return
 		}
-		if existingRequest != nil {
-			if existingRequest.RequestHash != requestHash {
-				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different provision request")
-				return
-			}
-			writeProvisionReplay(w, existingRequest)
+		if replayed {
 			return
 		}
 
@@ -452,9 +447,9 @@ func (h *APIHandlers) HandleCustomerApps(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if selection.NodeID == "" {
-			if err := h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, req.NodeID, *matchedTier, selection.Evaluations); err != nil {
+			if err := h.handleProvisionWithoutCapacity(w, r, req, keyHash, requestHash, *matchedTier, selection.Evaluations); err != nil {
 				h.log.Error("Record blocked provisioning attempt failed", err, map[string]interface{}{"app_name": req.AppDefinitionName, "tier_name": req.TierName, "requested_node_id": req.NodeID})
-				writeError(w, http.StatusInternalServerError, "Failed recording blocked provisioning attempt")
+				writeError(w, http.StatusInternalServerError, "Failed handling blocked provisioning attempt")
 			}
 			return
 		}

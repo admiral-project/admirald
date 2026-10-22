@@ -60,6 +60,40 @@ func writeProvisionReplay(w http.ResponseWriter, record *database.ProvisionReque
 	})
 }
 
+func (h *APIHandlers) replayProvisionIfPresent(w http.ResponseWriter, customerID, keyHash, requestHash string) (bool, error) {
+	record, err := h.db.GetProvisionRequest(customerID, keyHash)
+	if err != nil {
+		return false, err
+	}
+	if record == nil {
+		return false, nil
+	}
+	if record.RequestHash != requestHash {
+		writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different provision request")
+		return true, nil
+	}
+	writeProvisionReplay(w, record)
+	return true, nil
+}
+
+func (h *APIHandlers) handleProvisionWithoutCapacity(
+	w http.ResponseWriter,
+	r *http.Request,
+	req admiral.ProvisionRequest,
+	keyHash, requestHash string,
+	tier database.AppTier,
+	evaluations []admiral.NodeProvisioningEvaluation,
+) error {
+	replayed, err := h.replayProvisionIfPresent(w, req.CustomerID, keyHash, requestHash)
+	if err != nil {
+		return fmt.Errorf("recheck provision idempotency record after capacity selection: %w", err)
+	}
+	if replayed {
+		return nil
+	}
+	return h.recordBlockedWorkloadAttempt(w, r, admiral.ActionProvisionApp, "", req.AppDefinitionName, req.CustomerID, req.NodeID, tier, evaluations)
+}
+
 func completeProvisionResponse(db *database.DB, customerID, keyHash string, status int, response interface{}) error {
 	encoded, err := json.Marshal(response)
 	if err != nil {

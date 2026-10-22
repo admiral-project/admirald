@@ -70,6 +70,58 @@ func TestProvisionIdempotencyReplaysAndSerializesConcurrentRequests(t *testing.T
 	if first.Code != http.StatusAccepted || firstResponse.InstanceID == "" || firstResponse.OperationID == "" {
 		t.Fatalf("first provision failed: status=%d body=%s", first.Code, first.Body.String())
 	}
+	if err := h.db.SetNodeManualDisabled(nodeID, true); err != nil {
+		t.Fatalf("disable node to simulate capacity rejection: %v", err)
+	}
+	if err := h.recomputeNodePolicy(nodeID); err != nil {
+		t.Fatalf("recompute disabled node policy: %v", err)
+	}
+	selection, err := h.selectNodeForTier(database.AppTier{Name: "small", Memory: "256M", Storage: "1G"}, "")
+	if err != nil || selection.NodeID != "" {
+		t.Fatalf("expected no eligible node after capacity changed, selection=%+v err=%v", selection, err)
+	}
+	keyHash, err := provisionIdempotencyKeyHash("stable-key-001")
+	if err != nil {
+		t.Fatalf("hash idempotency key: %v", err)
+	}
+	requestHash, err := provisionRequestHash(admiral.ProvisionRequest{
+		AppDefinitionName: appName, TierName: "small", CustomerID: customerID,
+	})
+	if err != nil {
+		t.Fatalf("hash provision request: %v", err)
+	}
+	var operationsBefore int
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM operations WHERE instance_id=$1", firstResponse.InstanceID).Scan(&operationsBefore); err != nil {
+		t.Fatalf("count operations before capacity replay: %v", err)
+	}
+	capacityReplay := httptest.NewRecorder()
+	capacityRequest := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps", nil)
+	if err := h.handleProvisionWithoutCapacity(capacityReplay, capacityRequest, admiral.ProvisionRequest{
+		AppDefinitionName: appName, TierName: "small", CustomerID: customerID,
+	}, keyHash, requestHash, database.AppTier{Name: "small", Memory: "256M", Storage: "1G"}, selection.Evaluations); err != nil {
+		t.Fatalf("replay provision after capacity changed: %v", err)
+	}
+	var capacityReplayResponse admiral.ProvisionResponse
+	if err := json.Unmarshal(capacityReplay.Body.Bytes(), &capacityReplayResponse); err != nil {
+		t.Fatalf("decode capacity replay response %q: %v", capacityReplay.Body.String(), err)
+	}
+	if capacityReplay.Code != http.StatusAccepted || capacityReplay.Header().Get("Idempotency-Replayed") != "true" ||
+		capacityReplayResponse.InstanceID != firstResponse.InstanceID || capacityReplayResponse.OperationID != firstResponse.OperationID {
+		t.Fatalf("capacity rejection did not replay prior operation: status=%d headers=%v response=%+v", capacityReplay.Code, capacityReplay.Header(), capacityReplayResponse)
+	}
+	var operationsAfter int
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM operations WHERE instance_id=$1", firstResponse.InstanceID).Scan(&operationsAfter); err != nil {
+		t.Fatalf("count operations after capacity replay: %v", err)
+	}
+	if operationsAfter != operationsBefore {
+		t.Fatalf("capacity replay created an operation: before=%d after=%d", operationsBefore, operationsAfter)
+	}
+	if err := h.db.SetNodeManualDisabled(nodeID, false); err != nil {
+		t.Fatalf("reenable node after capacity replay: %v", err)
+	}
+	if err := h.recomputeNodePolicy(nodeID); err != nil {
+		t.Fatalf("recompute reenabled node policy: %v", err)
+	}
 	replay, replayResponse := request("stable-key-001", "")
 	if replay.Code != http.StatusAccepted || replay.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("expected accepted replay, got status=%d headers=%v body=%s", replay.Code, replay.Header(), replay.Body.String())
@@ -154,11 +206,11 @@ func TestProvisionIdempotencyReplaysAndSerializesConcurrentRequests(t *testing.T
 	if replayedFailure.Code != http.StatusInternalServerError || replayedFailure.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("failed publication replay must preserve the original failure, got status=%d headers=%v body=%s", replayedFailure.Code, replayedFailure.Header(), replayedFailure.Body.String())
 	}
-	keyHash, err := provisionIdempotencyKeyHash("stable-key-publish-failure")
+	failedKeyHash, err := provisionIdempotencyKeyHash("stable-key-publish-failure")
 	if err != nil {
 		t.Fatalf("hash publication failure key: %v", err)
 	}
-	failedRequest, err := h.db.GetProvisionRequest(customerID, keyHash)
+	failedRequest, err := h.db.GetProvisionRequest(customerID, failedKeyHash)
 	if err != nil || failedRequest == nil {
 		t.Fatalf("read failed provision request: record=%+v err=%v", failedRequest, err)
 	}
