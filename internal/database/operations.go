@@ -102,6 +102,18 @@ func (d *DB) UpdateOperation(id, status, errMsg string) error {
 	return nil
 }
 
+func (d *DB) MarkOperationQueuedIfPendingDispatch(id string) error {
+	_, err := d.Exec(`
+		UPDATE operations
+		SET status = 'queued', error_message = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'pending_dispatch'
+	`, id)
+	if err != nil {
+		return fmt.Errorf("mark operation %q queued: %w", id, err)
+	}
+	return nil
+}
+
 func (d *DB) GetOperations() ([]Operation, error) {
 	ops, _, err := d.GetOperationsPage(1000, 0)
 	return ops, err

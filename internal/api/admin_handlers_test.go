@@ -29,11 +29,12 @@ import (
 )
 
 type migrationTestPublisher struct {
-	db         *database.DB
-	failAction admiral.TaskAction
-	failNodeID string
-	failed     bool
-	published  []*admiral.FleetTask
+	db                   *database.DB
+	failAction           admiral.TaskAction
+	failNodeID           string
+	completeBeforeReturn bool
+	failed               bool
+	published            []*admiral.FleetTask
 }
 
 func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
@@ -44,6 +45,9 @@ func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 		status = "failed"
 		errMsg = "simulated " + string(task.Action) + " failure"
 		m.failed = true
+	}
+	if m.completeBeforeReturn {
+		return m.db.UpdateOperation(task.OperationID, status, errMsg)
 	}
 	go func(operationID, status, errMsg string) {
 		time.Sleep(25 * time.Millisecond)
@@ -1079,7 +1083,7 @@ func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 
 func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	h := newTestHandler(t, false)
-	publisher := &migrationTestPublisher{db: h.db}
+	publisher := &migrationTestPublisher{db: h.db, completeBeforeReturn: true}
 	h.publisher = publisher
 
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "203.0.113.11", "fedora", "5.0"); err != nil {

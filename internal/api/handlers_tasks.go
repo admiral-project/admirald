@@ -176,7 +176,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		}
 		return fmt.Errorf("persist task to queue: %w", err)
 	}
-	if uerr := h.db.UpdateOperation(opID, "queued", ""); uerr != nil {
+	if uerr := h.db.MarkOperationQueuedIfPendingDispatch(opID); uerr != nil {
 		h.log.Error("Failed to update operation as queued", uerr, map[string]interface{}{"operation_id": opID})
 	}
 	return nil
@@ -277,9 +277,9 @@ func (h *APIHandlers) enqueueRestoreTask(opID, instID, nodeID, rawYAML string, t
 		}
 	}
 
-	h.enqueueRawTask(task)
-	_ = h.db.UpdateOperationTaskID(opID, task.TaskID)
-	_ = h.db.UpdateOperation(opID, "queued", "")
+	if err := h.enqueueRawTaskWithErr(task); err != nil {
+		h.log.Error("Failed to enqueue backup restore task", err, map[string]interface{}{"operation_id": opID, "instance_id": instID})
+	}
 }
 
 func (h *APIHandlers) enqueueRawTaskWithErr(task *admiral.FleetTask) error {
@@ -294,7 +294,7 @@ func (h *APIHandlers) enqueueRawTaskWithErr(task *admiral.FleetTask) error {
 		}
 		return fmt.Errorf("publish raw task %q: %w", task.TaskID, err)
 	}
-	if uerr := h.db.UpdateOperation(task.OperationID, "queued", ""); uerr != nil {
+	if uerr := h.db.MarkOperationQueuedIfPendingDispatch(task.OperationID); uerr != nil {
 		h.log.Error("Failed to update operation as queued", uerr, map[string]interface{}{"operation_id": task.OperationID})
 		return fmt.Errorf("mark operation %q queued: %w", task.OperationID, uerr)
 	}
