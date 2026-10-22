@@ -60,7 +60,7 @@ const (
 	authFailureWindow = 5 * time.Minute
 )
 
-func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey, fleetCallbackKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, trustedProxies []string, devMode bool) *Server {
+func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminToken, harborToken, tokenPepper string, tokenTTL int, sessionHMACKey, fleetCallbackKey string, secretManager *secrets.Manager, networkingManager *networking.Manager, trustedProxies []string, devMode bool, wireguardSubnet, wireguardHubIP string) *Server {
 	// session_hmac_key is intentionally optional. When empty, a volatile
 	// ephemeral key is generated in memory. This means a server restart
 	// invalidates all active admin web sessions (flagship/harbor must
@@ -76,6 +76,8 @@ func NewServer(db *database.DB, log *logging.Logger, pub TaskPublisher, adminTok
 		log.Info("Using volatile ephemeral session HMAC key. Admin sessions will not survive a restart.", nil)
 	}
 	handlers := NewHandlers(db, log, pub, secretManager, networkingManager, sessionHMACKey, tokenPepper, tokenTTL)
+	handlers.wireguardSubnet = wireguardSubnet
+	handlers.wireguardHubIP = wireguardHubIP
 	server := &Server{
 		handlers:         handlers,
 		log:              log,

@@ -6,6 +6,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,6 +56,8 @@ type Config struct {
 	NetworkingCockpitTarget  string
 	CaddyAdminURL            string
 	TrustedProxies           []string
+	WireguardSubnet          string
+	WireguardHubIP           string
 	DevMode                  bool
 }
 
@@ -107,6 +110,8 @@ func load(path string) (*Config, error) {
 		"networking_cockpit_target":  "http://127.0.0.1:9090",
 		"caddy_admin_url":            "http://127.0.0.1:2019",
 		"trusted_proxies":            "",
+		"wireguard_subnet":           "10.99.0.0/24",
+		"wireguard_hub_ip":           "",
 	}
 
 	loadINI(path, values)
@@ -146,6 +151,8 @@ func load(path string) (*Config, error) {
 	applyEnv(values, "networking_cockpit_target", "ADMIRAL_NETWORKING_COCKPIT_TARGET")
 	applyEnv(values, "caddy_admin_url", "ADMIRAL_CADDY_ADMIN_URL")
 	applyEnv(values, "trusted_proxies", "ADMIRAL_TRUSTED_PROXIES")
+	applyEnv(values, "wireguard_subnet", "ADMIRAL_WIREGUARD_SUBNET")
+	applyEnv(values, "wireguard_hub_ip", "ADMIRAL_WIREGUARD_HUB_IP")
 	var placeholderKeys []string
 	for key, value := range values {
 		if strings.TrimSpace(value) == "__REQUIRED__" {
@@ -212,6 +219,10 @@ func load(path string) (*Config, error) {
 	}
 	if values["caddy_admin_url"] == "" {
 		values["caddy_admin_url"] = "http://127.0.0.1:2019"
+	}
+	wireguardSubnet, wireguardHubIP, err := normalizeWireguardNetwork(values["wireguard_subnet"], values["wireguard_hub_ip"])
+	if err != nil {
+		return nil, err
 	}
 
 	var trustedProxies []string
@@ -298,8 +309,61 @@ func load(path string) (*Config, error) {
 		NetworkingCockpitTarget:  values["networking_cockpit_target"],
 		CaddyAdminURL:            values["caddy_admin_url"],
 		TrustedProxies:           trustedProxies,
+		WireguardSubnet:          wireguardSubnet,
+		WireguardHubIP:           wireguardHubIP,
 		DevMode:                  os.Getenv("ADMIRAL_ENV") == "development",
 	}, nil
+}
+
+func normalizeWireguardNetwork(subnet, hubIP string) (string, string, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(subnet))
+	if err != nil || !prefix.Addr().Is4() {
+		return "", "", fmt.Errorf("wireguard_subnet must be a valid IPv4 CIDR, got %q", subnet)
+	}
+	prefix = prefix.Masked()
+	privateRanges := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+		netip.MustParsePrefix("192.168.0.0/16"),
+	}
+	isPrivate := false
+	for _, privateRange := range privateRanges {
+		if privateRange.Contains(prefix.Addr()) && prefix.Bits() >= privateRange.Bits() {
+			isPrivate = true
+			break
+		}
+	}
+	if !isPrivate {
+		return "", "", fmt.Errorf("wireguard_subnet %q must be inside an RFC1918 private range", prefix)
+	}
+	if prefix.Bits() > 31 {
+		return "", "", fmt.Errorf("wireguard_subnet %q must leave an address for the hub and at least one peer", subnet)
+	}
+
+	hub := netip.Addr{}
+	if strings.TrimSpace(hubIP) == "" {
+		hub = prefix.Addr().Next()
+	} else {
+		hub, err = netip.ParseAddr(strings.TrimSpace(hubIP))
+		if err != nil || !hub.Is4() {
+			return "", "", fmt.Errorf("wireguard_hub_ip must be a valid IPv4 address, got %q", hubIP)
+		}
+	}
+	if !prefix.Contains(hub) || hub == prefix.Addr() {
+		return "", "", fmt.Errorf("wireguard_hub_ip %q must be a usable address inside wireguard_subnet %q", hubIP, prefix)
+	}
+	if prefix.Bits() <= 30 {
+		last := prefix.Addr().As4()
+		base := uint32(last[0])<<24 | uint32(last[1])<<16 | uint32(last[2])<<8 | uint32(last[3])
+		hostBits := uint32(32 - prefix.Bits())
+		broadcast := base | (uint32(1)<<hostBits - 1)
+		hubBytes := hub.As4()
+		hubValue := uint32(hubBytes[0])<<24 | uint32(hubBytes[1])<<16 | uint32(hubBytes[2])<<8 | uint32(hubBytes[3])
+		if hubValue == broadcast {
+			return "", "", fmt.Errorf("wireguard_hub_ip %q cannot be the subnet broadcast address", hubIP)
+		}
+	}
+	return prefix.String(), hub.String(), nil
 }
 
 func loadINI(path string, values map[string]string) {

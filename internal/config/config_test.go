@@ -31,7 +31,7 @@ func TestLoadRejectsTemplatePlaceholdersInConfig(t *testing.T) {
 		"ADMIRAL_NETWORKING_APPS_REDIRECT_TO", "ADMIRAL_NETWORKING_TLS_PROVIDER", "ADMIRAL_NETWORKING_TLS_EMAIL",
 		"ADMIRAL_NETWORKING_TLS_CERT_FILE", "ADMIRAL_NETWORKING_TLS_KEY_FILE", "ADMIRAL_NETWORKING_FLAGSHIP_HOST",
 		"ADMIRAL_NETWORKING_FLAGSHIP_TARGET", "ADMIRAL_NETWORKING_COCKPIT_HOST", "ADMIRAL_NETWORKING_COCKPIT_TARGET",
-		"ADMIRAL_CADDY_ADMIN_URL", "ADMIRAL_TRUSTED_PROXIES",
+		"ADMIRAL_CADDY_ADMIN_URL", "ADMIRAL_TRUSTED_PROXIES", "ADMIRAL_WIREGUARD_SUBNET", "ADMIRAL_WIREGUARD_HUB_IP",
 	}
 	for _, name := range envNames {
 		t.Setenv(name, "")
@@ -79,6 +79,37 @@ func TestLoadRejectsTemplatePlaceholdersInConfig(t *testing.T) {
 			_, err := load(configPath)
 			if err == nil || !strings.Contains(err.Error(), target) {
 				t.Fatalf("load error = %v, want a placeholder rejection naming %q", err, target)
+			}
+		})
+	}
+}
+
+func TestNormalizeWireguardNetwork(t *testing.T) {
+	tests := []struct {
+		name       string
+		subnet     string
+		hubIP      string
+		wantSubnet string
+		wantHubIP  string
+		wantErr    bool
+	}{
+		{name: "default hub derives from subnet", subnet: "10.99.0.0/24", wantSubnet: "10.99.0.0/24", wantHubIP: "10.99.0.1"},
+		{name: "custom subnet derives hub", subnet: "192.168.44.128/26", wantSubnet: "192.168.44.128/26", wantHubIP: "192.168.44.129"},
+		{name: "explicit hub override", subnet: "192.168.44.0/24", hubIP: "192.168.44.10", wantSubnet: "192.168.44.0/24", wantHubIP: "192.168.44.10"},
+		{name: "reject IPv6", subnet: "fd00::/64", wantErr: true},
+		{name: "reject public subnet", subnet: "203.0.113.0/24", wantErr: true},
+		{name: "reject subnet without a peer", subnet: "192.0.2.4/32", wantErr: true},
+		{name: "reject hub outside subnet", subnet: "192.168.44.0/24", hubIP: "192.168.45.1", wantErr: true},
+		{name: "reject broadcast as hub", subnet: "192.168.44.0/24", hubIP: "192.168.44.255", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subnet, hubIP, err := normalizeWireguardNetwork(tt.subnet, tt.hubIP)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalizeWireguardNetwork() error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if err == nil && (subnet != tt.wantSubnet || hubIP != tt.wantHubIP) {
+				t.Fatalf("normalizeWireguardNetwork() = (%q, %q), want (%q, %q)", subnet, hubIP, tt.wantSubnet, tt.wantHubIP)
 			}
 		})
 	}
@@ -311,6 +342,8 @@ func TestLoadWithTrustedProxies(t *testing.T) {
 	setEnv(t, "ADMIRAL_DATABASE_URL", "postgres://user:pass@localhost:5432/admiral_core?sslmode=require")
 	setEnv(t, "ADMIRAL_QUEUE_DATABASE_URL", "postgres://queue:pass@localhost:5432/admiral_queue?sslmode=require")
 	setEnv(t, "ADMIRAL_TRUSTED_PROXIES", "10.0.0.1, 10.0.0.2")
+	setEnv(t, "ADMIRAL_WIREGUARD_SUBNET", "192.168.44.0/24")
+	setEnv(t, "ADMIRAL_WIREGUARD_HUB_IP", "192.168.44.10")
 
 	cfg, err := load("/tmp/does-not-exist.ini")
 	if err != nil {
@@ -318,6 +351,9 @@ func TestLoadWithTrustedProxies(t *testing.T) {
 	}
 	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "10.0.0.1" || cfg.TrustedProxies[1] != "10.0.0.2" {
 		t.Errorf("unexpected trusted proxies: %v", cfg.TrustedProxies)
+	}
+	if cfg.WireguardSubnet != "192.168.44.0/24" || cfg.WireguardHubIP != "192.168.44.10" {
+		t.Errorf("unexpected WireGuard network: %s hub %s", cfg.WireguardSubnet, cfg.WireguardHubIP)
 	}
 }
 

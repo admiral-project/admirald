@@ -32,17 +32,19 @@ type TaskPublisher interface {
 }
 
 type APIHandlers struct {
-	db             *database.DB
-	log            *logging.Logger
-	publisher      TaskPublisher
-	secrets        *secrets.Manager
-	networking     *networking.Manager
-	server         *Server
-	hmacKey        string
-	tokenPepper    string
-	configTokenTTL int
-	loginLimiter   Limiter
-	knowHostPath   string
+	db              *database.DB
+	log             *logging.Logger
+	publisher       TaskPublisher
+	secrets         *secrets.Manager
+	networking      *networking.Manager
+	server          *Server
+	hmacKey         string
+	tokenPepper     string
+	configTokenTTL  int
+	loginLimiter    Limiter
+	knowHostPath    string
+	wireguardSubnet string
+	wireguardHubIP  string
 }
 
 func (h *APIHandlers) auditEvent(eventType string, fields map[string]interface{}) {

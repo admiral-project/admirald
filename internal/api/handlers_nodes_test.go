@@ -10,32 +10,14 @@ import (
 	"github.com/admiral-project/admiral/admirald/internal/database"
 )
 
-func TestWireguardLastOctet(t *testing.T) {
-	tests := []struct {
-		ip   string
-		want int
-	}{
-		{"10.99.0.2", 2},
-		{"10.99.0.100", 100},
-		{"  10.99.0.5  ", 5},
-		{"invalid", 0},
-		{"1.2.3", 0},
-		{"", 0},
-	}
-	for _, tt := range tests {
-		got := wireguardLastOctet(tt.ip)
-		if got != tt.want {
-			t.Errorf("wireguardLastOctet(%q) = %d, want %d", tt.ip, got, tt.want)
-		}
-	}
-}
-
 func TestNextKnownHostAssignment(t *testing.T) {
 	tests := []struct {
-		name  string
-		nodes []database.Node
-		role  string
-		want  knownHostBootstrapAssignment
+		name   string
+		nodes  []database.Node
+		role   string
+		subnet string
+		hubIP  string
+		want   knownHostBootstrapAssignment
 	}{
 		{
 			name:  "empty workers",
@@ -82,14 +64,66 @@ func TestNextKnownHostAssignment(t *testing.T) {
 			role: "worker",
 			want: knownHostBootstrapAssignment{NodeID: "worker-001", WireguardIP: "10.99.0.2"},
 		},
+		{
+			name:   "custom subnet worker",
+			role:   "worker",
+			subnet: "192.168.44.0/24",
+			hubIP:  "192.168.44.1",
+			want:   knownHostBootstrapAssignment{NodeID: "worker-001", WireguardIP: "192.168.44.2"},
+		},
+		{
+			name:   "custom subnet portal keeps reserved pool offset",
+			role:   "portal",
+			subnet: "192.168.44.0/24",
+			hubIP:  "192.168.44.1",
+			want:   knownHostBootstrapAssignment{NodeID: "portal-001", WireguardIP: "192.168.44.100"},
+		},
+		{
+			name:   "small custom subnet falls back to first available peer address",
+			role:   "portal",
+			subnet: "192.168.44.0/29",
+			hubIP:  "192.168.44.1",
+			want:   knownHostBootstrapAssignment{NodeID: "portal-001", WireguardIP: "192.168.44.2"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := nextKnownHostAssignment(tt.nodes, tt.role)
+			got, err := nextKnownHostAssignment(tt.nodes, tt.role, tt.subnet, tt.hubIP)
+			if err != nil {
+				t.Fatalf("nextKnownHostAssignment() error = %v", err)
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("nextKnownHostAssignment() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNextKnownHostAssignmentFailsWhenSubnetIsExhausted(t *testing.T) {
+	nodes := []database.Node{{ID: "worker-001", NodeRole: "worker", WireguardIP: "192.168.44.2"}}
+	_, err := nextKnownHostAssignment(nodes, "worker", "192.168.44.0/30", "192.168.44.1")
+	if err == nil {
+		t.Fatal("nextKnownHostAssignment() error = nil, want exhausted-subnet error")
+	}
+}
+
+func TestNextKnownHostAssignmentsKeepsWorkerAndPortalAddressesUnique(t *testing.T) {
+	worker, portal, err := nextKnownHostAssignments(nil, "192.168.44.0/29", "192.168.44.1")
+	if err != nil {
+		t.Fatalf("nextKnownHostAssignments() error = %v", err)
+	}
+	if worker.WireguardIP == portal.WireguardIP {
+		t.Fatalf("worker and portal share WireGuard address %q", worker.WireguardIP)
+	}
+	if worker.WireguardIP != "192.168.44.2" || portal.WireguardIP != "192.168.44.3" {
+		t.Fatalf("unexpected addresses: worker=%q portal=%q", worker.WireguardIP, portal.WireguardIP)
+	}
+}
+
+func TestNextKnownHostAssignmentsFailsWhenOnlyOnePeerAddressRemains(t *testing.T) {
+	_, _, err := nextKnownHostAssignments(nil, "192.168.44.0/30", "192.168.44.1")
+	if err == nil {
+		t.Fatal("nextKnownHostAssignments() error = nil, want no-addresses-remain error")
 	}
 }

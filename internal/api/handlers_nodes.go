@@ -5,11 +5,13 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,48 +26,110 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func nextKnownHostAssignment(nodes []database.Node, role string) knownHostBootstrapAssignment {
-	startOctet := 2
-	if role == "portal" {
-		startOctet = 100
+func nextKnownHostAssignment(nodes []database.Node, role, subnet, hubIP string) (knownHostBootstrapAssignment, error) {
+	if strings.TrimSpace(subnet) == "" {
+		subnet = "10.99.0.0/24"
 	}
+	if strings.TrimSpace(hubIP) == "" {
+		hubIP = "10.99.0.1"
+	}
+	network, err := netip.ParsePrefix(strings.TrimSpace(subnet))
+	if err != nil || !network.Addr().Is4() {
+		return knownHostBootstrapAssignment{}, fmt.Errorf("invalid WireGuard IPv4 subnet %q", subnet)
+	}
+	network = network.Masked()
+	hub, err := netip.ParseAddr(strings.TrimSpace(hubIP))
+	if err != nil || !hub.Is4() || !network.Contains(hub) {
+		return knownHostBootstrapAssignment{}, fmt.Errorf("invalid WireGuard hub address %q for subnet %q", hubIP, network)
+	}
+
 	maxSuffix := 0
-	usedOctets := map[int]bool{}
-	prefix := role + "-"
+	usedAddresses := map[uint32]bool{}
+	rolePrefix := role + "-"
 	for _, node := range nodes {
-		if node.NodeRole != role {
-			continue
-		}
-		if strings.HasPrefix(node.ID, prefix) {
-			if suffix, err := strconv.Atoi(strings.TrimPrefix(node.ID, prefix)); err == nil && suffix > maxSuffix {
+		if node.NodeRole == role && strings.HasPrefix(node.ID, rolePrefix) {
+			if suffix, err := strconv.Atoi(strings.TrimPrefix(node.ID, rolePrefix)); err == nil && suffix > maxSuffix {
 				maxSuffix = suffix
 			}
 		}
-		if octet := wireguardLastOctet(node.WireguardIP); octet >= startOctet {
-			usedOctets[octet] = true
+		addr, err := netip.ParseAddr(strings.TrimSpace(node.WireguardIP))
+		if err == nil && addr.Is4() && network.Contains(addr) {
+			usedAddresses[ipv4Uint32(addr)] = true
 		}
 	}
 
-	nextOctet := startOctet
-	for usedOctets[nextOctet] {
-		nextOctet++
+	base := ipv4Uint32(network.Addr())
+	hubValue := ipv4Uint32(hub)
+	if network.Bits() == 32 {
+		return knownHostBootstrapAssignment{}, fmt.Errorf("WireGuard subnet %q has no peer address", network)
+	}
+	hostCount := uint64(1) << uint(32-network.Bits())
+	firstOffset := uint64(1)
+	lastOffset := hostCount - 2
+	if network.Bits() == 31 {
+		firstOffset = 0
+		lastOffset = 1
+	}
+	preferredOffset := uint64(2)
+	if role == "portal" {
+		preferredOffset = 100
+	}
+	if preferredOffset < firstOffset || preferredOffset > lastOffset {
+		preferredOffset = firstOffset
+	}
+	addressValue, found := findAvailableWireguardAddress(base, firstOffset, lastOffset, preferredOffset, hubValue, usedAddresses)
+	if !found {
+		return knownHostBootstrapAssignment{}, fmt.Errorf("no WireGuard addresses remain in subnet %q", network)
 	}
 	return knownHostBootstrapAssignment{
 		NodeID:      fmt.Sprintf("%s-%03d", role, maxSuffix+1),
-		WireguardIP: fmt.Sprintf("10.99.0.%d", nextOctet),
-	}
+		WireguardIP: ipv4FromUint32(addressValue).String(),
+	}, nil
 }
 
-func wireguardLastOctet(ip string) int {
-	parts := strings.Split(strings.TrimSpace(ip), ".")
-	if len(parts) != 4 {
-		return 0
-	}
-	last, err := strconv.Atoi(parts[3])
+func nextKnownHostAssignments(nodes []database.Node, subnet, hubIP string) (knownHostBootstrapAssignment, knownHostBootstrapAssignment, error) {
+	worker, err := nextKnownHostAssignment(nodes, "worker", subnet, hubIP)
 	if err != nil {
-		return 0
+		return knownHostBootstrapAssignment{}, knownHostBootstrapAssignment{}, fmt.Errorf("allocate next worker address: %w", err)
 	}
-	return last
+
+	// Reserve the worker address while computing the portal assignment so a
+	// small custom subnet cannot advertise the same address for both roles.
+	nodesWithWorkerReservation := append(append([]database.Node(nil), nodes...), database.Node{
+		WireguardIP: worker.WireguardIP,
+	})
+	portal, err := nextKnownHostAssignment(nodesWithWorkerReservation, "portal", subnet, hubIP)
+	if err != nil {
+		return knownHostBootstrapAssignment{}, knownHostBootstrapAssignment{}, fmt.Errorf("allocate next portal address: %w", err)
+	}
+	return worker, portal, nil
+}
+
+func ipv4Uint32(addr netip.Addr) uint32 {
+	bytes := addr.As4()
+	return binary.BigEndian.Uint32(bytes[:])
+}
+
+func ipv4FromUint32(value uint32) netip.Addr {
+	var bytes [4]byte
+	binary.BigEndian.PutUint32(bytes[:], value)
+	return netip.AddrFrom4(bytes)
+}
+
+func findAvailableWireguardAddress(base uint32, first, last, preferred uint64, hub uint32, used map[uint32]bool) (uint32, bool) {
+	for offset := preferred; offset <= last; offset++ {
+		candidate := base + uint32(offset)
+		if candidate != hub && !used[candidate] {
+			return candidate, true
+		}
+	}
+	for offset := first; offset < preferred; offset++ {
+		candidate := base + uint32(offset)
+		if candidate != hub && !used[candidate] {
+			return candidate, true
+		}
+	}
+	return 0, false
 }
 
 func (h *APIHandlers) syncKnownHostInventory() error {
@@ -80,12 +144,13 @@ func (h *APIHandlers) syncKnownHostInventory() error {
 	inv := knownHostInventory{
 		Version:     1,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Next: knownHostNextAssignments{
-			Worker: nextKnownHostAssignment(nodes, "worker"),
-			Portal: nextKnownHostAssignment(nodes, "portal"),
-		},
-		Nodes: map[string]knownHostNodeSpec{},
+		Nodes:       map[string]knownHostNodeSpec{},
 	}
+	workerAssignment, portalAssignment, err := nextKnownHostAssignments(nodes, h.wireguardSubnet, h.wireguardHubIP)
+	if err != nil {
+		return err
+	}
+	inv.Next = knownHostNextAssignments{Worker: workerAssignment, Portal: portalAssignment}
 	for _, node := range nodes {
 		inv.Nodes[node.ID] = knownHostNodeSpec{
 			NodeID:      node.ID,
