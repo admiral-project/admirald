@@ -14,13 +14,18 @@ import (
 var ErrCustomerAppNotPaused = errors.New("customer app is no longer paused")
 
 // effectiveAvailabilityColumns keeps the last runtime observation separate
-// from whether the assigned worker is currently reachable and healthy.
+// from whether the assigned worker and workload are currently available. Fleet
+// checks workload health every 30 seconds; two missed checks make the observation
+// stale until a fresh report arrives.
 const effectiveAvailabilityColumns = `CASE
 			WHEN ca.node_id IS NULL THEN 'unknown'
 			WHEN n.status <> 'active'
 			  OR n.last_heartbeat IS NULL
 			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes'
 			  OR n.health_status <> 'healthy' THEN 'unavailable'
+			WHEN ca.last_health_checked_at IS NULL THEN 'unknown'
+			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'unavailable'
+			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'unavailable'
 			ELSE 'available'
 		END,
 		CASE
@@ -29,6 +34,9 @@ const effectiveAvailabilityColumns = `CASE
 			WHEN n.last_heartbeat IS NULL
 			  OR n.last_heartbeat <= CURRENT_TIMESTAMP - INTERVAL '2 minutes' THEN 'heartbeat_stale'
 			WHEN n.health_status <> 'healthy' THEN COALESCE(NULLIF(n.health_reason_codes, ''), 'node_unhealthy')
+			WHEN ca.last_health_checked_at IS NULL THEN 'runtime_not_observed'
+			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'runtime_not_healthy'
+			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'runtime_observation_stale'
 			ELSE ''
 		END`
 

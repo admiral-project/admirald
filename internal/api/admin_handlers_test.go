@@ -1358,7 +1358,7 @@ func TestFleetCallbackDedicatedSignatureRequiresFreshTimestamp(t *testing.T) {
 	}
 }
 
-func TestInstanceAvailabilityTracksNodeWithoutMutatingRuntimeObservation(t *testing.T) {
+func TestInstanceAvailabilityTracksNodeAndFreshRuntimeWithoutMutatingObservation(t *testing.T) {
 	h := newTestHandler(t, false)
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
@@ -1369,15 +1369,22 @@ func TestInstanceAvailabilityTracksNodeWithoutMutatingRuntimeObservation(t *test
 	if err := h.db.UpdateCustomerAppStatus("inst_001", "active", "running"); err != nil {
 		t.Fatalf("set instance status: %v", err)
 	}
-	if err := h.db.UpdateInstanceHealth("inst_001", "healthy", "last worker observation"); err != nil {
-		t.Fatalf("set last runtime observation: %v", err)
-	}
 	heartbeat := &admiral.HeartbeatRequest{NodeID: "node_001", DiskTotal: 100, DiskUsed: 10, RAMTotal: 100, RAMUsed: 10}
 	if err := h.db.UpdateNodeHeartbeat("node_001", heartbeat); err != nil {
 		t.Fatalf("set initial heartbeat: %v", err)
 	}
 	if err := h.db.UpdateNodeHealth("node_001", "healthy", "", true, ""); err != nil {
 		t.Fatalf("set initial worker health: %v", err)
+	}
+	unobserved, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get instance before first runtime observation: %v", err)
+	}
+	if unobserved.EffectiveAvailability != "unknown" || unobserved.AvailabilityReason != "runtime_not_observed" {
+		t.Fatalf("expected unknown/runtime_not_observed before first health report, got %s/%s", unobserved.EffectiveAvailability, unobserved.AvailabilityReason)
+	}
+	if err := h.db.UpdateInstanceHealth("inst_001", "healthy", "last worker observation"); err != nil {
+		t.Fatalf("set last runtime observation: %v", err)
 	}
 	available, err := h.db.GetCustomerApp("inst_001")
 	if err != nil {
@@ -1437,6 +1444,47 @@ func TestInstanceAvailabilityTracksNodeWithoutMutatingRuntimeObservation(t *test
 	}
 	if recovered.NodeID == nil || *recovered.NodeID != "node_001" {
 		t.Fatalf("recovery changed node placement: %v", recovered.NodeID)
+	}
+
+	if _, err := h.db.Exec("UPDATE customer_apps SET last_health_checked_at = CURRENT_TIMESTAMP - INTERVAL '90 seconds' WHERE id = $1", "inst_001"); err != nil {
+		t.Fatalf("expire runtime observation: %v", err)
+	}
+	stale, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get instance with stale runtime observation: %v", err)
+	}
+	if stale.EffectiveAvailability != "unavailable" || stale.AvailabilityReason != "runtime_observation_stale" {
+		t.Fatalf("expected unavailable/runtime_observation_stale, got %s/%s", stale.EffectiveAvailability, stale.AvailabilityReason)
+	}
+	if stale.HealthStatus != "healthy" || stale.HealthMessage != "last worker observation" {
+		t.Fatalf("stale availability changed last runtime observation: %s/%s", stale.HealthStatus, stale.HealthMessage)
+	}
+	if stale.LastHealthChecked == nil || time.Since(*stale.LastHealthChecked) < 85*time.Second {
+		t.Fatalf("stale availability did not preserve the old health timestamp: %v", stale.LastHealthChecked)
+	}
+
+	if err := h.db.UpdateInstanceHealth("inst_001", "stopped", "pod not running after reboot"); err != nil {
+		t.Fatalf("record stopped workload: %v", err)
+	}
+	stopped, err := h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get instance with fresh stopped runtime observation: %v", err)
+	}
+	if stopped.EffectiveAvailability != "unavailable" || stopped.AvailabilityReason != "runtime_not_healthy" {
+		t.Fatalf("expected unavailable/runtime_not_healthy, got %s/%s", stopped.EffectiveAvailability, stopped.AvailabilityReason)
+	}
+	if stopped.HealthStatus != "stopped" || stopped.HealthMessage != "pod not running after reboot" {
+		t.Fatalf("fresh stopped observation was lost: %s/%s", stopped.HealthStatus, stopped.HealthMessage)
+	}
+	if err := h.db.UpdateInstanceHealth("inst_001", "healthy", "recovered after reboot"); err != nil {
+		t.Fatalf("record recovered workload: %v", err)
+	}
+	available, err = h.db.GetCustomerApp("inst_001")
+	if err != nil {
+		t.Fatalf("get recovered runtime availability: %v", err)
+	}
+	if available.EffectiveAvailability != "available" || available.AvailabilityReason != "" {
+		t.Fatalf("fresh healthy runtime did not restore availability: %s/%s", available.EffectiveAvailability, available.AvailabilityReason)
 	}
 }
 
