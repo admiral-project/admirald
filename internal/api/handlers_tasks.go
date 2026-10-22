@@ -331,7 +331,8 @@ func (h *APIHandlers) decryptedSecretMap(instanceID string) (map[string]map[stri
 func actionRequiresSecrets(action admiral.TaskAction) bool {
 	switch action {
 	case admiral.ActionProvisionApp, admiral.ActionRestoreBackup,
-		admiral.ActionStartApp, admiral.ActionResumeApp,
+		admiral.ActionStartApp, admiral.ActionResumeApp, admiral.ActionReactivateApp,
+		admiral.ActionResizeApp,
 		admiral.ActionBackupDatabase:
 		return true
 	default:
@@ -359,7 +360,8 @@ func retryableAction(action admiral.TaskAction) (admiral.TaskAction, string, boo
 func scopeTaskSecrets(action admiral.TaskAction, payload admiral.AppDefinitionPayload, all map[string]map[string]string, serviceName string) map[string]map[string]string {
 	switch action {
 	case admiral.ActionProvisionApp, admiral.ActionRestoreBackup,
-		admiral.ActionStartApp, admiral.ActionResumeApp:
+		admiral.ActionStartApp, admiral.ActionResumeApp,
+		admiral.ActionReactivateApp, admiral.ActionResizeApp:
 		return cloneSecretMap(all)
 	case admiral.ActionBackupDatabase:
 		return scopeBackupSecrets(payload, all, serviceName)

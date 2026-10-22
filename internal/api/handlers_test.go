@@ -61,6 +61,32 @@ func TestScopeTaskSecrets(t *testing.T) {
 			},
 		},
 		{
+			name:   "reactivation includes all secrets",
+			action: admiral.ActionReactivateApp,
+			want: map[string]map[string]string{
+				"app": {"APP_SECRET": "app-secret"},
+				"db": {
+					"POSTGRES_DB":       "admiral",
+					"POSTGRES_USER":     "postgres",
+					"POSTGRES_PASSWORD": "pw",
+					"UNUSED":            "skip",
+				},
+			},
+		},
+		{
+			name:   "resize includes all secrets",
+			action: admiral.ActionResizeApp,
+			want: map[string]map[string]string{
+				"app": {"APP_SECRET": "app-secret"},
+				"db": {
+					"POSTGRES_DB":       "admiral",
+					"POSTGRES_USER":     "postgres",
+					"POSTGRES_PASSWORD": "pw",
+					"UNUSED":            "skip",
+				},
+			},
+		},
+		{
 			name:   "backup includes only referenced db secrets",
 			action: admiral.ActionBackupDatabase,
 			want: map[string]map[string]string{
@@ -83,6 +109,31 @@ func TestScopeTaskSecrets(t *testing.T) {
 			got := scopeTaskSecrets(tt.action, payload, all, "db")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("expected %#v, got %#v", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestActionRequiresSecrets(t *testing.T) {
+	tests := []struct {
+		action admiral.TaskAction
+		want   bool
+	}{
+		{action: admiral.ActionProvisionApp, want: true},
+		{action: admiral.ActionRestoreBackup, want: true},
+		{action: admiral.ActionStartApp, want: true},
+		{action: admiral.ActionResumeApp, want: true},
+		{action: admiral.ActionReactivateApp, want: true},
+		{action: admiral.ActionResizeApp, want: true},
+		{action: admiral.ActionBackupDatabase, want: true},
+		{action: admiral.ActionPauseApp, want: false},
+		{action: admiral.ActionDeprovisionApp, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.action), func(t *testing.T) {
+			if got := actionRequiresSecrets(tt.action); got != tt.want {
+				t.Fatalf("actionRequiresSecrets(%q) = %t, want %t", tt.action, got, tt.want)
 			}
 		})
 	}
