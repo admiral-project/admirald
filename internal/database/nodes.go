@@ -342,7 +342,11 @@ func (d *DB) RemoveNode(id string, force bool) error {
 			return fmt.Errorf("remove node %q: check instances: %w", id, err)
 		}
 		if count > 0 {
-			return fmt.Errorf("remove node %q: node has %d active instance(s); use --force to override", id, count)
+			label := "instances"
+			if count == 1 {
+				label = "instance"
+			}
+			return fmt.Errorf("remove node %q: %w (%d active %s); use --force to override", id, ErrNodeHasActiveInstances, count, label)
 		}
 	}
 

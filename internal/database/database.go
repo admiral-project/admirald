@@ -18,6 +18,7 @@ type DB struct {
 }
 
 var ErrNodeCapacityPolicyBlocked = errors.New("node cannot receive new workload under current policy")
+var ErrNodeHasActiveInstances = errors.New("node has active instances")
 
 func Connect(dbURL string) (*DB, error) {
 	driver := "pgx"

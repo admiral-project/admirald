@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -244,6 +245,17 @@ func bcryptHash(raw string) (string, error) {
 	return string(b), nil
 }
 
+func nodeRemovalErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, database.ErrNodeHasActiveInstances):
+		return http.StatusConflict
+	case strings.Contains(err.Error(), "node not found"):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (h *APIHandlers) HandleNodes(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -474,11 +486,12 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 						h.log.Error("Restore node tasks after failed removal failed", restoreErr, map[string]interface{}{"node_id": nodeID})
 					}
 				}
-				if strings.Contains(err.Error(), "has active instance") {
+				switch nodeRemovalErrorStatus(err) {
+				case http.StatusConflict:
 					writeError(w, http.StatusConflict, err.Error())
-				} else if strings.Contains(err.Error(), "node not found") {
+				case http.StatusNotFound:
 					writeError(w, http.StatusNotFound, "Node not found")
-				} else {
+				default:
 					h.log.Error("Remove node failed", err, map[string]interface{}{"node_id": nodeID})
 					writeError(w, http.StatusInternalServerError, "Failed to remove node")
 				}

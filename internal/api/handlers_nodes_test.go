@@ -4,11 +4,46 @@
 package api
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 )
+
+func TestNodeRemovalErrorStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{
+			name: "active instances are a conflict",
+			err:  fmt.Errorf("remove node: %w (1 active instance)", database.ErrNodeHasActiveInstances),
+			want: http.StatusConflict,
+		},
+		{
+			name: "missing node is not found",
+			err:  errors.New("remove node: node not found"),
+			want: http.StatusNotFound,
+		},
+		{
+			name: "unexpected database error is internal",
+			err:  errors.New("database unavailable"),
+			want: http.StatusInternalServerError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nodeRemovalErrorStatus(test.err); got != test.want {
+				t.Fatalf("nodeRemovalErrorStatus(%v) = %d, want %d", test.err, got, test.want)
+			}
+		})
+	}
+}
 
 func TestNextKnownHostAssignment(t *testing.T) {
 	tests := []struct {
