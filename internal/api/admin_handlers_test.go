@@ -1578,6 +1578,45 @@ func TestInstanceAvailabilityInvalidatesHealthFromPreviousNodeBoot(t *testing.T)
 	}
 }
 
+func TestInstanceAvailabilityExpiresPreBootHealthBeforeHeartbeatChangesBootID(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_boot_pending", "worker-boot-pending", "10.0.0.9", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_boot_pending", "cust_boot_pending", "testapp", "starter", "node_boot_pending", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_boot_pending", "active", "running"); err != nil {
+		t.Fatalf("set instance status: %v", err)
+	}
+	if err := h.db.UpdateNodeHeartbeat("node_boot_pending", &admiral.HeartbeatRequest{NodeID: "node_boot_pending", BootID: "boot-before"}); err != nil {
+		t.Fatalf("record pre-reboot heartbeat: %v", err)
+	}
+	if err := h.db.UpdateNodeHealth("node_boot_pending", "healthy", "", true, ""); err != nil {
+		t.Fatalf("set node health: %v", err)
+	}
+	if err := h.db.UpdateInstanceHealthForBoot("inst_boot_pending", "healthy", "running", "pre-boot observation", "boot-before", false); err != nil {
+		t.Fatalf("record pre-reboot runtime health: %v", err)
+	}
+	if _, err := h.db.Exec("UPDATE customer_apps SET last_health_checked_at = CURRENT_TIMESTAMP - INTERVAL '16 seconds' WHERE id = $1", "inst_boot_pending"); err != nil {
+		t.Fatalf("age pre-reboot health while the new heartbeat is pending: %v", err)
+	}
+
+	stale, err := h.db.GetCustomerApp("inst_boot_pending")
+	if err != nil {
+		t.Fatalf("get instance before the post-boot heartbeat: %v", err)
+	}
+	if stale.EffectiveAvailability != "unavailable" || stale.AvailabilityReason != "runtime_observation_stale" {
+		t.Fatalf("expected stale pre-boot health to be unavailable before heartbeat, got %s/%s", stale.EffectiveAvailability, stale.AvailabilityReason)
+	}
+	if stale.HealthStatus != "healthy" || stale.HealthMessage != "pre-boot observation" {
+		t.Fatalf("stale availability changed historical health: %s/%s", stale.HealthStatus, stale.HealthMessage)
+	}
+	if stale.LastHealthChecked == nil || time.Since(*stale.LastHealthChecked) < 15*time.Second {
+		t.Fatalf("stale availability did not preserve the old health timestamp: %v", stale.LastHealthChecked)
+	}
+}
+
 func TestHandleAdminHealthCallbackIPAndNodeValidation(t *testing.T) {
 	h := newTestHandler(t, false)
 

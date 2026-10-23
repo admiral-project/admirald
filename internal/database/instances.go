@@ -15,8 +15,9 @@ var ErrCustomerAppNotPaused = errors.New("customer app is no longer paused")
 
 // effectiveAvailabilityColumns keeps the last runtime observation separate
 // from whether the assigned worker and workload are currently available. Fleet
-// checks workload health every 30 seconds; two missed checks make the observation
-// stale until a fresh report arrives.
+// reports workload health every five seconds. A 15-second freshness bound
+// allows for a missed report and scheduling jitter without keeping old health
+// eligible through a host restart or service outage.
 const effectiveAvailabilityColumns = `CASE
 			WHEN ca.technical_status IN ('stopped', 'paused_for_storage') THEN 'unavailable'
 			WHEN ca.technical_status IN ('deprovisioning', 'deprovisioned') THEN 'unavailable'
@@ -29,7 +30,7 @@ const effectiveAvailabilityColumns = `CASE
 			WHEN COALESCE(n.boot_id, '') = '' THEN 'unavailable'
 			WHEN COALESCE(ca.last_health_boot_id, '') <> n.boot_id THEN 'unavailable'
 			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'unavailable'
-			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'unavailable'
+			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '15 seconds' THEN 'unavailable'
 			ELSE 'available'
 		END,
 		CASE
@@ -46,7 +47,7 @@ const effectiveAvailabilityColumns = `CASE
 			WHEN COALESCE(n.boot_id, '') = '' THEN 'node_boot_id_unknown'
 			WHEN COALESCE(ca.last_health_boot_id, '') <> n.boot_id THEN 'runtime_observation_before_node_boot'
 			WHEN COALESCE(ca.health_status, '') <> 'healthy' THEN 'runtime_not_healthy'
-			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '60 seconds' THEN 'runtime_observation_stale'
+			WHEN ca.last_health_checked_at <= CURRENT_TIMESTAMP - INTERVAL '15 seconds' THEN 'runtime_observation_stale'
 			ELSE ''
 		END`
 
