@@ -60,9 +60,9 @@ func NodeAuthMiddleware(log *logging.Logger, db *database.DB, pepper string, exp
 		identifier := nodeTokenIdentifier(reqToken, pepper)
 		node, nodeToken, err := db.GetNodeTokenByIdentifier(identifier)
 		if err != nil {
-			limiter.Allow(key, authFailureLimit, authFailureWindow)
-			logAuthFailure(log, "ERROR", "node_token", "auth_db_error", http.StatusUnauthorized, r, err)
-			writeGenericAuthError(w, http.StatusUnauthorized)
+			w.Header().Set("Retry-After", "5")
+			logAuthFailure(log, "ERROR", "node_token", "auth_db_error", http.StatusServiceUnavailable, r, err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication service temporarily unavailable"})
 			return
 		}
 		if node == nil || nodeToken == nil {
