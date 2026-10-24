@@ -94,6 +94,15 @@ type ServiceInfo struct {
 	User                string                     `json:"user,omitempty"`
 }
 
+// ServiceHealthCheck is the non-secret subset of a workload service that
+// Fleet persists locally so periodic health reports can continue evaluating
+// the same declared check after the provision task has completed.
+type ServiceHealthCheck struct {
+	ServiceName string          `json:"service_name"`
+	HealthCheck YAMLHealthCheck `json:"healthcheck"`
+	HostPort    int             `json:"host_port,omitempty"`
+}
+
 type SharedVolumeInfo struct {
 	Name     string   `json:"name"`
 	Mount    string   `json:"mount"`
