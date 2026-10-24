@@ -378,9 +378,15 @@ func (d *DB) RemoveNodeWithHook(id string, force bool, beforeDelete func(Node) (
 	if err != nil {
 		return fmt.Errorf("remove node %q: delete node_tokens: %w", id, err)
 	}
-	_, err = tx.Exec("DELETE FROM customer_apps WHERE node_id = $1", id)
-	if err != nil {
-		return fmt.Errorf("remove node %q: delete customer_apps: %w", id, err)
+	// A removed node may still have historical, terminal customer instances.
+	// Keep those records and their operation/backup history; only detach the
+	// foreign-key references so the node row can be removed. Operations and
+	// backup records retain their own node ID as a historical identifier.
+	if _, err := tx.Exec("UPDATE customer_apps SET node_id = NULL WHERE node_id = $1", id); err != nil {
+		return fmt.Errorf("remove node %q: detach customer_apps: %w", id, err)
+	}
+	if _, err := tx.Exec("UPDATE backups SET node_id = NULL WHERE node_id = $1", id); err != nil {
+		return fmt.Errorf("remove node %q: detach backups: %w", id, err)
 	}
 	result, err := tx.Exec("DELETE FROM nodes WHERE id = $1", id)
 	if err != nil {
