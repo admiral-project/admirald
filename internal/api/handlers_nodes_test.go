@@ -30,6 +30,11 @@ func TestNodeRemovalErrorStatus(t *testing.T) {
 			want: http.StatusNotFound,
 		},
 		{
+			name: "WireGuard revocation failure is unavailable",
+			err:  fmt.Errorf("remove node: pre-delete revocation: %w: helper unavailable", ErrWireGuardPeerRevocation),
+			want: http.StatusServiceUnavailable,
+		},
+		{
 			name: "unexpected database error is internal",
 			err:  errors.New("database unavailable"),
 			want: http.StatusInternalServerError,

@@ -249,6 +249,8 @@ func nodeRemovalErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, database.ErrNodeHasActiveInstances):
 		return http.StatusConflict
+	case errors.Is(err, ErrWireGuardPeerRevocation):
+		return http.StatusServiceUnavailable
 	case strings.Contains(err.Error(), "node not found"):
 		return http.StatusNotFound
 	default:
@@ -480,7 +482,20 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if err := h.db.RemoveNode(nodeID, force); err != nil {
+			if err := h.db.RemoveNodeWithHook(nodeID, force, func(node database.Node) (func(), error) {
+				wireguardIP := strings.TrimSpace(node.WireguardIP)
+				if wireguardIP == "" || wireguardIP == strings.TrimSpace(h.wireguardHubIP) {
+					return nil, nil
+				}
+				if h.wireguardPeerRevoker == nil {
+					return nil, fmt.Errorf("%w: local helper is unavailable", ErrWireGuardPeerRevocation)
+				}
+				release, err := h.wireguardPeerRevoker.RevokePeer(r.Context(), wireguardIP)
+				if err != nil {
+					return nil, fmt.Errorf("%w: %v", ErrWireGuardPeerRevocation, err)
+				}
+				return release, nil
+			}); err != nil {
 				if coordinated {
 					if restoreErr := coordinator.RestoreCancelledTasksForNode(nodeID, removalMarker); restoreErr != nil {
 						h.log.Error("Restore node tasks after failed removal failed", restoreErr, map[string]interface{}{"node_id": nodeID})
@@ -491,6 +506,8 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusConflict, err.Error())
 				case http.StatusNotFound:
 					writeError(w, http.StatusNotFound, "Node not found")
+				case http.StatusServiceUnavailable:
+					writeError(w, http.StatusServiceUnavailable, "WireGuard peer revocation failed; node and token were retained. Check the hub revocation socket and retry.")
 				default:
 					h.log.Error("Remove node failed", err, map[string]interface{}{"node_id": nodeID})
 					writeError(w, http.StatusInternalServerError, "Failed to remove node")

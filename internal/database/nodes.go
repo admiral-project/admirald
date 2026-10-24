@@ -323,13 +323,27 @@ func (d *DB) GetNodeByTokenIdentifier(identifier string) (*Node, error) {
 }
 
 func (d *DB) RemoveNode(id string, force bool) error {
+	return d.RemoveNodeWithHook(id, force, nil)
+}
+
+// RemoveNodeWithHook locks the node and performs the optional external
+// revocation after active-instance checks but before deleting durable node
+// state. A hook error rolls back the transaction and leaves the node/token
+// available for an operator to retry the revocation.
+func (d *DB) RemoveNodeWithHook(id string, force bool, beforeDelete func(Node) (func(), error)) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("remove node %q: begin tx: %w", id, err)
 	}
 	defer tx.Rollback()
-	var existing string
-	if err := tx.QueryRow("SELECT id FROM nodes WHERE id = $1 FOR UPDATE", id).Scan(&existing); err == sql.ErrNoRows {
+	var releaseHook func()
+	defer func() {
+		if releaseHook != nil {
+			releaseHook()
+		}
+	}()
+	var existing Node
+	if err := scanNode(tx.QueryRow("SELECT "+nodeColumns+" FROM nodes WHERE id = $1 FOR UPDATE", id), &existing); err == sql.ErrNoRows {
 		return fmt.Errorf("remove node %q: node not found", id)
 	} else if err != nil {
 		return fmt.Errorf("remove node %q: lock node: %w", id, err)
@@ -347,6 +361,12 @@ func (d *DB) RemoveNode(id string, force bool) error {
 				label = "instance"
 			}
 			return fmt.Errorf("remove node %q: %w (%d active %s); use --force to override", id, ErrNodeHasActiveInstances, count, label)
+		}
+	}
+	if beforeDelete != nil {
+		releaseHook, err = beforeDelete(existing)
+		if err != nil {
+			return fmt.Errorf("remove node %q: pre-delete revocation: %w", id, err)
 		}
 	}
 
