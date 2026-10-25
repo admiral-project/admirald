@@ -370,8 +370,12 @@ func TestReverseProxyRouteUsesConfiguredCA(t *testing.T) {
 	if _, ok := tlsConfig["insecure_skip_verify"]; ok {
 		t.Fatal("production transport must not disable TLS verification")
 	}
-	if got := tlsConfig["ca"].([]interface{}); len(got) != 1 || got[0] != "/etc/admiral/tls/ca.pem" {
-		t.Fatalf("unexpected CA configuration: %#v", got)
+	caConfig, ok := tlsConfig["ca"].(map[string]interface{})
+	if !ok || caConfig["provider"] != "file" {
+		t.Fatalf("unexpected CA provider configuration: %#v", tlsConfig["ca"])
+	}
+	if got := caConfig["pem_files"].([]interface{}); len(got) != 1 || got[0] != "/etc/admiral/tls/ca.pem" {
+		t.Fatalf("unexpected CA file configuration: %#v", caConfig["pem_files"])
 	}
 	_ = os.Getenv("ADMIRAL_TLS_CA_FILE")
 }

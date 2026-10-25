@@ -415,7 +415,10 @@ func reverseProxyRoute(match []interface{}, upstream string) map[string]interfac
 		if scheme == "https" {
 			tlsConfig := map[string]interface{}{}
 			if caFile := os.Getenv("ADMIRAL_TLS_CA_FILE"); caFile != "" {
-				tlsConfig["ca"] = []interface{}{caFile}
+				tlsConfig["ca"] = map[string]interface{}{
+					"provider":  "file",
+					"pem_files": []interface{}{caFile},
+				}
 			} else if os.Getenv("ADMIRAL_DEV_MODE") == "true" {
 				tlsConfig["insecure_skip_verify"] = true
 			} else {
