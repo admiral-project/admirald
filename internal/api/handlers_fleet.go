@@ -240,6 +240,20 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason := staleTaskReason(task, op, authenticatedNodeID)
+		if reason == "" {
+			instance, err := h.db.GetCustomerApp(task.InstanceID)
+			if err != nil {
+				h.log.Error("Task instance lookup failed", err, map[string]interface{}{"instance_id": task.InstanceID, "task_id": task.TaskID})
+				writeError(w, http.StatusServiceUnavailable, "task instance state unavailable")
+				return
+			}
+			switch {
+			case instance == nil:
+				reason = "instance no longer exists"
+			case instance.TechnicalStatus == "deprovisioned":
+				reason = "instance is already deprovisioned"
+			}
+		}
 		if reason != "" {
 			if err := h.publisher.CancelCommandForNode(commandID, authenticatedNodeID, reason); err != nil {
 				h.log.Error("Stale task cancellation failed", err, map[string]interface{}{"operation_id": task.OperationID, "task_id": task.TaskID})
@@ -288,7 +302,13 @@ func staleTaskReason(task *admiral.FleetTask, op *database.Operation, nodeID str
 	if op.Action != string(task.Action) {
 		return "task action does not match operation"
 	}
-	if op.TaskID != "" && op.TaskID != task.TaskID {
+	if strings.TrimSpace(op.TaskID) == "" {
+		return "operation task ID is missing"
+	}
+	if strings.TrimSpace(task.TaskID) == "" {
+		return "claimed task ID is missing"
+	}
+	if op.TaskID != task.TaskID {
 		return "task was replaced by a newer operation task"
 	}
 	return ""

@@ -61,18 +61,26 @@ func TestHandleTaskClaimDiscardsIneligibleTasksBeforeDispatch(t *testing.T) {
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
+	if err := h.db.CreateCustomerApp("inst_002", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create deprovisioned instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_002", "cancelled", "deprovisioned"); err != nil {
+		t.Fatalf("mark instance deprovisioned: %v", err)
+	}
 
 	operations := []struct {
-		id, status, taskID string
+		id, instanceID, status, taskID string
 	}{
-		{"op_failed", "failed", "task_failed"},
-		{"op_cancelled", "cancelled", "task_cancelled"},
-		{"op_succeeded", "succeeded", "task_succeeded"},
-		{"op_replaced", "running", "task_current"},
-		{"op_live", "running", "task_live"},
+		{"op_failed", "inst_001", "failed", "task_failed"},
+		{"op_cancelled", "inst_001", "cancelled", "task_cancelled"},
+		{"op_succeeded", "inst_001", "succeeded", "task_succeeded"},
+		{"op_replaced", "inst_001", "running", "task_current"},
+		{"op_deprovisioned", "inst_002", "running", "task_deprovisioned"},
+		{"op_missing_task", "inst_001", "running", ""},
+		{"op_live", "inst_001", "running", "task_live"},
 	}
 	for _, op := range operations {
-		if err := h.db.CreateOperation(op.id, "inst_001", "node_001", string(admiral.ActionProvisionApp), op.status, "test"); err != nil {
+		if err := h.db.CreateOperation(op.id, op.instanceID, "node_001", string(admiral.ActionProvisionApp), op.status, "test"); err != nil {
 			t.Fatalf("create operation %s: %v", op.id, err)
 		}
 		if err := h.db.UpdateOperationTaskID(op.id, op.taskID); err != nil {
@@ -86,6 +94,8 @@ func TestHandleTaskClaimDiscardsIneligibleTasksBeforeDispatch(t *testing.T) {
 		{commandID: "cmd_succeeded", task: claimTask("op_succeeded", "task_succeeded")},
 		{commandID: "cmd_missing", task: claimTask("op_missing", "task_missing")},
 		{commandID: "cmd_replaced", task: claimTask("op_replaced", "task_old")},
+		{commandID: "cmd_deprovisioned", task: claimTaskForInstance("op_deprovisioned", "task_deprovisioned", "inst_002")},
+		{commandID: "cmd_missing_task", task: claimTask("op_missing_task", "task_without_operation_id")},
 		{commandID: "cmd_live", task: claimTask("op_live", "task_live")},
 	}}
 	h.publisher = publisher
@@ -108,7 +118,7 @@ func TestHandleTaskClaimDiscardsIneligibleTasksBeforeDispatch(t *testing.T) {
 	if response.Task.TaskID != "task_live" {
 		t.Fatalf("dispatched task %q, want only live task", response.Task.TaskID)
 	}
-	wantDiscarded := []string{"cmd_failed", "cmd_cancelled", "cmd_succeeded", "cmd_missing", "cmd_replaced"}
+	wantDiscarded := []string{"cmd_failed", "cmd_cancelled", "cmd_succeeded", "cmd_missing", "cmd_replaced", "cmd_deprovisioned", "cmd_missing_task"}
 	if !reflect.DeepEqual(publisher.discardedCommands, wantDiscarded) {
 		t.Fatalf("discarded commands = %v, want %v", publisher.discardedCommands, wantDiscarded)
 	}
@@ -167,11 +177,15 @@ func TestTerminalFleetCallbackSettlesQueueCommand(t *testing.T) {
 }
 
 func claimTask(operationID, taskID string) *admiral.FleetTask {
+	return claimTaskForInstance(operationID, taskID, "inst_001")
+}
+
+func claimTaskForInstance(operationID, taskID, instanceID string) *admiral.FleetTask {
 	return &admiral.FleetTask{
 		TaskID:      taskID,
 		OperationID: operationID,
 		NodeID:      "node_001",
-		InstanceID:  "inst_001",
+		InstanceID:  instanceID,
 		Action:      admiral.ActionProvisionApp,
 	}
 }
