@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -162,6 +163,54 @@ func TestCaddyAdminClientHTTPMethods(t *testing.T) {
 	err = c.DisableRoute(ctx, routes[0], RouteConfig{ServerName: "admiral-public"})
 	if err != nil {
 		t.Fatalf("DisableRoute failed: %v", err)
+	}
+}
+
+func TestCaddyBootstrapRetriesUntilAdminAPIIsReady(t *testing.T) {
+	attempts := 0
+	c := &CaddyAdminClient{
+		BaseURL: "http://127.0.0.1:2019",
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
+				if attempts < 3 {
+					return nil, errors.New("connection refused")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"admin":{}}`)),
+				}, nil
+			}),
+		},
+	}
+
+	if err := c.Bootstrap(context.Background(), RouteConfig{ServerName: "admiral-public"}, "test@example.com"); err != nil {
+		t.Fatalf("Bootstrap should recover after the Caddy Admin API becomes ready: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 Caddy Admin API attempts, got %d", attempts)
+	}
+}
+
+func TestCaddyBootstrapStopsRetryingWhenContextIsCanceled(t *testing.T) {
+	attempts := 0
+	c := &CaddyAdminClient{
+		BaseURL: "http://127.0.0.1:2019",
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
+				return nil, errors.New("connection refused")
+			}),
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.Bootstrap(ctx, RouteConfig{ServerName: "admiral-public"}, "test@example.com"); err == nil {
+		t.Fatal("expected Bootstrap to stop when its context is canceled")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one API attempt before cancellation, got %d", attempts)
 	}
 }
 

@@ -26,6 +26,11 @@ type CaddyAdminClient struct {
 	HTTP       *http.Client
 }
 
+const (
+	caddyBootstrapRetryInterval = 250 * time.Millisecond
+	caddyBootstrapMaxWait       = 10 * time.Second
+)
+
 func NewCaddyAdminClient(baseURL string) (*CaddyAdminClient, error) {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:2019"
@@ -163,15 +168,39 @@ func (c *CaddyAdminClient) Healthcheck(ctx context.Context) error {
 }
 
 func (c *CaddyAdminClient) Bootstrap(ctx context.Context, cfg RouteConfig, email string) error {
-	current, err := c.GetConfig(ctx)
+	current, err := c.waitForAdminAPI(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("wait for caddy admin API during bootstrap: %w", err)
 	}
 	if len(current) > 0 {
 		return nil
 	}
 	bootstrap := bootstrapConfig(cfg, email)
 	return c.load(ctx, bootstrap)
+}
+
+func (c *CaddyAdminClient) waitForAdminAPI(ctx context.Context) (map[string]interface{}, error) {
+	deadline := time.NewTimer(caddyBootstrapMaxWait)
+	defer deadline.Stop()
+	retry := time.NewTicker(caddyBootstrapRetryInterval)
+	defer retry.Stop()
+
+	var lastErr error
+	for {
+		current, err := c.GetConfig(ctx)
+		if err == nil {
+			return current, nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, fmt.Errorf("caddy admin API did not become ready within %s: %w", caddyBootstrapMaxWait, lastErr)
+		case <-retry.C:
+		}
+	}
 }
 
 func (c *CaddyAdminClient) load(ctx context.Context, cfg map[string]interface{}) error {
