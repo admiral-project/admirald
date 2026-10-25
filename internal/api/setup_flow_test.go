@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
@@ -132,6 +133,7 @@ func TestValidateTechnicalStatusAction(t *testing.T) {
 		{name: "setup_failed blocks resize", technicalState: "setup_failed", action: "resize", wantBlocked: true},
 		{name: "setup_failed allows deprovision", technicalState: "setup_failed", action: "deprovision", wantBlocked: false},
 		{name: "running allows stop", technicalState: "running", action: "stop", wantBlocked: false},
+		{name: "deprovisioned blocks another deprovision", technicalState: "deprovisioned", action: "deprovision", wantBlocked: true},
 	}
 
 	for _, tt := range tests {
@@ -165,6 +167,39 @@ func TestHandleCustomerAppActionRejectsInitializingPause(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleCustomerAppActionRejectsRepeatedDeprovision(t *testing.T) {
+	h := newTestHandler(t, false)
+
+	if err := h.db.RegisterNode("node_deprovisioned", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_deprovisioned", "cust_001", "testapp", "starter", "node_deprovisioned", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_deprovisioned", "cancelled", "deprovisioned"); err != nil {
+		t.Fatalf("set terminal instance status: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/customer-apps/action", bytes.NewBufferString(`{"instance_id":"inst_deprovisioned","action":"deprovision"}`))
+	req.Header.Set("X-Admiral-Customer-ID", "cust_001")
+	rec := httptest.NewRecorder()
+	h.HandleCustomerAppAction(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already deprovisioned") {
+		t.Fatalf("expected terminal-state explanation, got %s", rec.Body.String())
+	}
+	operations, err := h.db.GetOperations()
+	if err != nil {
+		t.Fatalf("list operations: %v", err)
+	}
+	if len(operations) != 0 {
+		t.Fatalf("repeated deprovision created %d operations, want 0", len(operations))
 	}
 }
 

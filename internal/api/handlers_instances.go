@@ -320,6 +320,11 @@ func validateTechnicalStatusAction(technicalStatus, action string) (string, bool
 			return "", false
 		}
 		return fmt.Sprintf("Action %q is not allowed while instance technical_status is %q", action, technicalStatus), true
+	case "deprovisioned":
+		if action == "deprovision" {
+			return "Instance is already deprovisioned", true
+		}
+		return "", false
 	default:
 		return "", false
 	}
