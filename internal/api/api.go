@@ -185,6 +185,13 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 	mux.HandleFunc("/health", s.AdminAuthMiddleware(healthHandler))
 	mux.HandleFunc("/api/v1/health", s.AdminAuthMiddleware(healthHandler))
 
+	// Do not serve persisted worker availability from before a control-plane
+	// shutdown. A fresh heartbeat will reactivate a worker after its metrics are
+	// recomputed; until then, stale workers must remain unavailable.
+	if err := s.reconcileOfflineWorkers(); err != nil {
+		return fmt.Errorf("reconcile stale workers before API startup: %w", err)
+	}
+
 	s.log.Info("Starting admirald API server", map[string]interface{}{"port": port, "scheme": "https"})
 	server := &http.Server{
 		Addr:           addr + ":" + port,
@@ -326,18 +333,25 @@ func (s *Server) StartNodeHealthMonitor(ctx context.Context) {
 			s.log.Info("Node health monitor stopped", nil)
 			return
 		case <-ticker.C:
-			ids, err := s.handlers.db.MarkNodesOffline(2 * time.Minute)
-			if err != nil {
+			if err := s.reconcileOfflineWorkers(); err != nil {
 				s.log.Error("Node health monitor failed", err, nil)
 				continue
-			}
-			if len(ids) > 0 {
-				s.log.Warn("Nodes marked offline by health monitor", map[string]interface{}{"count": len(ids), "node_ids": ids})
 			}
 
 			s.checkPortalNodeHealth(ctx, portalClient)
 		}
 	}
+}
+
+func (s *Server) reconcileOfflineWorkers() error {
+	ids, err := s.handlers.db.MarkNodesOffline(2 * time.Minute)
+	if err != nil {
+		return fmt.Errorf("mark stale workers offline: %w", err)
+	}
+	if len(ids) > 0 {
+		s.log.Warn("Nodes marked offline by health monitor", map[string]interface{}{"count": len(ids), "node_ids": ids})
+	}
+	return nil
 }
 
 func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client) {
