@@ -490,7 +490,9 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 				if h.wireguardPeerRevoker == nil {
 					return nil, fmt.Errorf("%w: local helper is unavailable", ErrWireGuardPeerRevocation)
 				}
-				release, err := h.wireguardPeerRevoker.RevokePeer(r.Context(), wireguardIP)
+				release, err := h.wireguardPeerRevoker.RevokePeer(
+					r.Context(), node.ID, node.NodeRole, wireguardIP,
+				)
 				if err != nil {
 					return nil, fmt.Errorf("%w: %v", ErrWireGuardPeerRevocation, err)
 				}
@@ -507,7 +509,7 @@ func (h *APIHandlers) HandleNodeByID(w http.ResponseWriter, r *http.Request) {
 				case http.StatusNotFound:
 					writeError(w, http.StatusNotFound, "Node not found")
 				case http.StatusServiceUnavailable:
-					writeError(w, http.StatusServiceUnavailable, "WireGuard peer revocation failed; node and token were retained. Check the hub revocation socket and retry.")
+					writeError(w, http.StatusServiceUnavailable, "WireGuard peer revocation or spoke reconciliation failed; node and token were retained. Check the peer-revocation service and pinned spoke SSH access, then retry.")
 				default:
 					h.log.Error("Remove node failed", err, map[string]interface{}{"node_id": nodeID})
 					writeError(w, http.StatusInternalServerError, "Failed to remove node")

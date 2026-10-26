@@ -42,14 +42,20 @@ func TestUnixWireGuardPeerRevokerSendsAddressAndReadsSuccess(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	release, err := (unixWireGuardPeerRevoker{socketPath: socketPath}).RevokePeer(ctx, "10.99.0.3")
+	release, err := (unixWireGuardPeerRevoker{socketPath: socketPath}).RevokePeer(ctx, "worker-001", "worker", "10.99.0.3")
 	if err != nil {
 		t.Fatalf("RevokePeer() error = %v", err)
 	}
 	select {
 	case got := <-request:
-		if got != "10.99.0.3\n" {
-			t.Fatalf("socket request = %q, want address line", got)
+		var gotRequest wireGuardPeerRevocationRequest
+		if err := json.Unmarshal([]byte(got), &gotRequest); err != nil {
+			t.Fatalf("decode socket request %q: %v", got, err)
+		}
+		if gotRequest != (wireGuardPeerRevocationRequest{
+			NodeID: "worker-001", NodeRole: "worker", WireGuardIP: "10.99.0.3",
+		}) {
+			t.Fatalf("socket request = %+v, want node identity and address", gotRequest)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("revocation helper did not receive a request")
@@ -70,9 +76,27 @@ func TestUnixWireGuardPeerRevokerSendsAddressAndReadsSuccess(t *testing.T) {
 func TestUnixWireGuardPeerRevokerRejectsInvalidAddressWithoutConnecting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err := (unixWireGuardPeerRevoker{socketPath: filepath.Join(t.TempDir(), "missing.sock")}).RevokePeer(ctx, "127.0.0.1")
+	_, err := (unixWireGuardPeerRevoker{socketPath: filepath.Join(t.TempDir(), "missing.sock")}).RevokePeer(ctx, "worker-001", "worker", "127.0.0.1")
 	if err == nil || !strings.Contains(err.Error(), "WireGuard IPv4") {
 		t.Fatalf("RevokePeer() error = %v, want invalid private IPv4 error", err)
+	}
+}
+
+func TestUnixWireGuardPeerRevokerRejectsInvalidNodeIdentityWithoutConnecting(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	revoker := unixWireGuardPeerRevoker{socketPath: filepath.Join(t.TempDir(), "missing.sock")}
+	for _, test := range []struct {
+		name, nodeID, role string
+	}{
+		{name: "path traversal", nodeID: "../worker", role: "worker"},
+		{name: "unsupported role", nodeID: "worker-001", role: "admin"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := revoker.RevokePeer(ctx, test.nodeID, test.role, "10.99.0.3"); err == nil {
+				t.Fatal("RevokePeer() unexpectedly accepted invalid node identity")
+			}
+		})
 	}
 }
 
@@ -96,7 +120,7 @@ func TestUnixWireGuardPeerRevokerReturnsHelperFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = (unixWireGuardPeerRevoker{socketPath: socketPath}).RevokePeer(ctx, "10.99.0.3")
+	_, err = (unixWireGuardPeerRevoker{socketPath: socketPath}).RevokePeer(ctx, "worker-001", "worker", "10.99.0.3")
 	if err == nil || !strings.Contains(err.Error(), "helper unavailable") {
 		t.Fatalf("RevokePeer() error = %v, want helper failure", err)
 	}
