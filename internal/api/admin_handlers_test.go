@@ -99,7 +99,7 @@ func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 						return err
 					}
 				}
-				if migrationChild && task.Action == admiral.ActionStartApp {
+				if migrationChild && (task.Action == admiral.ActionStartApp || task.Action == admiral.ActionResumeApp) {
 					op.Metadata.HostPorts = map[string]int{"web": 43121}
 					if err := m.db.UpdateOperationMetadata(op.ID, op.Metadata); err != nil {
 						return err
@@ -984,36 +984,42 @@ func TestHandleFleetCallbackMigrationProvisionFailureKeepsSourceCapacity(t *test
 	}
 }
 
-func TestHandleFleetCallbackMigrationStartRecordsTargetPorts(t *testing.T) {
-	h := newTestHandler(t, false)
-	for _, nodeID := range []string{"node_source", "node_target"} {
-		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
-			t.Fatalf("register node: %v", err)
-		}
-	}
-	if err := h.db.CreateCustomerApp("inst_migration_start", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
-		t.Fatalf("create instance: %v", err)
-	}
-	if err := h.db.UpdateCustomerAppStatus("inst_migration_start", "active", "migrating"); err != nil {
-		t.Fatalf("set migration state: %v", err)
-	}
-	meta := &database.OperationMetadata{MigrationStep: "starting_target", SourceNodeID: "node_source", TargetNodeID: "node_target"}
-	if err := h.db.CreateOperationWithMetadata("op_migration_start", "inst_migration_start", "node_target", string(admiral.ActionStartApp), "running", "system", meta); err != nil {
-		t.Fatalf("create start operation: %v", err)
-	}
-	body, _ := json.Marshal(admiral.TaskResult{OperationID: "op_migration_start", NodeID: "node_target", Success: true, Metadata: `{"host_ports":{"web":43121}}`})
-	rec := httptest.NewRecorder()
-	h.HandleFleetCallback(rec, httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("callback returned %d: %s", rec.Code, rec.Body.String())
-	}
-	op, err := h.db.GetOperation("op_migration_start")
-	if err != nil || op == nil || op.Metadata == nil || op.Metadata.HostPorts["web"] != 43121 || op.Status != "succeeded" {
-		t.Fatalf("target ports were not recorded: op=%+v err=%v", op, err)
-	}
-	inst, err := h.db.GetCustomerApp("inst_migration_start")
-	if err != nil || inst == nil || inst.TechnicalStatus != "migrating" {
-		t.Fatalf("target callback changed migration status: inst=%+v err=%v", inst, err)
+func TestHandleFleetCallbackMigrationStartAndResumeRecordTargetPorts(t *testing.T) {
+	for _, action := range []admiral.TaskAction{admiral.ActionStartApp, admiral.ActionResumeApp} {
+		t.Run(string(action), func(t *testing.T) {
+			h := newTestHandler(t, false)
+			for _, nodeID := range []string{"node_source", "node_target"} {
+				if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+					t.Fatalf("register node: %v", err)
+				}
+			}
+			instanceID := "inst_migration_" + string(action)
+			operationID := "op_migration_" + string(action)
+			if err := h.db.CreateCustomerApp(instanceID, "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+				t.Fatalf("create instance: %v", err)
+			}
+			if err := h.db.UpdateCustomerAppStatus(instanceID, "active", "migrating"); err != nil {
+				t.Fatalf("set migration state: %v", err)
+			}
+			meta := &database.OperationMetadata{MigrationStep: "resuming_target", SourceNodeID: "node_source", TargetNodeID: "node_target"}
+			if err := h.db.CreateOperationWithMetadata(operationID, instanceID, "node_target", string(action), "running", "system", meta); err != nil {
+				t.Fatalf("create migration child operation: %v", err)
+			}
+			body, _ := json.Marshal(admiral.TaskResult{OperationID: operationID, NodeID: "node_target", Success: true, Metadata: `{"host_ports":{"web":43121}}`})
+			rec := httptest.NewRecorder()
+			h.HandleFleetCallback(rec, httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("callback returned %d: %s", rec.Code, rec.Body.String())
+			}
+			op, err := h.db.GetOperation(operationID)
+			if err != nil || op == nil || op.Metadata == nil || op.Metadata.HostPorts["web"] != 43121 || op.Status != "succeeded" {
+				t.Fatalf("target ports were not recorded: op=%+v err=%v", op, err)
+			}
+			inst, err := h.db.GetCustomerApp(instanceID)
+			if err != nil || inst == nil || inst.TechnicalStatus != "migrating" {
+				t.Fatalf("target callback changed migration status: inst=%+v err=%v", inst, err)
+			}
+		})
 	}
 }
 
@@ -1442,7 +1448,7 @@ func TestCreateMigrationOperationSerializesRequests(t *testing.T) {
 
 func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 	h := newTestHandler(t, false)
-	publisher := &migrationTestPublisher{db: h.db, failAction: admiral.ActionStartApp, failNodeID: "node_002"}
+	publisher := &migrationTestPublisher{db: h.db, failAction: admiral.ActionResumeApp, failNodeID: "node_002"}
 	h.publisher = publisher
 
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "10.99.0.2", "worker", "203.0.113.11", "fedora", "5.0"); err != nil {
@@ -1493,8 +1499,8 @@ func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 	if op == nil || op.Status != "failed" {
 		t.Fatalf("expected migration op to fail, got %+v", op)
 	}
-	if op.ErrorMessage == nil || !strings.Contains(*op.ErrorMessage, "start target") {
-		t.Fatalf("expected start target failure in operation error, got %+v", op.ErrorMessage)
+	if op.ErrorMessage == nil || !strings.Contains(*op.ErrorMessage, "resume target") {
+		t.Fatalf("expected resume target failure in operation error, got %+v", op.ErrorMessage)
 	}
 
 	var sawTargetCleanup bool

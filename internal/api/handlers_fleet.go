@@ -244,7 +244,7 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason := staleTaskReason(task, op, authenticatedNodeID)
-		if reason == "" {
+		if reason == "" && task.Action != admiral.ActionTestStorage {
 			instance, err := h.db.GetCustomerApp(task.InstanceID)
 			if err != nil {
 				h.log.Error("Task instance lookup failed", err, map[string]interface{}{"instance_id": task.InstanceID, "task_id": task.TaskID})
@@ -573,7 +573,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			h.log.Error("Fleet image verification failed", err, map[string]interface{}{"operation_id": res.OperationID, "instance_id": op.InstanceID})
 		}
 	}
-	if res.Success && isMigrationSuboperation(op) && op.Action == string(admiral.ActionStartApp) {
+	if res.Success && isMigrationSuboperation(op) && (op.Action == string(admiral.ActionStartApp) || op.Action == string(admiral.ActionResumeApp)) {
 		op.Metadata.HostPorts = parseHostPortsFromMetadata(res.Metadata)
 		if err := h.db.UpdateOperationMetadata(op.ID, op.Metadata); err != nil {
 			res.Success = false

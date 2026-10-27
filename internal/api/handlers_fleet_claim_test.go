@@ -172,6 +172,52 @@ func TestHandleTaskClaimAllowsBackupDeletionAfterDeprovision(t *testing.T) {
 	}
 }
 
+func TestHandleTaskClaimAllowsStorageTestWithoutInstance(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateOperation("op_storage_test", "", "node_001", string(admiral.ActionTestStorage), "queued", "test"); err != nil {
+		t.Fatalf("create storage test operation: %v", err)
+	}
+	if err := h.db.UpdateOperationTaskID("op_storage_test", "task_storage_test"); err != nil {
+		t.Fatalf("set storage test task ID: %v", err)
+	}
+	task := &admiral.FleetTask{
+		TaskID:      "task_storage_test",
+		OperationID: "op_storage_test",
+		NodeID:      "node_001",
+		Action:      admiral.ActionTestStorage,
+	}
+	publisher := &terminalTaskClaimPublisher{
+		mockPublisher: &mockPublisher{},
+		claims:        []queuedTaskClaim{{commandID: "cmd_storage_test", task: task}},
+	}
+	h.publisher = publisher
+
+	body, _ := json.Marshal(map[string]string{"node_id": "node_001"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/tasks/claim", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyNodeID, "node_001"))
+	rec := httptest.NewRecorder()
+	h.HandleTaskClaim(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Task admiral.FleetTask `json:"task"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if response.Task.TaskID != "task_storage_test" || response.Task.Action != admiral.ActionTestStorage || response.Task.InstanceID != "" {
+		t.Fatalf("claimed task = %+v, want instance-free storage test task", response.Task)
+	}
+	if len(publisher.discardedCommands) != 0 {
+		t.Fatalf("discarded commands = %v, want no discarded command", publisher.discardedCommands)
+	}
+}
+
 func TestTerminalFleetCallbackSettlesQueueCommand(t *testing.T) {
 	h := newTestHandler(t, false)
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {

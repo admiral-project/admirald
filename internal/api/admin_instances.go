@@ -399,20 +399,22 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		}
 	}
 
-	// Step 7: Start on target
-	setStep("starting_target")
-	targetStartID, ok, errMsg := subOp(admiral.ActionStartApp, targetNodeID, "", "")
+	// Step 7: Resume the restored workload on target. Fleet restores instances
+	// paused so that operators can validate them before resuming; migration must
+	// explicitly activate the target before the health gate and cutover.
+	setStep("resuming_target")
+	targetResumeID, ok, errMsg := subOp(admiral.ActionResumeApp, targetNodeID, "", "")
 	if !ok {
-		rollbackPreCutover("start target: " + errMsg)
+		rollbackPreCutover("resume target: " + errMsg)
 		return
 	}
-	targetStart, err := h.db.GetOperation(targetStartID)
-	if err != nil || targetStart == nil || targetStart.Metadata == nil {
-		rollbackPreCutover("load target start metadata")
+	targetResume, err := h.db.GetOperation(targetResumeID)
+	if err != nil || targetResume == nil || targetResume.Metadata == nil {
+		rollbackPreCutover("load target resume metadata")
 		return
 	}
 	for _, route := range savedRoutes {
-		if targetStart.Metadata.HostPorts[route.ServiceName] <= 0 {
+		if targetResume.Metadata.HostPorts[route.ServiceName] <= 0 {
 			rollbackPreCutover("target did not report a host port for service " + route.ServiceName)
 			return
 		}
@@ -454,7 +456,7 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 			rollbackPreCutover("record target routes: " + err.Error())
 			return
 		}
-		if err := reconcileRoutes(targetNodeID, savedRoutes, targetStart.Metadata.HostPorts); err != nil {
+		if err := reconcileRoutes(targetNodeID, savedRoutes, targetResume.Metadata.HostPorts); err != nil {
 			if merr := enableMaintenance(); merr != nil {
 				failForIntervention("cutover routes: " + err.Error() + "; restore maintenance: " + merr.Error())
 				return
