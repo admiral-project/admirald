@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,13 +47,56 @@ func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 		errMsg = "simulated " + string(task.Action) + " failure"
 		m.failed = true
 	}
-	if m.completeBeforeReturn {
-		return m.db.UpdateOperation(task.OperationID, status, errMsg)
+	complete := func() error {
+		if status == "succeeded" {
+			switch task.Action {
+			case admiral.ActionBackupDatabase, admiral.ActionBackupVolumes:
+				if task.Storage == nil || task.Storage.BackupID == "" {
+					return fmt.Errorf("%s task has no backup record identity", task.Action)
+				}
+				rec, err := m.db.GetBackupRecord(task.Storage.BackupID)
+				if err != nil {
+					return err
+				}
+				if rec == nil {
+					return fmt.Errorf("backup record %q was not created before dispatch", task.Storage.BackupID)
+				}
+				rec.Status = "succeeded"
+				rec.StorageBackend = "local"
+				rec.StorageKey = task.InstanceID + "/" + task.TaskID + ".tgz"
+				rec.SizeBytes = 128
+				rec.ChecksumSHA256 = strings.Repeat("a", 64)
+				rec.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+				rec.ExpiresAt = time.Now().UTC().Add(30 * 24 * time.Hour).Format(time.RFC3339)
+				if err := m.db.UpdateBackupRecord(rec); err != nil {
+					return err
+				}
+			case admiral.ActionProvisionApp, admiral.ActionStartApp, admiral.ActionResumeApp, admiral.ActionReactivateApp:
+				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "running"); err != nil {
+					return err
+				}
+			case admiral.ActionStopApp, admiral.ActionPauseApp:
+				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "stopped"); err != nil {
+					return err
+				}
+			case admiral.ActionRestoreBackup:
+				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "paused"); err != nil {
+					return err
+				}
+			}
+		}
+		if err := m.db.UpdateOperation(task.OperationID, status, errMsg); err != nil {
+			return err
+		}
+		return nil
 	}
-	go func(operationID, status, errMsg string) {
+	if m.completeBeforeReturn {
+		return complete()
+	}
+	go func() {
 		time.Sleep(25 * time.Millisecond)
-		_ = m.db.UpdateOperation(operationID, status, errMsg)
-	}(task.OperationID, status, errMsg)
+		_ = complete()
+	}()
 	return nil
 }
 
@@ -1098,36 +1142,6 @@ func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	if _, err := h.db.Exec("UPDATE customer_apps SET logical_instance_id = $1, technical_status = 'running' WHERE id = $2", "li_cutover", "inst_cutover"); err != nil {
 		t.Fatalf("seed logical instance id: %v", err)
 	}
-	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
-		ID:             "bk_db",
-		InstanceID:     "inst_cutover",
-		AppID:          "migrate-app",
-		TierID:         "starter",
-		NodeID:         "node_001",
-		BackupType:     "database",
-		DatabaseType:   "postgresql",
-		Status:         "succeeded",
-		StorageBackend: "local",
-		StorageKey:     "/var/lib/admiral/backups/inst_cutover/database.tgz",
-		TriggeredBy:    "manual",
-	}); err != nil {
-		t.Fatalf("create database backup record: %v", err)
-	}
-	if err := h.db.CreateBackupRecord(&admiral.BackupRecord{
-		ID:             "bk_vol",
-		InstanceID:     "inst_cutover",
-		AppID:          "migrate-app",
-		TierID:         "starter",
-		NodeID:         "node_001",
-		BackupType:     "volume",
-		DatabaseType:   "none",
-		Status:         "succeeded",
-		StorageBackend: "local",
-		StorageKey:     "/var/lib/admiral/backups/inst_cutover/volume.tgz",
-		TriggeredBy:    "manual",
-	}); err != nil {
-		t.Fatalf("create volume backup record: %v", err)
-	}
 	if err := h.db.CreateOperation("op_migrate_cutover", "inst_cutover", "node_001", "migrate", "running", "system"); err != nil {
 		t.Fatalf("create migration op: %v", err)
 	}
@@ -1162,6 +1176,18 @@ func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	}
 	if !sawRestore {
 		t.Fatal("expected migration to restore backups on the target node")
+	}
+	backups, err := h.db.GetBackupRecords("inst_cutover")
+	if err != nil {
+		t.Fatalf("load migration backup records: %v", err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("expected two migration backup records, got %d", len(backups))
+	}
+	for _, backup := range backups {
+		if backup.Status != "succeeded" || backup.ChecksumSHA256 == "" || backup.StorageKey == "" {
+			t.Errorf("migration backup record is incomplete: %+v", backup)
+		}
 	}
 }
 

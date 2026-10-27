@@ -12,6 +12,7 @@ import (
 
 	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
+	"gopkg.in/yaml.v2"
 )
 
 func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targetNodeID, rawYAML string, tier database.AppTier, logicalInstanceID string) {
@@ -42,6 +43,55 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		}
 	}
 
+	waitForTechnicalStatus := func(expected string) (bool, string) {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.After(30 * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				inst, err := h.db.GetCustomerApp(instID)
+				if err == nil && inst != nil && inst.TechnicalStatus == expected {
+					return true, ""
+				}
+			case <-timeout:
+				return false, fmt.Sprintf("instance technical status did not reach %q after task completion", expected)
+			}
+		}
+	}
+
+	waitForBackupRecord := func(backupID string) (bool, string) {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.After(30 * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				rec, err := h.db.GetBackupRecord(backupID)
+				if err != nil || rec == nil {
+					continue
+				}
+				switch rec.Status {
+				case "succeeded":
+					if strings.TrimSpace(rec.StorageKey) == "" {
+						return false, "backup completed without a storage key"
+					}
+					if strings.TrimSpace(rec.ChecksumSHA256) == "" {
+						return false, "backup completed without a SHA-256 checksum"
+					}
+					return true, ""
+				case "failed":
+					if strings.TrimSpace(rec.ErrorMessage) != "" {
+						return false, rec.ErrorMessage
+					}
+					return false, "backup record failed"
+				}
+			case <-timeout:
+				return false, "backup record did not reach succeeded after task completion"
+			}
+		}
+	}
+
 	setStep := func(step string) {
 		meta := &database.OperationMetadata{
 			TargetNodeID:      targetNodeID,
@@ -57,8 +107,40 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 		if err := h.db.CreateOperation(stepOpID, instID, nodeID, string(action), "pending_dispatch", "system"); err != nil {
 			return stepOpID, false, err.Error()
 		}
-		h.enqueueTask(stepOpID, instID, nodeID, customerID, rawYAML, tier, action, backupID, backupService)
+		if action == admiral.ActionBackupDatabase || action == admiral.ActionBackupVolumes {
+			createdBackupID, err := h.createMigrationBackupRecord(stepOpID, instID, nodeID, rawYAML, tier, action, backupService)
+			if err != nil {
+				_ = h.db.UpdateOperation(stepOpID, "failed", "create migration backup record: "+err.Error())
+				return stepOpID, false, "create migration backup record: " + err.Error()
+			}
+			backupID = createdBackupID
+		}
+		if err := h.enqueueTaskWithID(generateID("task"), stepOpID, instID, nodeID, customerID, rawYAML, tier, action, backupID, backupService); err != nil {
+			return stepOpID, false, err.Error()
+		}
 		ok, errMsg := waitForOp(stepOpID)
+		if !ok {
+			return stepOpID, false, errMsg
+		}
+		if backupID != "" {
+			if ok, errMsg := waitForBackupRecord(backupID); !ok {
+				return stepOpID, false, errMsg
+			}
+		}
+		expectedStatus := ""
+		switch action {
+		case admiral.ActionProvisionApp, admiral.ActionStartApp, admiral.ActionResumeApp, admiral.ActionReactivateApp, admiral.ActionBackupDatabase, admiral.ActionBackupVolumes:
+			expectedStatus = "running"
+		case admiral.ActionStopApp, admiral.ActionPauseApp:
+			expectedStatus = "stopped"
+		case admiral.ActionRestoreBackup:
+			expectedStatus = "paused"
+		}
+		if expectedStatus != "" {
+			if ok, errMsg := waitForTechnicalStatus(expectedStatus); !ok {
+				return stepOpID, false, errMsg
+			}
+		}
 		return stepOpID, ok, errMsg
 	}
 
@@ -238,6 +320,64 @@ func (h *APIHandlers) runMigration(opID, instID, customerID, sourceNodeID, targe
 	setStep("completed")
 	_ = h.db.UpdateOperation(opID, "succeeded", "")
 	h.log.Info("Migration completed successfully", map[string]interface{}{"operation_id": opID, "instance_id": instID, "cutover_complete": cutoverComplete})
+}
+
+func (h *APIHandlers) createMigrationBackupRecord(operationID, instanceID, nodeID, rawYAML string, tier database.AppTier, action admiral.TaskAction, serviceName string) (string, error) {
+	var payload admiral.AppDefinitionPayload
+	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil {
+		return "", fmt.Errorf("parse app definition: %w", err)
+	}
+	target, err := resolveBackupTarget(payload, serviceName)
+	if err != nil {
+		return "", err
+	}
+	inst, err := h.db.GetCustomerApp(instanceID)
+	if err != nil {
+		return "", fmt.Errorf("load instance: %w", err)
+	}
+	if inst == nil {
+		return "", fmt.Errorf("instance %q not found", instanceID)
+	}
+	storageCfg, err := h.db.GetActiveBackupStorageConfig()
+	if err != nil {
+		return "", fmt.Errorf("load backup storage configuration: %w", err)
+	}
+	storageBackend := "local"
+	storageKey := fmt.Sprintf("/var/lib/admiral/backups/%s/%s", instanceID, operationID)
+	if storageCfg != nil {
+		storageBackend = storageCfg.Backend
+		backupPrefix := "database"
+		if action == admiral.ActionBackupVolumes {
+			backupPrefix = "volumes"
+		}
+		storageKey = fmt.Sprintf("%s/%s/%s/%s-%s-%s", storageCfg.Prefix, nodeID, instanceID, serviceName, backupPrefix, operationID)
+	}
+	backupType := target.Backup.Type
+	databaseType := target.Backup.Engine
+	if databaseType == "" && backupType == "volume" {
+		databaseType = "none"
+	}
+	backupID := generateID("bk")
+	rec := &admiral.BackupRecord{
+		ID:                          backupID,
+		InstanceID:                  instanceID,
+		AppID:                       inst.AppDefinitionName,
+		TierID:                      tier.Name,
+		NodeID:                      nodeID,
+		BackupType:                  backupType,
+		Service:                     serviceName,
+		DatabaseType:                databaseType,
+		Status:                      "pending",
+		StorageBackend:              storageBackend,
+		StorageKey:                  storageKey,
+		TriggeredBy:                 "system",
+		RetentionPolicySnapshotJSON: `{"count":7,"days":30}`,
+		TierSnapshotJSON:            inst.TierSnapshotJSON,
+	}
+	if err := h.db.CreateBackupRecord(rec); err != nil {
+		return "", err
+	}
+	return backupID, nil
 }
 
 // runtimeNodeAddress returns the only address Admiral may use for node-local
