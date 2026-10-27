@@ -13,6 +13,17 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	h.enqueueTaskWithID(generateID("task"), opID, instID, nodeID, tenantID, rawYAML, tier, action, backupID, backupService)
 }
 
+func (h *APIHandlers) failInstanceForTask(opID, instID string) error {
+	op, err := h.db.GetOperation(opID)
+	if err != nil {
+		return err
+	}
+	if isMigrationSuboperation(op) {
+		return nil
+	}
+	return h.db.UpdateCustomerAppStatus(instID, "", "failed")
+}
+
 func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, rawYAML string, tier database.AppTier, action admiral.TaskAction, backupID, backupService string) error {
 	var payload admiral.AppDefinitionPayload
 	if err := yaml.Unmarshal([]byte(rawYAML), &payload); err != nil { //nolint:gosec // rawYAML from stored appDef.RawYAML (trusted DB data)
@@ -20,7 +31,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if uerr := h.db.UpdateOperation(opID, "failed", "invalid stored app definition"); uerr != nil {
 			h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
 		}
-		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+		if uerr := h.failInstanceForTask(opID, instID); uerr != nil {
 			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 		}
 		return fmt.Errorf("parse app definition for task dispatch: %w", err)
@@ -36,7 +47,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 			if uerr := h.db.UpdateOperation(opID, "failed", "failed to prepare task secrets"); uerr != nil {
 				h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
 			}
-			if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+			if uerr := h.failInstanceForTask(opID, instID); uerr != nil {
 				h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 			}
 			return fmt.Errorf("prepare task secrets: %w", err)
@@ -112,7 +123,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 			if uerr := h.db.UpdateOperation(opID, "failed", err.Error()); uerr != nil {
 				h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
 			}
-			if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+			if uerr := h.failInstanceForTask(opID, instID); uerr != nil {
 				h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 			}
 			return fmt.Errorf("resolve backup target: %w", err)
@@ -161,7 +172,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if uerr := h.db.UpdateOperation(opID, "failed", "failed to persist task ID"); uerr != nil {
 			h.log.Error("Failed to mark operation as failed", uerr, map[string]interface{}{"operation_id": opID})
 		}
-		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+		if uerr := h.failInstanceForTask(opID, instID); uerr != nil {
 			h.log.Error("Failed to mark instance as failed", uerr, map[string]interface{}{"instance_id": instID})
 		}
 		return fmt.Errorf("persist task ID: %w", err)
@@ -171,7 +182,7 @@ func (h *APIHandlers) enqueueTaskWithID(taskID, opID, instID, nodeID, tenantID, 
 		if uerr := h.db.UpdateOperation(opID, "failed", err.Error()); uerr != nil {
 			h.log.Error("Failed to update operation as failed", uerr, map[string]interface{}{"operation_id": opID})
 		}
-		if uerr := h.db.UpdateCustomerAppStatus(instID, "", "failed"); uerr != nil {
+		if uerr := h.failInstanceForTask(opID, instID); uerr != nil {
 			h.log.Error("Failed to update instance status as failed", uerr, map[string]interface{}{"instance_id": instID})
 		}
 		return fmt.Errorf("persist task to queue: %w", err)

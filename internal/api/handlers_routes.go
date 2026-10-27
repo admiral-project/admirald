@@ -76,6 +76,26 @@ func (h *APIHandlers) HandleRoutes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, route)
 		return
 	}
+	if parts[4] == "enable" || parts[4] == "disable" || parts[4] == "delete" {
+		route, err := h.db.GetPublicRoute(hostname)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Failed to verify route state")
+			return
+		}
+		if route != nil && route.AppInstanceID != "" {
+			operations, err := h.db.GetRunningOperationsByInstance(route.AppInstanceID)
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "Failed to verify instance operations")
+				return
+			}
+			for _, op := range operations {
+				if op.Action == "migrate" {
+					writeError(w, http.StatusConflict, "Route cannot be changed during instance migration")
+					return
+				}
+			}
+		}
+	}
 
 	switch parts[4] {
 	case "enable":

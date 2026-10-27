@@ -5,11 +5,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,12 +37,23 @@ type migrationTestPublisher struct {
 	failAction           admiral.TaskAction
 	failNodeID           string
 	completeBeforeReturn bool
+	invalidChecksum      bool
+	targetProvisionState string
 	failed               bool
 	published            []*admiral.FleetTask
 }
 
 func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 	m.published = append(m.published, task)
+	if task.Action == admiral.ActionProvisionApp && task.NodeID == "node_002" {
+		inst, err := m.db.GetCustomerApp(task.InstanceID)
+		if err != nil {
+			return err
+		}
+		if inst != nil {
+			m.targetProvisionState = inst.TechnicalStatus
+		}
+	}
 	status := "succeeded"
 	errMsg := ""
 	if !m.failed && task.Action == m.failAction && (m.failNodeID == "" || m.failNodeID == task.NodeID) {
@@ -48,6 +62,11 @@ func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 		m.failed = true
 	}
 	complete := func() error {
+		op, err := m.db.GetOperation(task.OperationID)
+		if err != nil {
+			return err
+		}
+		migrationChild := isMigrationSuboperation(op)
 		if status == "succeeded" {
 			switch task.Action {
 			case admiral.ActionBackupDatabase, admiral.ActionBackupVolumes:
@@ -62,26 +81,50 @@ func (m *migrationTestPublisher) PublishTask(task *admiral.FleetTask) error {
 					return fmt.Errorf("backup record %q was not created before dispatch", task.Storage.BackupID)
 				}
 				rec.Status = "succeeded"
-				rec.StorageBackend = "local"
-				rec.StorageKey = task.InstanceID + "/" + task.TaskID + ".tgz"
+				rec.StorageBackend = task.Storage.Backend
+				rec.StorageKey = task.Storage.Key
 				rec.SizeBytes = 128
 				rec.ChecksumSHA256 = strings.Repeat("a", 64)
+				if m.invalidChecksum {
+					rec.ChecksumSHA256 = "invalid"
+				}
 				rec.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 				rec.ExpiresAt = time.Now().UTC().Add(30 * 24 * time.Hour).Format(time.RFC3339)
 				if err := m.db.UpdateBackupRecord(rec); err != nil {
 					return err
 				}
 			case admiral.ActionProvisionApp, admiral.ActionStartApp, admiral.ActionResumeApp, admiral.ActionReactivateApp:
-				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "running"); err != nil {
-					return err
+				if !migrationChild {
+					if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "running"); err != nil {
+						return err
+					}
+				}
+				if migrationChild && task.Action == admiral.ActionStartApp {
+					op.Metadata.HostPorts = map[string]int{"web": 43121}
+					if err := m.db.UpdateOperationMetadata(op.ID, op.Metadata); err != nil {
+						return err
+					}
+					go func() {
+						for i := 0; i < 20; i++ {
+							time.Sleep(500 * time.Millisecond)
+							inst, err := m.db.GetCustomerApp(task.InstanceID)
+							if err == nil && inst != nil && inst.NodeID != nil && *inst.NodeID == task.NodeID {
+								_ = m.db.UpdateInstanceHealthForBoot(task.InstanceID, "healthy", "running", "test health", "test-boot", true)
+							}
+						}
+					}()
 				}
 			case admiral.ActionStopApp, admiral.ActionPauseApp:
-				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "stopped"); err != nil {
-					return err
+				if !migrationChild {
+					if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "stopped"); err != nil {
+						return err
+					}
 				}
 			case admiral.ActionRestoreBackup:
-				if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "paused"); err != nil {
-					return err
+				if !migrationChild {
+					if err := m.db.UpdateCustomerAppStatus(task.InstanceID, "", "paused"); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -164,6 +207,27 @@ func migrationTestAppYAML() string {
 		"    memory: 256M\n" +
 		"    storage: 1G\n" +
 		"    price_monthly: 1\n"
+}
+
+func prepareMigrationCapacity(t *testing.T, h *APIHandlers, sourceNodeID, targetNodeID string) {
+	t.Helper()
+	if err := h.db.SaveBackupStorageConfig(&admiral.BackupStorageConfig{ID: "migration-test", Backend: "s3", Enabled: true, Endpoint: "https://s3.test", Region: "test", Bucket: "migration"}); err != nil {
+		t.Fatalf("configure shared migration storage: %v", err)
+	}
+	const ram = int64(1 << 30)
+	const disk = int64(10 << 30)
+	for _, nodeID := range []string{sourceNodeID, targetNodeID} {
+		if _, err := h.db.Exec(`UPDATE nodes
+			SET status = 'active', health_status = 'healthy', available_for_provisioning = TRUE,
+				boot_id = 'test-boot', last_heartbeat = CURRENT_TIMESTAMP,
+				ram_commit_limit_bytes = $1, disk_commit_limit_bytes = $2
+			WHERE id = $3`, ram, disk, nodeID); err != nil {
+			t.Fatalf("set migration capacity for %s: %v", nodeID, err)
+		}
+	}
+	if err := h.db.AddNodeCommitment(sourceNodeID, int64(256<<20), int64(1<<30)); err != nil {
+		t.Fatalf("seed source commitment: %v", err)
+	}
 }
 
 func TestHandleAdminLoginSuccess(t *testing.T) {
@@ -806,6 +870,258 @@ func TestHandleFleetCallbackSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleFleetCallbackMigrationDeprovisionPreservesLogicalInstance(t *testing.T) {
+	const reservedRAM = int64(256 << 20)
+	const reservedDisk = int64(1 << 30)
+
+	tests := []struct {
+		name        string
+		step        string
+		currentNode string
+		cleanupNode string
+	}{
+		{name: "rollback target cleanup", step: "rollback_target_cleanup", currentNode: "node_source", cleanupNode: "node_target"},
+		{name: "source cleanup after cutover", step: "deprovisioning_source", currentNode: "node_target", cleanupNode: "node_source"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newTestHandler(t, false)
+			for _, nodeID := range []string{"node_source", "node_target"} {
+				if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+					t.Fatalf("register node %s: %v", nodeID, err)
+				}
+			}
+			tierSnapshot := `{"name":"starter","memory":"256M","storage":"1G"}`
+			if err := h.db.CreateCustomerApp("inst_migration_cleanup", "cust_001", "testapp", "starter", tt.currentNode, tierSnapshot); err != nil {
+				t.Fatalf("create instance: %v", err)
+			}
+			if err := h.db.UpdateCustomerAppStatus("inst_migration_cleanup", "active", "running"); err != nil {
+				t.Fatalf("set instance state: %v", err)
+			}
+			if err := h.db.AddNodeCommitment(tt.currentNode, reservedRAM, reservedDisk); err != nil {
+				t.Fatalf("reserve logical instance capacity: %v", err)
+			}
+			metadata := &database.OperationMetadata{
+				TargetNodeID: "node_target", SourceNodeID: "node_source", LogicalInstanceID: "logical_migration_cleanup", MigrationStep: tt.step,
+			}
+			if err := h.db.CreateOperationWithMetadata("op_migration_cleanup", "inst_migration_cleanup", tt.cleanupNode, string(admiral.ActionDeprovisionApp), "running", "system", metadata); err != nil {
+				t.Fatalf("create migration cleanup operation: %v", err)
+			}
+
+			body, _ := json.Marshal(admiral.TaskResult{OperationID: "op_migration_cleanup", NodeID: tt.cleanupNode, Success: true})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+			rec := httptest.NewRecorder()
+			h.HandleFleetCallback(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected callback 200, got %d body=%s", rec.Code, rec.Body.String())
+			}
+
+			inst, err := h.db.GetCustomerApp("inst_migration_cleanup")
+			if err != nil {
+				t.Fatalf("get instance: %v", err)
+			}
+			if inst.NodeID == nil || *inst.NodeID != tt.currentNode || inst.TechnicalStatus != "running" || inst.CommercialStatus != "active" {
+				t.Fatalf("migration cleanup changed logical instance state: %+v", inst)
+			}
+			gotRAM, gotDisk, err := h.db.GetCommittedResources(tt.currentNode)
+			if err != nil {
+				t.Fatalf("get current node commitment: %v", err)
+			}
+			if gotRAM != reservedRAM || gotDisk != reservedDisk {
+				t.Fatalf("migration cleanup changed capacity on current node: RAM=%d disk=%d", gotRAM, gotDisk)
+			}
+		})
+	}
+}
+
+func TestHandleFleetCallbackMigrationProvisionFailureKeepsSourceCapacity(t *testing.T) {
+	const reservedRAM = int64(256 << 20)
+	const reservedDisk = int64(1 << 30)
+	h := newTestHandler(t, false)
+	for _, nodeID := range []string{"node_source", "node_target"} {
+		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+			t.Fatalf("register node %s: %v", nodeID, err)
+		}
+	}
+	tierSnapshot := `{"name":"starter","memory":"256M","storage":"1G"}`
+	if err := h.db.CreateCustomerApp("inst_migration_provision", "cust_001", "testapp", "starter", "node_source", tierSnapshot); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_migration_provision", "active", "running"); err != nil {
+		t.Fatalf("set instance state: %v", err)
+	}
+	if err := h.db.AddNodeCommitment("node_source", reservedRAM, reservedDisk); err != nil {
+		t.Fatalf("reserve source capacity: %v", err)
+	}
+	metadata := &database.OperationMetadata{
+		TargetNodeID: "node_target", SourceNodeID: "node_source", LogicalInstanceID: "logical_migration_provision", MigrationStep: "provisioning_target",
+	}
+	if err := h.db.CreateOperationWithMetadata("op_migration_provision", "inst_migration_provision", "node_target", string(admiral.ActionProvisionApp), "running", "system", metadata); err != nil {
+		t.Fatalf("create migration provision operation: %v", err)
+	}
+
+	body, _ := json.Marshal(admiral.TaskResult{OperationID: "op_migration_provision", NodeID: "node_target", Success: false, Error: "simulated target provisioning failure"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.HandleFleetCallback(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected callback 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	inst, err := h.db.GetCustomerApp("inst_migration_provision")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if inst.NodeID == nil || *inst.NodeID != "node_source" || inst.TechnicalStatus != "running" || inst.CommercialStatus != "active" {
+		t.Fatalf("failed target provision changed the source instance state: %+v", inst)
+	}
+	gotRAM, gotDisk, err := h.db.GetCommittedResources("node_source")
+	if err != nil {
+		t.Fatalf("get source commitment: %v", err)
+	}
+	if gotRAM != reservedRAM || gotDisk != reservedDisk {
+		t.Fatalf("failed target provision released source capacity: RAM=%d disk=%d", gotRAM, gotDisk)
+	}
+}
+
+func TestHandleFleetCallbackMigrationStartRecordsTargetPorts(t *testing.T) {
+	h := newTestHandler(t, false)
+	for _, nodeID := range []string{"node_source", "node_target"} {
+		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+			t.Fatalf("register node: %v", err)
+		}
+	}
+	if err := h.db.CreateCustomerApp("inst_migration_start", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_migration_start", "active", "migrating"); err != nil {
+		t.Fatalf("set migration state: %v", err)
+	}
+	meta := &database.OperationMetadata{MigrationStep: "starting_target", SourceNodeID: "node_source", TargetNodeID: "node_target"}
+	if err := h.db.CreateOperationWithMetadata("op_migration_start", "inst_migration_start", "node_target", string(admiral.ActionStartApp), "running", "system", meta); err != nil {
+		t.Fatalf("create start operation: %v", err)
+	}
+	body, _ := json.Marshal(admiral.TaskResult{OperationID: "op_migration_start", NodeID: "node_target", Success: true, Metadata: `{"host_ports":{"web":43121}}`})
+	rec := httptest.NewRecorder()
+	h.HandleFleetCallback(rec, httptest.NewRequest(http.MethodPost, "/api/v1/fleet/callback", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("callback returned %d: %s", rec.Code, rec.Body.String())
+	}
+	op, err := h.db.GetOperation("op_migration_start")
+	if err != nil || op == nil || op.Metadata == nil || op.Metadata.HostPorts["web"] != 43121 || op.Status != "succeeded" {
+		t.Fatalf("target ports were not recorded: op=%+v err=%v", op, err)
+	}
+	inst, err := h.db.GetCustomerApp("inst_migration_start")
+	if err != nil || inst == nil || inst.TechnicalStatus != "migrating" {
+		t.Fatalf("target callback changed migration status: inst=%+v err=%v", inst, err)
+	}
+}
+
+func TestHealthReportPreservesMigratingStatus(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_source", "source", "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_migrating", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_migrating", "active", "migrating"); err != nil {
+		t.Fatalf("set migration state: %v", err)
+	}
+	if err := h.db.CreateOperation("op_migrating", "inst_migrating", "node_source", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration operation: %v", err)
+	}
+	body, _ := json.Marshal(admiral.HealthReport{InstanceID: "inst_migrating", NodeID: "node_source", BootID: "boot-source", HealthStatus: admiral.HealthHealthy})
+	rec := httptest.NewRecorder()
+	h.HandleAdminHealthCallback(rec, httptest.NewRequest(http.MethodPost, "/api/admin/health", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health callback returned %d: %s", rec.Code, rec.Body.String())
+	}
+	inst, err := h.db.GetCustomerApp("inst_migrating")
+	if err != nil || inst == nil || inst.TechnicalStatus != "migrating" {
+		t.Fatalf("health callback changed migration status: inst=%+v err=%v", inst, err)
+	}
+	if err := h.db.UpdateOperation("op_migrating", "failed", "cutover outcome uncertain"); err != nil {
+		t.Fatalf("mark migration failed: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	h.HandleAdminHealthCallback(rec, httptest.NewRequest(http.MethodPost, "/api/admin/health", bytes.NewReader(body)))
+	inst, err = h.db.GetCustomerApp("inst_migrating")
+	if rec.Code != http.StatusOK || err != nil || inst == nil || inst.TechnicalStatus != "migrating" {
+		t.Fatalf("health callback cleared unresolved migration state: code=%d inst=%+v err=%v", rec.Code, inst, err)
+	}
+}
+
+func TestHealthReconciliationKeepsDisabledRoute(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_source", "source", "10.0.0.1", "10.99.0.2", "worker", "", "rocky", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_disabled_route", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	node := "node_source"
+	route := database.PublicRoute{ID: "route_disabled", Hostname: "disabled.example.test", AppInstanceID: "inst_disabled_route", NodeID: &node, ServiceName: "web", RouteKind: string(admiral.RouteKindInstance), Status: string(admiral.RouteStatusDisabled)}
+	if err := h.db.CreatePublicRoute(route); err != nil {
+		t.Fatalf("create disabled route: %v", err)
+	}
+	manager := &networking.Manager{DB: h.db, Config: &config.Config{}}
+	if err := manager.ActivateInstanceRoutes(context.Background(), "inst_disabled_route", map[string]int{"web": 43121}); err != nil {
+		t.Fatalf("reconcile health route: %v", err)
+	}
+	got, err := h.db.GetPublicRoute(route.Hostname)
+	if err != nil || got == nil || got.Status != string(admiral.RouteStatusDisabled) {
+		t.Fatalf("health reconciliation reopened disabled route: route=%+v err=%v", got, err)
+	}
+}
+
+func TestRouteSyncKeepsMigrationMaintenanceWithoutChangingOriginalStatus(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_source", "source", "10.0.0.1", "10.99.0.2", "worker", "", "rocky", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_sync_maintenance", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	node := "node_source"
+	route := database.PublicRoute{ID: "route_sync_maintenance", Hostname: "sync.example.test", AppInstanceID: "inst_sync_maintenance", NodeID: &node, ServiceName: "web", TargetHost: "10.99.0.2", TargetPort: 40000, TargetURL: "http://10.99.0.2:40000", RouteKind: string(admiral.RouteKindInstance), Status: string(admiral.RouteStatusActive)}
+	if err := h.db.CreatePublicRoute(route); err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+	meta := &database.OperationMetadata{MigrationStep: "starting"}
+	if err := h.db.CreateOperationWithMetadata("op_sync_maintenance", "inst_sync_maintenance", "node_source", "migrate", "running", "system", meta); err != nil {
+		t.Fatalf("create migration operation: %v", err)
+	}
+	var mu sync.Mutex
+	var loaded string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		loaded = string(body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	manager := &networking.Manager{DB: h.db, Caddy: &networking.CaddyAdminClient{BaseURL: server.URL, HTTP: server.Client()}, Config: &config.Config{}, Log: h.log}
+	if err := manager.Sync(context.Background()); err != nil {
+		t.Fatalf("sync maintenance: %v", err)
+	}
+	mu.Lock()
+	maintenanceLoaded := strings.Contains(loaded, `"status_code":503`)
+	mu.Unlock()
+	if !maintenanceLoaded {
+		t.Fatal("Caddy did not receive a maintenance route")
+	}
+	got, err := h.db.GetPublicRoute(route.Hostname)
+	if err != nil || got == nil || got.Status != string(admiral.RouteStatusActive) {
+		t.Fatalf("maintenance sync overwrote original route status: route=%+v err=%v", got, err)
+	}
+}
+
 func TestHandleFleetCallbackIgnoresSignedDuplicateAfterTerminalOperation(t *testing.T) {
 	h := newTestHandler(t, false)
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
@@ -1006,6 +1322,15 @@ func TestHandleMigrateInstanceRejectsNonexistentTargetNode(t *testing.T) {
 
 func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	h := newTestHandler(t, false)
+	publisher := &mockPublisher{entered: make(chan struct{}), release: make(chan struct{}), publishErr: fmt.Errorf("test dispatch failure")}
+	h.publisher = publisher
+	defer func() {
+		select {
+		case <-publisher.release:
+		default:
+			close(publisher.release)
+		}
+	}()
 
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
 		t.Fatalf("register node: %v", err)
@@ -1019,7 +1344,7 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	if err := h.db.UpdateNodeStatus("node_002", "active"); err != nil {
 		t.Fatalf("activate node_002: %v", err)
 	}
-	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", `{"name":"testapp","services":{"web":{"image":"nginx"}}}`, []database.AppTier{}, "improvement"); err != nil {
+	if err := h.db.SaveAppDefinition("testapp", "Test App", "desc", migrationTestAppYAML(), []database.AppTier{}, "improvement"); err != nil {
 		t.Fatalf("save app definition: %v", err)
 	}
 	if err := h.db.CreateCustomerApp("inst_001", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
@@ -1049,6 +1374,11 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	if resp.Status != "running" {
 		t.Fatalf("expected status=running, got %s", resp.Status)
 	}
+	select {
+	case <-publisher.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("migration did not dispatch its first backup")
+	}
 
 	op, _ := h.db.GetOperation(resp.OperationID)
 	if op == nil {
@@ -1059,6 +1389,54 @@ func TestHandleMigrateInstanceAcceptsValidRequest(t *testing.T) {
 	}
 	if op.Status != "running" {
 		t.Fatalf("expected status=running, got %s", op.Status)
+	}
+	close(publisher.release)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		op, err := h.db.GetOperation(resp.OperationID)
+		if err == nil && op != nil && op.Status == "failed" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("migration did not finish after the simulated dispatch failure")
+}
+
+func TestCreateMigrationOperationSerializesRequests(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_source", "source", "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+		t.Fatalf("register source: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_concurrent", "cust_001", "testapp", "starter", "node_source", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_concurrent", "active", "running"); err != nil {
+		t.Fatalf("set instance state: %v", err)
+	}
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"op_migrate_concurrent_1", "op_migrate_concurrent_2"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			results <- h.db.CreateMigrationOperation(id, "inst_concurrent", "node_source", "system", &database.OperationMetadata{MigrationStep: "starting"})
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	succeeded, conflicts := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, database.ErrMigrationConflict):
+			conflicts++
+		default:
+			t.Fatalf("create migration: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicts != 1 {
+		t.Fatalf("expected one migration and one conflict, got %d successes and %d conflicts", succeeded, conflicts)
 	}
 }
 
@@ -1079,6 +1457,7 @@ func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 	if _, err := h.db.Exec("UPDATE customer_apps SET logical_instance_id = $1, technical_status = 'running' WHERE id = $2", "li_rollback", "inst_rollback"); err != nil {
 		t.Fatalf("seed logical instance id: %v", err)
 	}
+	prepareMigrationCapacity(t, h, "node_001", "node_002")
 	if err := h.db.CreateOperation("op_migrate_rollback", "inst_rollback", "node_001", "migrate", "running", "system"); err != nil {
 		t.Fatalf("create migration op: %v", err)
 	}
@@ -1094,6 +1473,17 @@ func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 	}
 	if inst.LogicalInstanceID != "li_rollback" {
 		t.Fatalf("expected logical_instance_id to be preserved, got %q", inst.LogicalInstanceID)
+	}
+	sourceRAM, sourceDisk, err := h.db.GetCommittedResources("node_001")
+	if err != nil {
+		t.Fatalf("get source capacity after rollback: %v", err)
+	}
+	targetRAM, targetDisk, err := h.db.GetCommittedResources("node_002")
+	if err != nil {
+		t.Fatalf("get target capacity after rollback: %v", err)
+	}
+	if sourceRAM != int64(256<<20) || sourceDisk != int64(1<<30) || targetRAM != 0 || targetDisk != 0 {
+		t.Fatalf("rollback capacity is inconsistent: source=(%d,%d) target=(%d,%d)", sourceRAM, sourceDisk, targetRAM, targetDisk)
 	}
 
 	op, err := h.db.GetOperation("op_migrate_rollback")
@@ -1125,6 +1515,201 @@ func TestRunMigrationRollsBackBeforeCutover(t *testing.T) {
 	}
 }
 
+func TestRunMigrationBackupFailureRestoresMaintenanceRoute(t *testing.T) {
+	h := newTestHandler(t, false)
+	publisher := &migrationTestPublisher{db: h.db, failAction: admiral.ActionBackupDatabase, completeBeforeReturn: true}
+	h.publisher = publisher
+	for _, nodeID := range []string{"node_001", "node_002"} {
+		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "10.99.0.2", "worker", "", "rocky", "5.0"); err != nil {
+			t.Fatalf("register node: %v", err)
+		}
+	}
+	if err := h.db.CreateCustomerApp("inst_maintenance", "cust_001", "migrate-app", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_maintenance", "active", "running"); err != nil {
+		t.Fatalf("set instance state: %v", err)
+	}
+	prepareMigrationCapacity(t, h, "node_001", "node_002")
+	if err := h.db.CreateOperation("op_migrate_maintenance", "inst_maintenance", "node_001", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration operation: %v", err)
+	}
+	sourceNode := "node_001"
+	route := database.PublicRoute{ID: "route_maintenance", Hostname: "migration.example.test", AppInstanceID: "inst_maintenance", NodeID: &sourceNode, ServiceName: "web", TargetHost: "10.99.0.2", TargetPort: 8080, TargetURL: "http://10.99.0.2:8080", RouteKind: string(admiral.RouteKindInstance), Status: string(admiral.RouteStatusActive)}
+	if err := h.db.CreatePublicRoute(route); err != nil {
+		t.Fatalf("create public route: %v", err)
+	}
+	var mu sync.Mutex
+	var loads []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		loads = append(loads, string(body))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	h.networking = &networking.Manager{DB: h.db, Caddy: &networking.CaddyAdminClient{BaseURL: server.URL, HTTP: server.Client()}, Config: &config.Config{}, Log: h.log}
+
+	started := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.runMigration("op_migrate_maintenance", "inst_maintenance", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "inst_maintenance")
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		loaded := len(loads) > 0
+		mu.Unlock()
+		if loaded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("maintenance was not loaded in Caddy")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// An already-running reconciliation must not re-enable public traffic.
+	if err := h.networking.EnableRoute(context.Background(), route.Hostname); err == nil {
+		t.Fatal("route change was accepted during migration")
+	}
+	mu.Lock()
+	stillUnavailable := strings.Contains(loads[len(loads)-1], `"status_code":503`)
+	mu.Unlock()
+	if !stillUnavailable {
+		t.Fatal("concurrent reconciliation reopened traffic during migration")
+	}
+	<-done
+	if time.Since(started) < 30*time.Second {
+		t.Fatal("backup started before the maintenance drain interval")
+	}
+	inst, err := h.db.GetCustomerApp("inst_maintenance")
+	if err != nil || inst == nil || inst.TechnicalStatus != "running" || inst.NodeID == nil || *inst.NodeID != sourceNode {
+		t.Fatalf("source must remain running after backup failure: instance=%+v err=%v", inst, err)
+	}
+	currentRoute, err := h.db.GetPublicRoute(route.Hostname)
+	if err != nil || currentRoute == nil || currentRoute.Status != string(admiral.RouteStatusActive) || currentRoute.NodeID == nil || *currentRoute.NodeID != sourceNode {
+		t.Fatalf("source route was not restored: route=%+v err=%v", currentRoute, err)
+	}
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionStopApp || task.Action == admiral.ActionPauseApp || task.Action == admiral.ActionProvisionApp {
+			t.Fatalf("backup failure dispatched %s", task.Action)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(loads) < 2 || !strings.Contains(loads[0], `"status_code":503`) || !strings.Contains(loads[len(loads)-1], `"reverse_proxy"`) {
+		t.Fatalf("expected Caddy maintenance followed by original route, got %d config loads", len(loads))
+	}
+}
+
+func TestRunMigrationRejectsInvalidBackupChecksumBeforePause(t *testing.T) {
+	h := newTestHandler(t, false)
+	publisher := &migrationTestPublisher{db: h.db, invalidChecksum: true, completeBeforeReturn: true}
+	h.publisher = publisher
+	for _, nodeID := range []string{"node_001", "node_002"} {
+		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", "", "worker", "", "rocky", "5.0"); err != nil {
+			t.Fatalf("register node: %v", err)
+		}
+	}
+	if err := h.db.CreateCustomerApp("inst_bad_checksum", "cust_001", "migrate-app", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_bad_checksum", "active", "running"); err != nil {
+		t.Fatalf("set instance state: %v", err)
+	}
+	prepareMigrationCapacity(t, h, "node_001", "node_002")
+	if err := h.db.CreateOperation("op_bad_checksum", "inst_bad_checksum", "node_001", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration operation: %v", err)
+	}
+	h.runMigration("op_bad_checksum", "inst_bad_checksum", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "inst_bad_checksum")
+	op, err := h.db.GetOperation("op_bad_checksum")
+	if err != nil || op == nil || op.Status != "failed" || op.ErrorMessage == nil || !strings.Contains(*op.ErrorMessage, "valid SHA-256 checksum") {
+		t.Fatalf("invalid checksum did not fail migration: op=%+v err=%v", op, err)
+	}
+	inst, err := h.db.GetCustomerApp("inst_bad_checksum")
+	if err != nil || inst == nil || inst.TechnicalStatus != "running" || inst.NodeID == nil || *inst.NodeID != "node_001" {
+		t.Fatalf("invalid checksum changed source: inst=%+v err=%v", inst, err)
+	}
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionPauseApp || task.Action == admiral.ActionProvisionApp {
+			t.Fatalf("invalid backup dispatched %s", task.Action)
+		}
+	}
+}
+
+func TestRunMigrationUncertainCutoverPreservesBothWorkloads(t *testing.T) {
+	h := newTestHandler(t, false)
+	publisher := &migrationTestPublisher{db: h.db, completeBeforeReturn: true}
+	h.publisher = publisher
+	for i, nodeID := range []string{"node_001", "node_002"} {
+		wireguardIP := fmt.Sprintf("10.99.0.%d", i+2)
+		if err := h.db.RegisterNode(nodeID, nodeID, "10.0.0.1", wireguardIP, "worker", "", "rocky", "5.0"); err != nil {
+			t.Fatalf("register node: %v", err)
+		}
+	}
+	if err := h.db.CreateCustomerApp("inst_uncertain", "cust_001", "migrate-app", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_uncertain", "active", "running"); err != nil {
+		t.Fatalf("set instance state: %v", err)
+	}
+	prepareMigrationCapacity(t, h, "node_001", "node_002")
+	if err := h.db.CreateOperation("op_uncertain", "inst_uncertain", "node_001", "migrate", "running", "system"); err != nil {
+		t.Fatalf("create migration operation: %v", err)
+	}
+	sourceNode := "node_001"
+	route := database.PublicRoute{ID: "route_uncertain", Hostname: "uncertain.example.test", AppInstanceID: "inst_uncertain", NodeID: &sourceNode, ServiceName: "web", TargetHost: "10.99.0.2", TargetPort: 40000, TargetURL: "http://10.99.0.2:40000", RouteKind: string(admiral.RouteKindInstance), Status: string(admiral.RouteStatusActive)}
+	if err := h.db.CreatePublicRoute(route); err != nil {
+		t.Fatalf("create source route: %v", err)
+	}
+	var mu sync.Mutex
+	loads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		mu.Lock()
+		loads++
+		current := loads
+		mu.Unlock()
+		if current == 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	h.networking = &networking.Manager{DB: h.db, Caddy: &networking.CaddyAdminClient{BaseURL: server.URL, HTTP: server.Client()}, Config: &config.Config{}, Log: h.log}
+
+	h.runMigration("op_uncertain", "inst_uncertain", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "inst_uncertain")
+	op, err := h.db.GetOperation("op_uncertain")
+	if err != nil || op == nil || op.Status != "failed" || op.ErrorMessage == nil || !strings.Contains(*op.ErrorMessage, "outcome is uncertain") {
+		t.Fatalf("uncertain cutover was not reported: op=%+v err=%v", op, err)
+	}
+	currentRoute, err := h.db.GetPublicRoute(route.Hostname)
+	if err != nil || currentRoute == nil || currentRoute.Status != string(admiral.RouteStatusDisabled) {
+		t.Fatalf("uncertain cutover did not restore maintenance: route=%+v err=%v", currentRoute, err)
+	}
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionDeprovisionApp {
+			t.Fatalf("uncertain cutover deleted workload on %s", task.NodeID)
+		}
+	}
+	for _, nodeID := range []string{"node_001", "node_002"} {
+		ram, disk, err := h.db.GetCommittedResources(nodeID)
+		if err != nil || ram != int64(256<<20) || disk != int64(1<<30) {
+			t.Fatalf("uncertain cutover did not retain %s capacity: ram=%d disk=%d err=%v", nodeID, ram, disk, err)
+		}
+	}
+}
+
 func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	h := newTestHandler(t, false)
 	publisher := &migrationTestPublisher{db: h.db, completeBeforeReturn: true}
@@ -1142,9 +1727,24 @@ func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	if _, err := h.db.Exec("UPDATE customer_apps SET logical_instance_id = $1, technical_status = 'running' WHERE id = $2", "li_cutover", "inst_cutover"); err != nil {
 		t.Fatalf("seed logical instance id: %v", err)
 	}
+	prepareMigrationCapacity(t, h, "node_001", "node_002")
 	if err := h.db.CreateOperation("op_migrate_cutover", "inst_cutover", "node_001", "migrate", "running", "system"); err != nil {
 		t.Fatalf("create migration op: %v", err)
 	}
+	sourceNode := "node_001"
+	route := database.PublicRoute{ID: "route_cutover", Hostname: "cutover.example.test", AppInstanceID: "inst_cutover", NodeID: &sourceNode, ServiceName: "web", TargetHost: "10.99.0.2", TargetPort: 40000, TargetURL: "http://10.99.0.2:40000", RouteKind: string(admiral.RouteKindInstance), Status: string(admiral.RouteStatusActive)}
+	if err := h.db.CreatePublicRoute(route); err != nil {
+		t.Fatalf("create source route: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	h.networking = &networking.Manager{DB: h.db, Caddy: &networking.CaddyAdminClient{BaseURL: server.URL, HTTP: server.Client()}, Config: &config.Config{}, Log: h.log}
 
 	h.runMigration("op_migrate_cutover", "inst_cutover", "cust_001", "node_001", "node_002", migrationTestAppYAML(), database.AppTier{Name: "starter", CPU: 1, Memory: "256M", Storage: "1G"}, "li_cutover")
 
@@ -1158,6 +1758,21 @@ func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	if inst.LogicalInstanceID != "li_cutover" {
 		t.Fatalf("expected logical_instance_id to be preserved, got %q", inst.LogicalInstanceID)
 	}
+	cutoverRoute, err := h.db.GetPublicRoute(route.Hostname)
+	if err != nil || cutoverRoute == nil || cutoverRoute.NodeID == nil || *cutoverRoute.NodeID != "node_002" || cutoverRoute.TargetHost != "10.99.0.3" || cutoverRoute.TargetPort != 43121 || cutoverRoute.Status != string(admiral.RouteStatusActive) {
+		t.Fatalf("route did not use the target worker and port: route=%+v err=%v", cutoverRoute, err)
+	}
+	sourceRAM, sourceDisk, err := h.db.GetCommittedResources("node_001")
+	if err != nil {
+		t.Fatalf("get source capacity after cutover: %v", err)
+	}
+	targetRAM, targetDisk, err := h.db.GetCommittedResources("node_002")
+	if err != nil {
+		t.Fatalf("get target capacity after cutover: %v", err)
+	}
+	if sourceRAM != 0 || sourceDisk != 0 || targetRAM != int64(256<<20) || targetDisk != int64(1<<30) {
+		t.Fatalf("cutover capacity is inconsistent: source=(%d,%d) target=(%d,%d)", sourceRAM, sourceDisk, targetRAM, targetDisk)
+	}
 
 	op, err := h.db.GetOperation("op_migrate_cutover")
 	if err != nil {
@@ -1165,6 +1780,27 @@ func TestRunMigrationCutoverPreservesLogicalInstanceID(t *testing.T) {
 	}
 	if op == nil || op.Status != "succeeded" {
 		t.Fatalf("expected migration op to succeed, got %+v", op)
+	}
+	if publisher.targetProvisionState != "migrating" {
+		t.Fatalf("target was provisioned with instance state %q, expected migrating", publisher.targetProvisionState)
+	}
+	if op.Metadata == nil || len(op.Metadata.BackupRecordIDs) != 2 {
+		t.Fatalf("migration did not record the fresh backup identities: %+v", op.Metadata)
+	}
+	fresh := make(map[string]bool)
+	for _, id := range op.Metadata.BackupRecordIDs {
+		fresh[id] = true
+	}
+	for _, task := range publisher.published {
+		if task.Action == admiral.ActionRestoreBackup {
+			if task.Restore == nil || !fresh[task.Restore.BackupID] {
+				t.Fatalf("restore did not use a fresh migration backup: %+v", task.Restore)
+			}
+			delete(fresh, task.Restore.BackupID)
+		}
+	}
+	if len(fresh) != 0 {
+		t.Fatalf("migration did not restore every fresh backup: %v", fresh)
 	}
 
 	var sawRestore bool

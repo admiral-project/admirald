@@ -193,6 +193,7 @@ func (s *Server) checkGracePeriodExpiry() {
 
 	for _, app := range apps {
 		if app.TechnicalStatus == "stopped" ||
+			app.TechnicalStatus == "migrating" ||
 			app.TechnicalStatus == "paused_for_storage" ||
 			app.TechnicalStatus == "initializing" ||
 			app.TechnicalStatus == "setup_failed" ||
@@ -201,6 +202,21 @@ func (s *Server) checkGracePeriodExpiry() {
 			continue
 		}
 		if app.NodeID == nil || *app.NodeID == "" {
+			continue
+		}
+		ops, err := s.handlers.db.GetRunningOperationsByInstance(app.ID)
+		if err != nil {
+			s.log.Error("Failed to check instance operations before storage pause", err, map[string]interface{}{"instance_id": app.ID})
+			continue
+		}
+		migrationActive := false
+		for _, op := range ops {
+			if op.Action == "migrate" {
+				migrationActive = true
+				break
+			}
+		}
+		if migrationActive {
 			continue
 		}
 
@@ -238,6 +254,16 @@ func (s *Server) TriggerScheduledBackup(instanceID string, policy *admiral.Backu
 	inst, err := s.handlers.db.GetCustomerApp(instanceID)
 	if err != nil || inst == nil {
 		return
+	}
+	ops, err := s.handlers.db.GetRunningOperationsByInstance(instanceID)
+	if err != nil {
+		s.log.Error("Failed to check instance operations before scheduled backup", err, map[string]interface{}{"instance_id": instanceID})
+		return
+	}
+	for _, op := range ops {
+		if op.Action == "migrate" {
+			return
+		}
 	}
 
 	appDef, err := s.handlers.db.GetAppDefinition(inst.AppDefinitionName)

@@ -52,7 +52,12 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, blockedMsg)
 		return
 	}
-	if runningOps, _ := h.db.GetRunningOperationsByInstance(req.InstanceID); len(runningOps) > 0 {
+	runningOps, err := h.db.GetRunningOperationsByInstance(req.InstanceID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Failed to verify instance operations")
+		return
+	}
+	if len(runningOps) > 0 {
 		writeError(w, http.StatusConflict, "Instance has a running operation; retry after it completes")
 		return
 	}
@@ -315,6 +320,8 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 
 func validateTechnicalStatusAction(technicalStatus, action string) (string, bool) {
 	switch technicalStatus {
+	case "migrating":
+		return fmt.Sprintf("Action %q is not allowed while instance technical_status is %q", action, technicalStatus), true
 	case "initializing", "setup_failed":
 		if action == "deprovision" {
 			return "", false

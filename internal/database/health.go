@@ -46,6 +46,23 @@ func (d *DB) UpdateInstanceHealthForBoot(instanceID, healthStatus, techStatus, m
 	return err
 }
 
+// MigrationInstanceHealthy requires a fresh report from the assigned node's
+// current boot before traffic can be restored after a migration.
+func (d *DB) MigrationInstanceHealthy(instanceID, nodeID string, since time.Time) (bool, error) {
+	var healthy bool
+	err := d.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM customer_apps ca JOIN nodes n ON n.id = ca.node_id
+		WHERE ca.id = $1 AND n.id = $2 AND n.status = 'active'
+		  AND n.health_status = 'healthy' AND n.last_heartbeat > CURRENT_TIMESTAMP - INTERVAL '2 minutes'
+		  AND COALESCE(n.boot_id, '') <> '' AND ca.last_health_boot_id = n.boot_id
+		  AND ca.health_status = 'healthy' AND ca.last_health_checked_at > $3
+	)`, instanceID, nodeID, since).Scan(&healthy)
+	if err != nil {
+		return false, fmt.Errorf("check migration health: %w", err)
+	}
+	return healthy, nil
+}
+
 func (d *DB) UpdateInstanceStorage(instanceID, storageState, storageMessage string, limitBytes, usedBytes int64, usedPct float64, exceeded bool) error {
 	_, err := d.Exec(`UPDATE customer_apps SET
 		storage_limit_bytes = $1, storage_used_bytes = $2, storage_used_percent = $3,
@@ -85,7 +102,7 @@ func (d *DB) GetExpiredGracePeriodApps() ([]CustomerApp, error) {
 		WHERE grace_period_ends_at IS NOT NULL
 		AND grace_period_ends_at < CURRENT_TIMESTAMP
 		AND storage_state = 'over_quota'
-		AND technical_status NOT IN ('stopped', 'paused_for_storage', 'initializing', 'setup_failed', 'deprovisioning', 'deprovisioned')
+		AND technical_status NOT IN ('stopped', 'paused_for_storage', 'migrating', 'initializing', 'setup_failed', 'deprovisioning', 'deprovisioned')
 		ORDER BY grace_period_ends_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query expired grace period apps: %w", err)

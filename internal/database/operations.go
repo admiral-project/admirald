@@ -6,15 +6,20 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
+
+var ErrMigrationConflict = errors.New("instance state or active operations prevent migration")
 
 type OperationMetadata struct {
 	TargetNodeID      string            `json:"target_node_id,omitempty"`
 	SourceNodeID      string            `json:"source_node_id,omitempty"`
 	LogicalInstanceID string            `json:"logical_instance_id,omitempty"`
 	MigrationStep     string            `json:"migration_step,omitempty"`
+	MigrationRoutes   []PublicRoute     `json:"migration_routes,omitempty"`
+	HostPorts         map[string]int    `json:"host_ports,omitempty"`
 	BackupRecordIDs   []string          `json:"backup_record_ids,omitempty"`
 	NewInstanceID     string            `json:"new_instance_id,omitempty"`
 	SourceAction      string            `json:"source_action,omitempty"`
@@ -65,6 +70,45 @@ func (d *DB) CreateOperationWithMetadata(id, instanceID, nodeID, action, status,
 	_, err := d.Exec(query, id, instanceIDArg(instanceID), nodeID, action, status, adminUser, metaJSON)
 	if err != nil {
 		return fmt.Errorf("create operation with metadata: %w", err)
+	}
+	return nil
+}
+
+// CreateMigrationOperation serializes competing migrations and verifies that
+// the source assignment has not changed since the request was validated.
+func (d *DB) CreateMigrationOperation(id, instanceID, sourceNodeID, adminUser string, metadata *OperationMetadata) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration operation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var nodeID sql.NullString
+	var status string
+	if err := tx.QueryRow("SELECT node_id, technical_status FROM customer_apps WHERE id = $1 FOR UPDATE", instanceID).Scan(&nodeID, &status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrMigrationConflict
+		}
+		return fmt.Errorf("lock migration instance: %w", err)
+	}
+	if !nodeID.Valid || nodeID.String != sourceNodeID || status != "running" {
+		return ErrMigrationConflict
+	}
+	var active bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM operations WHERE instance_id = $1 AND status IN ('pending_dispatch', 'queued', 'running'))`, instanceID).Scan(&active); err != nil {
+		return fmt.Errorf("check active instance operations: %w", err)
+	}
+	if active {
+		return ErrMigrationConflict
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal migration metadata: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO operations (id, instance_id, node_id, action, status, admin_user, metadata) VALUES ($1, $2, $3, 'migrate', 'running', $4, $5)`, id, instanceID, sourceNodeID, adminUser, string(encoded)); err != nil {
+		return fmt.Errorf("create migration operation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration operation: %w", err)
 	}
 	return nil
 }

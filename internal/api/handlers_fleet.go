@@ -46,6 +46,10 @@ func parseSetupMetadata(metadata string) setupCallbackMetadata {
 	return data
 }
 
+func isMigrationSuboperation(op *database.Operation) bool {
+	return op != nil && op.Metadata != nil && strings.TrimSpace(op.Metadata.MigrationStep) != ""
+}
+
 type restartImageEvidence struct {
 	DefinedImage string `json:"defined_image"`
 	ImageRef     string `json:"image_ref"`
@@ -569,6 +573,14 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			h.log.Error("Fleet image verification failed", err, map[string]interface{}{"operation_id": res.OperationID, "instance_id": op.InstanceID})
 		}
 	}
+	if res.Success && isMigrationSuboperation(op) && op.Action == string(admiral.ActionStartApp) {
+		op.Metadata.HostPorts = parseHostPortsFromMetadata(res.Metadata)
+		if err := h.db.UpdateOperationMetadata(op.ID, op.Metadata); err != nil {
+			res.Success = false
+			res.Error = "failed to persist migration target ports"
+			h.log.Error("Failed to persist migration task ports", err, map[string]interface{}{"operation_id": op.ID})
+		}
+	}
 
 	if err := h.publisher.CompleteTask(res.TaskID, res.Success, res.Error); err != nil {
 		h.log.Error("Failed to update fleet_commands from callback", err, map[string]interface{}{"task_id": res.TaskID})
@@ -589,12 +601,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		case string(admiral.ActionProvisionApp):
 			nextTechStatus = "running"
 			setupMeta := parseSetupMetadata(res.Metadata)
-			if setupMeta.HasSetup {
+			if setupMeta.HasSetup && !isMigrationSuboperation(op) {
 				if uerr := h.db.SetSetupCompleted(op.InstanceID); uerr != nil {
 					h.log.Error("Failed to mark setup_completed", uerr, map[string]interface{}{"instance_id": op.InstanceID})
 				}
 			}
-			if h.networking != nil {
+			if h.networking != nil && !isMigrationSuboperation(op) {
 				hostPorts := parseHostPortsFromMetadata(res.Metadata)
 				if err := h.networking.ActivateInstanceRoutes(r.Context(), op.InstanceID, hostPorts); err != nil {
 					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
@@ -602,10 +614,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			}
 		case string(admiral.ActionStartApp), string(admiral.ActionResumeApp), string(admiral.ActionReactivateApp):
 			nextTechStatus = "running"
-			if uerr := h.db.ClearCustomerAppRestartRequired(op.InstanceID); uerr != nil {
-				h.log.Error("Failed to clear instance restart requirement", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+			if !isMigrationSuboperation(op) {
+				if uerr := h.db.ClearCustomerAppRestartRequired(op.InstanceID); uerr != nil {
+					h.log.Error("Failed to clear instance restart requirement", uerr, map[string]interface{}{"instance_id": op.InstanceID})
+				}
 			}
-			if h.networking != nil {
+			if h.networking != nil && !isMigrationSuboperation(op) {
 				hostPorts := parseHostPortsFromMetadata(res.Metadata)
 				if err := h.networking.ActivateInstanceRoutes(r.Context(), op.InstanceID, hostPorts); err != nil {
 					h.log.Error("Activate public routes failed", err, map[string]interface{}{"instance_id": op.InstanceID})
@@ -619,6 +633,12 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 			nextTechStatus = "running"
 			h.handleResizeCallback(op, res, true)
 		case string(admiral.ActionDeprovisionApp):
+			if isMigrationSuboperation(op) {
+				// Migration cleanup removes a node-local workload. The migration
+				// coordinator owns the logical instance, routes, and capacity.
+				nextTechStatus = ""
+				break
+			}
 			nextTechStatus = "deprovisioned"
 			inst, ierr := h.db.GetCustomerApp(op.InstanceID)
 			preserveSetupFailed := ierr == nil && inst != nil && inst.TechnicalStatus == "setup_failed"
@@ -669,16 +689,23 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		isBackup := op.Action == string(admiral.ActionBackupDatabase) || op.Action == "backup_volumes"
 		if isBackup {
 			// Backup failure does not make the instance failed — restore running status.
-			nextTechStatus = "running"
+			if !isMigrationSuboperation(op) {
+				nextTechStatus = "running"
+			}
 			handleBackupCallback(h, op, res, false)
 		} else if op.Action == string(admiral.ActionRestoreBackup) {
 			// Restore is accepted only from a paused/stopped state and Fleet
 			// leaves the service paused even when the restore itself fails.
-			nextTechStatus = "paused"
+			if !isMigrationSuboperation(op) {
+				nextTechStatus = "paused"
+			}
+		} else if isMigrationSuboperation(op) {
+			// Rollback owns the final status after a migration child fails.
+			nextTechStatus = ""
 		} else {
 			nextTechStatus = "failed"
 		}
-		if op.Action == string(admiral.ActionProvisionApp) {
+		if op.Action == string(admiral.ActionProvisionApp) && !isMigrationSuboperation(op) {
 			setupMeta := parseSetupMetadata(res.Metadata)
 			if setupMeta.SetupFailed {
 				nextTechStatus = "setup_failed"
@@ -703,7 +730,7 @@ func (h *APIHandlers) HandleFleetCallback(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	if nextTechStatus != "" && op.Action != string(admiral.ActionDeprovisionApp) {
+	if nextTechStatus != "" && op.Action != string(admiral.ActionDeprovisionApp) && !isMigrationSuboperation(op) {
 		if uerr := h.db.UpdateCustomerAppStatus(op.InstanceID, "", nextTechStatus); uerr != nil {
 			h.log.Error("Failed to update instance status after callback", uerr, map[string]interface{}{"instance_id": op.InstanceID})
 		}

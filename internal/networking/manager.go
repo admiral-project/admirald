@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/admiral-project/admiral/admirald/internal/config"
@@ -32,6 +33,7 @@ var appCodePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 const defaultLocalPortalTarget = "https://127.0.0.1:5001"
 
 type Manager struct {
+	syncMu  sync.Mutex
 	DB      *database.DB
 	Caddy   *CaddyAdminClient
 	Config  *config.Config
@@ -219,6 +221,15 @@ func (m *Manager) CreateInstanceRoutes(instanceID string, appDef admiral.AppDefi
 }
 
 func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string, hostPorts ...map[string]int) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
+	active, err := m.instanceMigrationActive(instanceID)
+	if err != nil {
+		return err
+	}
+	if active {
+		return nil
+	}
 	routes, err := m.DB.GetPublicRoutes()
 	if err != nil {
 		return err
@@ -229,6 +240,9 @@ func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string,
 	}
 	for _, route := range routes {
 		if route.AppInstanceID != instanceID || route.RouteKind != string(admiral.RouteKindInstance) {
+			continue
+		}
+		if route.Status == string(admiral.RouteStatusDisabled) {
 			continue
 		}
 		node, err := m.DB.GetNode(routeNodeID(route))
@@ -278,31 +292,41 @@ func (m *Manager) ActivateInstanceRoutes(ctx context.Context, instanceID string,
 			return err
 		}
 	}
-	return m.Sync(ctx)
+	return m.syncLocked(ctx)
 }
 
 func (m *Manager) DisableRoute(ctx context.Context, hostname string) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
 	route, err := m.DB.GetPublicRoute(hostname)
 	if err != nil {
 		return err
 	}
 	if route == nil {
 		return fmt.Errorf("route %q not found", hostname)
+	}
+	if err := m.rejectRouteChangeDuringMigration(route); err != nil {
+		return err
 	}
 	route.Status = string(admiral.RouteStatusDisabled)
 	if err := m.DB.UpdatePublicRoute(route); err != nil {
 		return err
 	}
-	return m.Sync(ctx)
+	return m.syncLocked(ctx)
 }
 
 func (m *Manager) EnableRoute(ctx context.Context, hostname string) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
 	route, err := m.DB.GetPublicRoute(hostname)
 	if err != nil {
 		return err
 	}
 	if route == nil {
 		return fmt.Errorf("route %q not found", hostname)
+	}
+	if err := m.rejectRouteChangeDuringMigration(route); err != nil {
+		return err
 	}
 	if route.RouteKind == string(admiral.RouteKindInstance) {
 		route.Status = string(admiral.RouteStatusActive)
@@ -312,10 +336,12 @@ func (m *Manager) EnableRoute(ctx context.Context, hostname string) error {
 	if err := m.DB.UpdatePublicRoute(route); err != nil {
 		return err
 	}
-	return m.Sync(ctx)
+	return m.syncLocked(ctx)
 }
 
 func (m *Manager) DeleteRoute(ctx context.Context, hostname string) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
 	route, err := m.DB.GetPublicRoute(hostname)
 	if err != nil {
 		return err
@@ -323,14 +349,44 @@ func (m *Manager) DeleteRoute(ctx context.Context, hostname string) error {
 	if route == nil {
 		return nil
 	}
+	if err := m.rejectRouteChangeDuringMigration(route); err != nil {
+		return err
+	}
 	route.Status = string(admiral.RouteStatusDeleting)
 	if err := m.DB.UpdatePublicRoute(route); err != nil {
 		return err
 	}
-	if err := m.Sync(ctx); err != nil {
+	if err := m.syncLocked(ctx); err != nil {
 		return err
 	}
 	return m.DB.DeletePublicRoute(hostname)
+}
+
+func (m *Manager) instanceMigrationActive(instanceID string) (bool, error) {
+	if instanceID == "" {
+		return false, nil
+	}
+	ops, err := m.DB.GetRunningOperationsByInstance(instanceID)
+	if err != nil {
+		return false, err
+	}
+	for _, op := range ops {
+		if op.Action == "migrate" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *Manager) rejectRouteChangeDuringMigration(route *database.PublicRoute) error {
+	active, err := m.instanceMigrationActive(route.AppInstanceID)
+	if err != nil {
+		return fmt.Errorf("check route migration: %w", err)
+	}
+	if active {
+		return fmt.Errorf("route %q cannot change during instance migration", route.Hostname)
+	}
+	return nil
 }
 
 func (m *Manager) DeleteInstanceRoutes(ctx context.Context, instanceID string) error {
@@ -350,12 +406,63 @@ func (m *Manager) DeleteInstanceRoutes(ctx context.Context, instanceID string) e
 }
 
 func (m *Manager) Sync(ctx context.Context) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
+	return m.syncLocked(ctx)
+}
+
+// UpdateRoutesAndSync serializes route changes with Caddy reconciliation.
+func (m *Manager) UpdateRoutesAndSync(ctx context.Context, routes []database.PublicRoute) error {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
+	for _, route := range routes {
+		if err := m.DB.UpdatePublicRoute(&route); err != nil {
+			return err
+		}
+	}
+	return m.syncLocked(ctx)
+}
+
+func (m *Manager) syncLocked(ctx context.Context) error {
 	routes, err := m.DB.GetPublicRoutes()
 	if err != nil {
 		return err
 	}
 	if m.Caddy == nil {
 		return nil
+	}
+	maintenance := make(map[string]bool)
+	checked := make(map[string]bool)
+	caddyRoutes := append([]database.PublicRoute(nil), routes...)
+	for i := range caddyRoutes {
+		instanceID := caddyRoutes[i].AppInstanceID
+		if instanceID == "" {
+			continue
+		}
+		if !checked[instanceID] {
+			operations, err := m.DB.GetRunningOperationsByInstance(instanceID)
+			if err != nil {
+				return fmt.Errorf("check migration maintenance for instance %q: %w", instanceID, err)
+			}
+			for _, op := range operations {
+				if op.Action != "migrate" {
+					continue
+				}
+				step := ""
+				if op.Metadata != nil {
+					step = op.Metadata.MigrationStep
+				}
+				switch step {
+				case "enabling_target_routes", "rollback_routes", "deprovisioning_source", "cleanup_source_failed", "completed":
+				default:
+					maintenance[instanceID] = true
+				}
+			}
+			checked[instanceID] = true
+		}
+		if maintenance[instanceID] {
+			caddyRoutes[i].Status = string(admiral.RouteStatusDisabled)
+		}
 	}
 	cfg := RouteConfig{
 		ServerName:     "admiral-public",
@@ -366,9 +473,9 @@ func (m *Manager) Sync(ctx context.Context) error {
 		TLSCertFile:    m.Config.NetworkingTLSCertFile,
 		TLSKeyFile:     m.Config.NetworkingTLSKeyFile,
 	}
-	if err := m.Caddy.SyncRoutes(ctx, routes, cfg); err != nil {
+	if err := m.Caddy.SyncRoutes(ctx, caddyRoutes, cfg); err != nil {
 		for _, route := range routes {
-			if route.Status == string(admiral.RouteStatusDeleted) {
+			if route.Status == string(admiral.RouteStatusDeleted) || maintenance[route.AppInstanceID] {
 				continue
 			}
 			route.LastError = err.Error()
@@ -380,7 +487,7 @@ func (m *Manager) Sync(ctx context.Context) error {
 		return err
 	}
 	for _, route := range routes {
-		if route.Status == string(admiral.RouteStatusDeleted) {
+		if route.Status == string(admiral.RouteStatusDeleted) || maintenance[route.AppInstanceID] {
 			continue
 		}
 		var appDef *admiral.AppDefinitionPayload

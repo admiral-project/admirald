@@ -156,11 +156,22 @@ func (h *APIHandlers) HandleAdminHealthCallback(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	preserveTechnicalStatus := inst.TechnicalStatus == "initializing" || inst.TechnicalStatus == "setup_failed"
+	preserveTechnicalStatus := inst.TechnicalStatus == "initializing" || inst.TechnicalStatus == "setup_failed" || inst.TechnicalStatus == "migrating"
+	operations, err := h.db.GetRunningOperationsByInstance(report.InstanceID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Failed to verify active instance operations")
+		return
+	}
+	for _, op := range operations {
+		if op.Action == "migrate" {
+			preserveTechnicalStatus = true
+			break
+		}
+	}
 	techStatus := healthToTechStatus(report.HealthStatus)
 	updateErr := h.db.UpdateInstanceHealthForBoot(report.InstanceID, string(report.HealthStatus), techStatus, report.Message, report.BootID, preserveTechnicalStatus)
 	if updateErr != nil {
-		h.log.Error("Failed to update instance health", err, map[string]interface{}{"instance_id": report.InstanceID})
+		h.log.Error("Failed to update instance health", updateErr, map[string]interface{}{"instance_id": report.InstanceID})
 		writeError(w, http.StatusInternalServerError, "Failed to update health")
 		return
 	}
