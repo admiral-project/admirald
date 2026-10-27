@@ -67,7 +67,7 @@ func (r unixWireGuardPeerRevoker) RevokePeer(ctx context.Context, nodeID, nodeRo
 			_ = connection.Close()
 		}
 	}()
-	deadline := time.Now().Add(27 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline
 	}

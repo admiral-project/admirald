@@ -198,7 +198,7 @@ func (s *Server) Listen(ctx context.Context, addr, port, certFile, keyFile strin
 		Handler:        RecoveryMiddleware(s.log, SecurityHeadersMiddleware(mux)),
 		TLSConfig:      tlsconfig.NewServerConfig(),
 		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   35 * time.Second,
+		WriteTimeout:   75 * time.Second,
 		IdleTimeout:    60 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
