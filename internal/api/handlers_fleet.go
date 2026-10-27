@@ -250,7 +250,7 @@ func (h *APIHandlers) HandleTaskClaim(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case instance == nil:
 				reason = "instance no longer exists"
-			case instance.TechnicalStatus == "deprovisioned":
+			case instance.TechnicalStatus == "deprovisioned" && task.Action != admiral.ActionDeleteBackup:
 				reason = "instance is already deprovisioned"
 			}
 		}

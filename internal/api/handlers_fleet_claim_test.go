@@ -124,6 +124,54 @@ func TestHandleTaskClaimDiscardsIneligibleTasksBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestHandleTaskClaimAllowsBackupDeletionAfterDeprovision(t *testing.T) {
+	h := newTestHandler(t, false)
+	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if err := h.db.CreateCustomerApp("inst_deprovisioned", "cust_001", "testapp", "starter", "node_001", `{}`); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	if err := h.db.UpdateCustomerAppStatus("inst_deprovisioned", "cancelled", "deprovisioned"); err != nil {
+		t.Fatalf("mark instance deprovisioned: %v", err)
+	}
+	if err := h.db.CreateOperation("op_delete_backup", "inst_deprovisioned", "node_001", string(admiral.ActionDeleteBackup), "queued", "test"); err != nil {
+		t.Fatalf("create backup deletion operation: %v", err)
+	}
+	if err := h.db.UpdateOperationTaskID("op_delete_backup", "task_delete_backup"); err != nil {
+		t.Fatalf("set backup deletion task ID: %v", err)
+	}
+	task := claimTaskForInstance("op_delete_backup", "task_delete_backup", "inst_deprovisioned")
+	task.Action = admiral.ActionDeleteBackup
+	publisher := &terminalTaskClaimPublisher{
+		mockPublisher: &mockPublisher{},
+		claims:        []queuedTaskClaim{{commandID: "cmd_delete_backup", task: task}},
+	}
+	h.publisher = publisher
+
+	body, _ := json.Marshal(map[string]string{"node_id": "node_001"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/tasks/claim", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyNodeID, "node_001"))
+	rec := httptest.NewRecorder()
+	h.HandleTaskClaim(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Task admiral.FleetTask `json:"task"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if response.Task.TaskID != "task_delete_backup" || response.Task.Action != admiral.ActionDeleteBackup {
+		t.Fatalf("claimed task = %+v, want delete_backup task_delete_backup", response.Task)
+	}
+	if len(publisher.discardedCommands) != 0 {
+		t.Fatalf("discarded commands = %v, want no discarded command", publisher.discardedCommands)
+	}
+}
+
 func TestTerminalFleetCallbackSettlesQueueCommand(t *testing.T) {
 	h := newTestHandler(t, false)
 	if err := h.db.RegisterNode("node_001", "worker-1", "10.0.0.1", "", "worker", "", "fedora", "5.0"); err != nil {
