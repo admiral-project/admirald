@@ -390,6 +390,8 @@ func (s *Server) checkPortalNodeHealth(ctx context.Context, client *http.Client)
 				ok = true
 				if err := s.handlers.db.UpdatePortalHeartbeat(portal.ID, addr); err != nil {
 					s.log.Error("Failed to update portal heartbeat", err, map[string]interface{}{"node_id": portal.ID})
+				} else if err := s.handlers.syncKnownHostInventory(); err != nil {
+					s.log.Error("Sync know_host inventory failed after portal health check", err, map[string]interface{}{"node_id": portal.ID})
 				}
 				if err := s.handlers.recomputeNodePolicy(portal.ID); err != nil {
 					s.log.Error("Failed to recompute portal node policy", err, map[string]interface{}{"node_id": portal.ID})
