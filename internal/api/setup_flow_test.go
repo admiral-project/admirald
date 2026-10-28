@@ -122,6 +122,46 @@ func TestNormalizeInstanceSecretsPropagatesWordPressAndGiteaDBCredentials(t *tes
 	}
 }
 
+func TestNormalizeInstanceSecretsPropagatesListmonkDBCredentials(t *testing.T) {
+	payload := admiral.AppDefinitionPayload{
+		Services: map[string]admiral.YAMLService{
+			"app": {
+				Image: "docker.io/listmonk/listmonk:v6.1.0",
+				Secrets: map[string]admiral.YAMLSecret{
+					"LISTMONK_db__user":     {},
+					"LISTMONK_db__password": {},
+				},
+			},
+			"db": {
+				Image: "docker.io/library/postgres:16",
+				Secrets: map[string]admiral.YAMLSecret{
+					"POSTGRES_USER":     {},
+					"POSTGRES_PASSWORD": {},
+				},
+			},
+		},
+	}
+	all := map[string]map[string]string{
+		"app": {
+			"LISTMONK_db__user":     "app-generated-user",
+			"LISTMONK_db__password": "app-generated-password",
+		},
+		"db": {
+			"POSTGRES_USER":     "db-user",
+			"POSTGRES_PASSWORD": "db-password",
+		},
+	}
+
+	normalizeInstanceSecrets(all, payload)
+
+	if got := all["app"]["LISTMONK_db__user"]; got != "db-user" {
+		t.Fatalf("expected Listmonk DB user to match PostgreSQL user, got %q", got)
+	}
+	if got := all["app"]["LISTMONK_db__password"]; got != "db-password" {
+		t.Fatalf("expected Listmonk DB password to match PostgreSQL password, got %q", got)
+	}
+}
+
 func TestValidateTechnicalStatusAction(t *testing.T) {
 	tests := []struct {
 		name           string

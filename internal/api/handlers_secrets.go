@@ -209,6 +209,11 @@ func isDBUserEnv(upper string) bool {
 	if strings.HasSuffix(upper, "_DB_USER") {
 		return true
 	}
+	// Listmonk maps nested TOML keys to environment names with double
+	// underscores, for example LISTMONK_db__user.
+	if strings.HasSuffix(upper, "_DB__USER") {
+		return true
+	}
 	// Gitea-style: GITEA__DATABASE__USER
 	return strings.Contains(upper, "__DATABASE__") && strings.HasSuffix(upper, "_USER")
 }
@@ -216,6 +221,11 @@ func isDBUserEnv(upper string) bool {
 // isDBPasswordEnv returns true if env name looks like it expects a database password.
 func isDBPasswordEnv(upper string) bool {
 	if strings.HasSuffix(upper, "_DB_PASSWORD") {
+		return true
+	}
+	// Listmonk maps nested TOML keys to environment names with double
+	// underscores, for example LISTMONK_db__password.
+	if strings.HasSuffix(upper, "_DB__PASSWORD") {
 		return true
 	}
 	// Gitea-style: GITEA__DATABASE__PASSWD
