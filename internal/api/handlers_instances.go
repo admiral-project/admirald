@@ -286,7 +286,7 @@ func (h *APIHandlers) HandleCustomerAppAction(w http.ResponseWriter, r *http.Req
 			h.log.Error("Failed to recompute node policy after resize reservation", err, map[string]interface{}{"instance_id": req.InstanceID, "node_id": nodeID})
 		}
 	}
-	if err := h.db.CreateOperation(operationID, req.InstanceID, nodeID, string(action), "pending_dispatch", operatorFromRequest(r)); err != nil {
+	if err := h.createActionOperation(operationID, req.InstanceID, nodeID, action, operatorFromRequest(r), matchedTier); err != nil {
 		h.log.Error("Create action operation failed", err, nil)
 		if action == admiral.ActionResizeApp && (resizeReservedRAM > 0 || resizeReservedDisk > 0) {
 			if uerr := h.db.ReleaseNodeCommitment(nodeID, resizeReservedRAM, resizeReservedDisk); uerr != nil {

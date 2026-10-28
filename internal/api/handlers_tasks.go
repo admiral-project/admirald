@@ -13,6 +13,21 @@ func (h *APIHandlers) enqueueTask(opID, instID, nodeID, tenantID, rawYAML string
 	h.enqueueTaskWithID(generateID("task"), opID, instID, nodeID, tenantID, rawYAML, tier, action, backupID, backupService)
 }
 
+func operationMetadataForAction(action admiral.TaskAction, tier database.AppTier) *database.OperationMetadata {
+	if action != admiral.ActionResizeApp {
+		return nil
+	}
+	targetTier := tier
+	return &database.OperationMetadata{ResizeTargetTier: &targetTier}
+}
+
+func (h *APIHandlers) createActionOperation(id, instanceID, nodeID string, action admiral.TaskAction, adminUser string, tier database.AppTier) error {
+	if metadata := operationMetadataForAction(action, tier); metadata != nil {
+		return h.db.CreateOperationWithMetadata(id, instanceID, nodeID, string(action), "pending_dispatch", adminUser, metadata)
+	}
+	return h.db.CreateOperation(id, instanceID, nodeID, string(action), "pending_dispatch", adminUser)
+}
+
 func (h *APIHandlers) failInstanceForTask(opID, instID string) error {
 	op, err := h.db.GetOperation(opID)
 	if err != nil {

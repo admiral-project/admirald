@@ -4,12 +4,66 @@
 package api
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/admiral-project/admiral/admirald/internal/database"
 	"github.com/admiral-project/admiral/admirald/pkg/admiral"
 )
+
+func TestResolvedResizeTargetTierPreservesBackupPolicy(t *testing.T) {
+	policy := `{"enabled":true,"manual_backups":true,"backup_database":true,"restore_allowed":true}`
+	target := database.AppTier{
+		AppName:          "e2e-portal-free",
+		Name:             "security-small",
+		CPU:              1,
+		Memory:           "256M",
+		Storage:          "1G",
+		PriceMonthly:     0,
+		Free:             true,
+		Environment:      map[string]string{"APP_MODE": "test"},
+		BackupPolicyJSON: policy,
+	}
+
+	metadataJSON, err := json.Marshal(operationMetadataForAction(admiral.ActionResizeApp, target))
+	if err != nil {
+		t.Fatalf("marshal operation metadata: %v", err)
+	}
+	var operationMetadata database.OperationMetadata
+	if err := json.Unmarshal(metadataJSON, &operationMetadata); err != nil {
+		t.Fatalf("unmarshal operation metadata: %v", err)
+	}
+	callbackTier := database.AppTier{Name: target.Name, CPU: target.CPU, Memory: target.Memory, Storage: target.Storage}
+	got, ok := resolvedResizeTargetTier(&database.Operation{Metadata: &operationMetadata}, callbackTier, nil)
+	if !ok {
+		t.Fatal("resolvedResizeTargetTier rejected matching operation metadata")
+	}
+	if !reflect.DeepEqual(got, target) {
+		t.Fatalf("resize target metadata not preserved: got %#v, want %#v", got, target)
+	}
+}
+
+func TestResolvedResizeTargetTierFallsBackForExistingOperation(t *testing.T) {
+	policy := `{"manual_backups":true,"backup_database":true,"restore_allowed":true}`
+	current := database.AppTier{
+		AppName:          "e2e-portal-free",
+		Name:             "security-small",
+		PriceMonthly:     0,
+		Free:             true,
+		BackupPolicyJSON: policy,
+		Environment:      map[string]string{"APP_MODE": "test"},
+	}
+	callbackTier := database.AppTier{Name: current.Name, CPU: 1, Memory: "256M", Storage: "1G"}
+	got, ok := resolvedResizeTargetTier(&database.Operation{}, callbackTier, []database.AppTier{current})
+	if !ok {
+		t.Fatal("resolvedResizeTargetTier rejected existing operation fallback")
+	}
+	if got.BackupPolicyJSON != policy || got.AppName != current.AppName || !got.Free || got.CPU != callbackTier.CPU || got.Memory != callbackTier.Memory || got.Storage != callbackTier.Storage {
+		t.Fatalf("legacy resize tier metadata not restored: got %#v", got)
+	}
+}
 
 func TestScopeTaskSecrets(t *testing.T) {
 	payload := admiral.AppDefinitionPayload{

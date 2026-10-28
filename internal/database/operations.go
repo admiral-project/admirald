@@ -15,6 +15,7 @@ var ErrMigrationConflict = errors.New("instance state or active operations preve
 
 type OperationMetadata struct {
 	TargetNodeID      string            `json:"target_node_id,omitempty"`
+	ResizeTargetTier  *AppTier          `json:"resize_target_tier,omitempty"`
 	SourceNodeID      string            `json:"source_node_id,omitempty"`
 	LogicalInstanceID string            `json:"logical_instance_id,omitempty"`
 	MigrationStep     string            `json:"migration_step,omitempty"`

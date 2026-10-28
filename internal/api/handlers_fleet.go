@@ -800,6 +800,29 @@ func parseResizeTargetTier(metadata string) (database.AppTier, bool) {
 	}, true
 }
 
+func resolvedResizeTargetTier(op *database.Operation, callbackTier database.AppTier, currentTiers []database.AppTier) (database.AppTier, bool) {
+	if op != nil && op.Metadata != nil && op.Metadata.ResizeTargetTier != nil {
+		target := *op.Metadata.ResizeTargetTier
+		if target.Name != callbackTier.Name {
+			return database.AppTier{}, false
+		}
+		return target, true
+	}
+	for _, tier := range currentTiers {
+		if tier.Name == callbackTier.Name {
+			// Older in-flight resize operations did not persist a tier snapshot.
+			// Use the current definition's metadata while retaining the resources
+			// actually reported by Fleet.
+			tier.CPU = callbackTier.CPU
+			tier.Memory = callbackTier.Memory
+			tier.Storage = callbackTier.Storage
+			tier.Environment = callbackTier.Environment
+			return tier, true
+		}
+	}
+	return database.AppTier{}, false
+}
+
 func currentTierFromInstance(inst *database.CustomerApp) database.AppTier {
 	if inst == nil || strings.TrimSpace(inst.TierSnapshotJSON) == "" {
 		return database.AppTier{}
@@ -827,6 +850,21 @@ func (h *APIHandlers) handleResizeCallback(op *database.Operation, res admiral.T
 	targetRAM := database.ParseSizeBytes(targetTier.Memory)
 	targetDisk := database.ParseSizeBytes(targetTier.Storage)
 	if success {
+		var currentTiers []database.AppTier
+		if op.Metadata == nil || op.Metadata.ResizeTargetTier == nil {
+			currentTiers, err = h.db.GetAppTiers(inst.AppDefinitionName)
+			if err != nil {
+				h.log.Error("Failed to load tier metadata for resize callback", err, map[string]interface{}{"operation_id": op.ID, "instance_id": op.InstanceID})
+				return
+			}
+		}
+		targetTier, ok = resolvedResizeTargetTier(op, targetTier, currentTiers)
+		if !ok {
+			h.log.Error("Resize callback tier does not match operation target", fmt.Errorf("target tier metadata mismatch"), map[string]interface{}{"operation_id": op.ID, "instance_id": op.InstanceID})
+			return
+		}
+		targetRAM = database.ParseSizeBytes(targetTier.Memory)
+		targetDisk = database.ParseSizeBytes(targetTier.Storage)
 		tierBytes, err := json.Marshal(targetTier)
 		if err == nil {
 			if uerr := h.db.UpdateCustomerAppTier(op.InstanceID, targetTier.Name, string(tierBytes)); uerr != nil {

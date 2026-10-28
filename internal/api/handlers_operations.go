@@ -91,10 +91,14 @@ func (h *APIHandlers) HandleOperationByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 	matchedTier := database.AppTier{Name: inst.TierName}
-	for _, tier := range tiers {
-		if tier.Name == inst.TierName {
-			matchedTier = tier
-			break
+	if retryAction == admiral.ActionResizeApp && op.Metadata != nil && op.Metadata.ResizeTargetTier != nil {
+		matchedTier = *op.Metadata.ResizeTargetTier
+	} else {
+		for _, tier := range tiers {
+			if tier.Name == inst.TierName {
+				matchedTier = tier
+				break
+			}
 		}
 	}
 	if matchedTier.Name == "" {
@@ -103,7 +107,7 @@ func (h *APIHandlers) HandleOperationByID(w http.ResponseWriter, r *http.Request
 	}
 
 	retryOperationID := generateID("op")
-	if err := h.db.CreateOperation(retryOperationID, inst.ID, *inst.NodeID, string(retryAction), "pending_dispatch", operatorFromRequest(r)); err != nil {
+	if err := h.createActionOperation(retryOperationID, inst.ID, *inst.NodeID, retryAction, operatorFromRequest(r), matchedTier); err != nil {
 		h.log.Error("Create retry operation failed", err, map[string]interface{}{"operation_id": op.ID, "retry_operation_id": retryOperationID})
 		writeError(w, http.StatusInternalServerError, "Failed recording retry operation")
 		return
